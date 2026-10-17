@@ -60,12 +60,12 @@ Docker_MySQL-Python/
 ```
 浏览器（学生手机 / 电脑）
    │  http://localhost:8000 或 https://你的域名
-   ▼
+   ↓
 ┌─────────────────────────── Docker Compose ───────────────────────────┐
 │  web    FastAPI 后端 + Vue 前端静态托管（唯一对外端口 8000）              │
-│    │  ① 注册/登录/游客 → 定位到该学生的独立库 + 专用 MySQL 账号           │
-│    │  ② SQL 执行 / 文件导入 / 社区 / 分享 API                            │
-│    │  ③ Python 代码转发给 runner 执行                                    │
+│    │  1. 注册/登录/游客 → 定位到该学生的独立库 + 专用 MySQL 账号           │
+│    │  2. SQL 执行 / 文件导入 / 社区 / 分享 API                            │
+│    │  3. Python 代码转发给 runner 执行                                    │
 │  runner  Python 沙箱（不对外的 8100 端口、无外网、只读根目录、限资源）      │
 │  db     MySQL 5.7（不对外的 3306、utf8mb4、数据持久化卷 dbdata）          │
 └──────────────────────────────────────────────────────────────────────┘
@@ -184,7 +184,7 @@ Docker_MySQL-Python/
 ### 学生篇
 
 1. **第一次进入**：浏览器打开老师给的网址 → 点「游客试用」或注册账号 → 自动获得三张教学表。
-2. **写 SQL**：编辑器直接写（不用分号），点「▶ 运行」或 `Ctrl+Enter`。例如：
+2. **写 SQL**：编辑器直接写（不用分号），点「运行」或 `Ctrl+Enter`。例如：
    ```sql
    SELECT ENAME, SAL FROM emp WHERE SAL > 2000 ORDER BY SAL DESC
    SELECT DNAME, COUNT(*) FROM emp e JOIN dept d ON e.DEPTNO = d.DEPTNO GROUP BY DNAME
@@ -276,7 +276,7 @@ docker compose ps              # 三容器状态（db 应为 healthy）
 docker compose logs -f web     # 应用日志
 docker compose up -d --build   # 改代码 / 改 .env 后重建生效
 docker compose down            # 停止（数据保留在 dbdata 卷）
-docker compose down -v         # ⚠ 清空所有数据（含全部学生库）
+docker compose down -v         # 清空所有数据（危险）（含全部学生库）
 ```
 
 - **数据在哪**：所有业务数据都在 Docker 卷 `dbdata`（MySQL 数据目录）；源文件存档、社区资源存在 MySQL 的 meta / community 库里，不落宿主机文件系统。
@@ -326,6 +326,6 @@ python tests/smoke_test.py http://其他地址  # 也可以指定
 
 ---
 
-## 📄 许可
+## 许可
 
-本项目基于 [MIT License](LICENSE) 开源，且由 AI（ZCode 智能体 / 智谱 GLM）以 vibe coding 方式编写——详见 [README](README.md) 的 AI 编写声明。
+本项目基于 [MIT License](LICENSE) 开源，且由 AI（ZCode 智能体 / 智谱 GLM）以 vibe coding 方式编写。
