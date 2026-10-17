@@ -328,4 +328,4 @@ python tests/smoke_test.py http://其他地址  # 也可以指定
 
 ## 许可
 
-本项目基于 [MIT License](LICENSE) 开源，且由 AI（ZCode 智能体 / 智谱 GLM）以 vibe coding 方式编写。
+本项目基于 [MIT License](LICENSE) 开源，由 AI Coding 编写。
