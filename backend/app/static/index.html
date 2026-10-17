@@ -1,0 +1,613 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#ffffff">
+<base href="/">
+<title>SQL·Py 课堂实验室</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%230969da' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='4 17 10 11 4 5'/%3E%3Cline x1='12' y1='19' x2='20' y2='19'/%3E%3C/svg%3E">
+<script>
+window.__bootErrs = [];
+window.addEventListener('error', function(e){ __bootErrs.push('ERR: ' + e.message + ' @ ' + (e.filename||'') + ':' + (e.lineno||0)); });
+window.addEventListener('unhandledrejection', function(e){ __bootErrs.push('REJ: ' + String(e.reason)); });
+(function(){
+  var t = localStorage.getItem('lab_theme');
+  if (!t) t = window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  document.documentElement.dataset.theme = t;
+})();
+</script>
+<link rel="stylesheet" href="/vendor/codemirror/codemirror.css">
+<link rel="stylesheet" href="/vendor/codemirror/addon/hint/show-hint.css">
+<link rel="stylesheet" href="/fonts/misans/misans.css">
+<link rel="stylesheet" href="/style.css?v=80">
+</head>
+<body>
+<div id="app" v-cloak>
+
+  <!-- ================= 启动中（校验登录态，避免闪登录页） ================= -->
+  <div class="booting" v-if="booting">
+    <div class="spin"></div>
+  </div>
+
+  <!-- ================= 登录 ================= -->
+  <div class="login-wrap" v-if="!logged && !booting">
+    <div class="login-card">
+      <div class="share-notice" v-if="pendingShareCode">
+        <e-icon name="share" :size="14"></e-icon>
+        你打开了一个数据库分享链接，登录后即可导入
+      </div>
+      <div class="logo">
+        <span class="logo-mark"><e-icon name="terminal" :size="24"></e-icon></span>
+        <h1>SQL · Py 课堂实验室</h1>
+        <p>浏览器里直接练 MySQL 和 Python</p>
+      </div>
+      <label class="f">账号</label>
+      <input type="text" v-model.trim="loginForm.username" placeholder="字母开头，只能字母和数字，3-20 位"
+             autocapitalize="off" autocorrect="off" spellcheck="false"
+             @keyup.enter="doLogin('login')">
+      <label class="f">密码</label>
+      <input type="password" v-model="loginForm.password"
+             placeholder="至少 8 位，须含字母和数字" maxlength="32"
+             @keyup.enter="doLogin('login')">
+      <button class="btn primary big login-main" :disabled="busy" @click="doLogin('login')">登 录</button>
+      <div class="row-2">
+        <button class="btn soft" @click="doLogin('register')">注 册</button>
+        <button class="btn soft" @click="doLogin('guest')">游客试用 →</button>
+      </div>
+      <p class="tip login-hint">注册要求：账号<strong>字母开头</strong>、仅含字母和数字（3-20 位）；密码<strong>至少 8 位</strong>且同时含字母和数字。</p>
+      <p class="tip login-tip">游客免注册直接用，数据保存在本浏览器，7 天不用的自动回收；注册账号后换设备登录数据不丢。</p>
+    </div>
+  </div>
+
+  <!-- ================= 主应用 ================= -->
+  <template v-else>
+    <header>
+      <div class="brand"><span class="logo-mark small"><e-icon name="terminal" :size="15"></e-icon></span>SQL·Py 课堂实验室</div>
+      <nav class="nav m-hide">
+        <button :class="{active: view==='sql'}" @click="switchView('sql')"><e-icon name="database" :size="14"></e-icon> MySQL 工作台</button>
+        <button :class="{active: view==='py'}" @click="switchView('py')"><e-icon name="code" :size="14"></e-icon> Python</button>
+        <button :class="{active: view==='community'}" @click="switchView('community')"><e-icon name="globe" :size="14"></e-icon> 社区</button>
+      </nav>
+      <div class="userbox">
+        <button class="icon-btn theme-btn" :title="theme==='dark' ? '切换到亮色' : '切换到暗色'" @click="toggleTheme">
+          <e-icon :name="theme==='dark' ? 'sun' : 'moon'" :size="16"></e-icon>
+        </button>
+        <span class="avatar">{{ user ? user.name.slice(0,1) : '?' }}</span>
+        <span class="who">{{ user ? user.name : '' }}</span>
+        <button v-if="user && user.role==='admin'" class="btn mini" @click="openAdmin">管理</button>
+        <button class="btn mini ghost" @click="logout">退出</button>
+      </div>
+    </header>
+
+    <main>
+      <!-- ========== MySQL 工作台 ========== -->
+      <section v-show="view==='sql'" class="ws">
+        <div class="drawer-mask m-only" v-show="drawer==='sql'" @click="drawer=''"></div>
+        <aside class="side drawer" :class="{open: drawer==='sql'}">
+          <div class="side-h">
+            <span class="panel-title">数据库</span>
+            <span class="spacer"></span>
+            <button class="icon-btn" title="刷新" @click="loadTables()"><e-icon name="refresh" :size="13"></e-icon></button>
+            <button class="icon-btn m-only" title="关闭" @click="drawer=''"><e-icon name="x" :size="15"></e-icon></button>
+          </div>
+          <div class="tblist">
+            <div v-if="!databases.length" class="tbempty">还没有数据库<br><span>点下方「新建数据库」或「导入文件」</span></div>
+            <template v-for="d in databases" :key="d.name">
+              <button class="dbnode" :class="{sel: selectedDb===d.name}"
+                      @click="selectDb(d)" @dblclick="toggleDb(d.name)">
+                <span class="tb-ico"><e-icon name="database" :size="14"></e-icon></span>
+                <span class="dbnode-t">
+                  <span class="dbnode-name">{{ d.name }} <span v-if="d.primary" class="badge tiny">默认</span></span>
+                  <span class="dbnode-sub">{{ d.tables }} 张表</span>
+                </span>
+                <e-icon :name="openDbs[d.name] ? 'chevron-down' : 'chevron-right'" :size="13" class="chev"
+                        @click.stop="toggleDb(d.name)"></e-icon>
+              </button>
+              <div v-show="openDbs[d.name]" class="db-tables">
+                <div v-if="!(dbTables[d.name] || []).length" class="tbempty">空库</div>
+                <button v-for="t in dbTables[d.name] || []" :key="t.name" class="tbrow"
+                        @click="openPreview(t.name, d.name)">
+                  <span class="tb-ico"><e-icon name="table" :size="13"></e-icon></span>
+                  <span class="tbname">{{ t.name }}</span>
+                  <span class="tbrows">{{ t.rows === null ? '' : t.rows }}</span>
+                </button>
+                <div class="db-actions">
+                  <button class="btn mini ghost" @click="exportDb(d)"><e-icon name="download" :size="12"></e-icon> 导出 .sql</button>
+                  <button class="btn mini ghost" @click="openShareDlg(d)"><e-icon name="link" :size="12"></e-icon> 分享链接</button>
+                  <button class="btn mini ghost" @click="publishDb(d)"><e-icon name="share" :size="12"></e-icon> 发布到社区</button>
+                  <button v-if="!d.primary" class="btn mini ghost danger" @click="dropDb(d)"><e-icon name="trash" :size="12"></e-icon> 删除库</button>
+                </div>
+              </div>
+            </template>
+          </div>
+          <div class="side-f">
+            <button class="btn soft block" @click="createDb"><e-icon name="database" :size="14"></e-icon> 新建数据库</button>
+            <button class="btn soft block" style="margin-top:8px" @click="openImport"><e-icon name="folder-open" :size="14"></e-icon> 导入文件</button>
+          </div>
+        </aside>
+
+        <div class="wsmain">
+          <section class="panel editor-pane">
+            <div class="panel-h">
+              <button class="btn soft m-only" @click="drawer='sql'"><e-icon name="menu" :size="14"></e-icon> 数据库</button>
+              <span class="panel-title">查询编辑器</span>
+              <span class="panel-note m-hide">当前库 <b class="mono">{{ selectedDb }}</b> · 不用分号 · 多条语句每条一行</span>
+              <span class="spacer"></span>
+              <button class="btn mini ghost" @click="clearSql"><e-icon name="x" :size="13"></e-icon> 清空</button>
+              <button class="btn run run-btn" @click="runSql"><e-icon name="play" :size="13"></e-icon> 运行 <span class="kbd">Ctrl+↵</span></button>
+            </div>
+            <div class="panel-b editor-host">
+              <cm-editor ref="cmSqlRef" mode="text/x-mysql" :value="sqlInit" :run="runSql"
+                :hint-tables="tablesHint" @change="onSqlChange"
+                placeholder="像 mysql 命令行一样直接写 SQL，不需要分号。&#10;例如：SELECT * FROM emp&#10;多条语句就一行一条，或用分号分隔"></cm-editor>
+            </div>
+          </section>
+
+          <section class="panel console-pane">
+            <div class="panel-h dark">
+              <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+              <span class="panel-title">输出</span>
+              <span class="spacer"></span>
+              <button class="btn mini ghost on-dark" @click="sqlConsole=[]"><e-icon name="eraser" :size="13"></e-icon> 清屏</button>
+            </div>
+            <div class="console" ref="sqlConsoleEl">
+              <div v-if="!sqlConsole.length" class="console-empty">
+                <div class="ce-ico"><e-icon name="terminal" :size="28"></e-icon></div>
+                像 mysql 命令行一样：上面输入 SQL，点「运行」，结果就出在这里。<br>
+                试试直接运行 <code>SELECT * FROM emp</code>
+              </div>
+              <div v-for="(e,i) in sqlConsole" :key="'e'+i" class="cblock">
+                <div class="cprompt"><span class="pmark">mysql&gt;</span><span class="psql">{{ e.sql }}</span></div>
+                <template v-for="(r,j) in e.results">
+                  <div v-if="r.type==='rows'" :key="'r'+i+j" class="cres">
+                    <div class="cres-head">{{ r.rowCount }} 行<span v-if="r.truncated">（超过500行，仅显示前500行）</span><span class="cms">{{ r.ms }}ms</span></div>
+                    <div class="ctbl-wrap"><table class="ctable">
+                      <thead><tr><th v-for="c in r.columns" :key="c">{{ c }}</th></tr></thead>
+                      <tbody><tr v-for="(row,k) in r.rows" :key="k">
+                        <td v-for="(v,kk) in row" :key="kk" :class="{null: v===null}">{{ v === null ? 'NULL' : v }}</td>
+                      </tr></tbody>
+                    </table></div>
+                  </div>
+                  <div v-else-if="r.type==='ok'" :key="'o'+i+j" class="cok">✔ {{ r.affected ? '影响 ' + r.affected + ' 行' : '执行成功' }} <span class="cms">{{ r.ms }}ms</span></div>
+                  <div v-else :key="'x'+i+j" class="cerr">✖ {{ r.msg }}<span class="cms" v-if="r.errno">[{{ r.errno }}]</span></div>
+                </template>
+              </div>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <!-- ========== Python ========== -->
+      <section v-show="view==='py'" class="ws">
+        <div class="drawer-mask m-only" v-show="drawer==='py'" @click="drawer=''"></div>
+        <aside class="side drawer" :class="{open: drawer==='py'}">
+          <div class="side-h">
+            <span class="panel-title">Python 文件</span>
+            <span class="spacer"></span>
+            <button class="icon-btn" title="新建文件" @click="newPyFile"><e-icon name="plus" :size="14"></e-icon></button>
+            <button class="icon-btn m-only" title="关闭" @click="drawer=''"><e-icon name="x" :size="15"></e-icon></button>
+          </div>
+          <div class="tblist">
+            <button v-for="f in pyFiles" :key="f.name" class="tbrow" :class="{sel: pyCurrent===f.name}"
+                    @click="openPyFile(f.name)">
+              <span class="tb-ico"><e-icon name="code" :size="13"></e-icon></span>
+              <span class="tbname">{{ f.name }}</span>
+              <span class="tbrows">{{ fmtSize(f.size) }}</span>
+              <span class="row-x" @click.stop="deletePyFile(f.name)" title="删除"><e-icon name="x" :size="11"></e-icon></span>
+            </button>
+          </div>
+          <div class="side-f">
+            <button class="btn soft block" @click="newPyFile"><e-icon name="plus" :size="14"></e-icon> 新建文件</button>
+          </div>
+        </aside>
+
+        <div class="wsmain">
+          <section class="panel editor-pane">
+            <div class="panel-h">
+              <button class="btn soft m-only" @click="drawer='py'"><e-icon name="menu" :size="14"></e-icon> 文件</button>
+              <span class="panel-title mono">{{ pyCurrent }}</span>
+              <select class="select slim" @change="insertExample($event)">
+                <option value="">插入示例…</option>
+                <option v-for="(ex,i) in examples" :key="i" :value="i">{{ ex.name }}</option>
+              </select>
+              <span class="spacer"></span>
+              <button class="btn mini ghost" @click="clearPy"><e-icon name="x" :size="13"></e-icon> 清空</button>
+              <button class="btn run run-btn" @click="runPy"><e-icon name="play" :size="13"></e-icon> 运行 <span class="kbd">Ctrl+↵</span></button>
+            </div>
+            <div class="panel-b editor-host">
+              <cm-editor ref="cmPyRef" mode="text/x-python" :value="pyInit" :run="runPy"
+                placeholder="在这里写 Python 代码，就像在 IDE 里一样（自动保存）"
+                @change="onPyChange"></cm-editor>
+            </div>
+          </section>
+
+          <section class="panel console-pane">
+            <div class="panel-h dark">
+              <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+              <span class="panel-title">控制台</span>
+              <span class="panel-note on-dark-note m-hide" v-if="pyRunCount">第 {{ pyRunCount }} 次运行 · 每次运行覆盖上次结果</span>
+              <span class="panel-note on-dark-note m-hide" v-else>Python 3 · 限15秒/256MB · 内置 query(sql) / execute(sql) / get_conn()</span>
+              <span class="spacer"></span>
+              <button class="btn mini ghost on-dark" @click="pyConsole=[]; pyRunCount=0"><e-icon name="eraser" :size="13"></e-icon> 清屏</button>
+            </div>
+            <div class="console" ref="pyConsoleEl">
+              <div v-if="!pyConsole.length" class="console-empty">
+                <div class="ce-ico"><e-icon name="terminal" :size="28"></e-icon></div>
+                像 IDE 一样：上面写代码，点「运行」，输出显示在这里。
+              </div>
+              <div v-for="(r,i) in pyConsole" :key="i" class="cblock">
+                <div :class="['cout-meta', r.meta ? 'bad' : (r.running ? 'warn' : 'good')]">
+                  <template v-if="r.meta">{{ r.meta }}</template>
+                  <template v-else-if="r.running">▶ 运行中…（可在下方输入）</template>
+                  <template v-else-if="r.why === 'idle'">⏱ 等待输入超过 120 秒无动静，程序已结束</template>
+                  <template v-else-if="r.why === 'max'">⏱ 运行超过 5 分钟上限，程序已结束</template>
+                  <template v-else-if="r.exit === 0">✔ 第 {{ r.n }} 次运行完成 · {{ r.dur }}s</template>
+                  <template v-else>✖ 第 {{ r.n }} 次运行出错 · 退出码 {{ r.exit }}</template>
+                </div>
+                <div v-if="r.out" class="term-out">{{ r.out }}</div>
+                <div v-if="r.err" class="term-err">{{ r.err }}</div>
+                <div v-if="r.running" class="term-in">
+                  <span class="ti-ps1">&gt;&gt;&gt;</span>
+                  <input type="text" v-model="pyStdin" placeholder="程序在等你输入…回车发送"
+                         @keyup.enter="sendPyInput" autocomplete="off">
+                  <button class="btn mini primary" @click="sendPyInput">发送</button>
+                </div>
+              </div>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <!-- ========== 社区 ========== -->
+      <section v-show="view==='community'" class="community-page">
+        <div class="community-inner">
+          <div class="upload-bar">
+            <div class="upload-left">
+              <h2>分享到社区</h2>
+              <p class="tip">SQL 脚本作为「数据库」分享（自动解析表清单）≤8MB · Python 代码 ≤256KB · 表格 ≤8MB · 工作台里可把表发布过来</p>
+              <details class="cheat">
+                <summary>多表脚本怎么写？——看这个模板</summary>
+                <pre>-- 一个 .sql 文件 = 一个库，有几张 CREATE TABLE 就分享几张表
+CREATE TABLE student (
+  id INT PRIMARY KEY,
+  name VARCHAR(20),
+  age INT
+);
+INSERT INTO student VALUES (1,'张三',18),(2,'李四',19);
+
+CREATE TABLE course (
+  id INT PRIMARY KEY,
+  title VARCHAR(50)
+);
+INSERT INTO course VALUES (1,'数学');</pre>
+              </details>
+            </div>
+            <div class="upload-right">
+              <button class="btn" @click="$refs.uploadFileEl.click()"><e-icon name="folder-open" :size="14"></e-icon> 选择文件</button>
+              <input type="file" ref="uploadFileEl" hidden accept=".sql,.py,.csv,.xlsx" @change="onUploadPicked">
+              <span v-if="uploadFile" class="file-chip slim">
+                <e-icon :name="kindIcon(uploadKind)" :size="13"></e-icon>
+                <span class="mono">{{ uploadFile.name }}</span>
+                <span class="muted">{{ fmtSize(uploadFile.size) }}</span>
+                <button class="icon-btn" @click="uploadFile=null; $refs.uploadFileEl.value=''"><e-icon name="x" :size="12"></e-icon></button>
+              </span>
+              <input type="text" v-model.trim="uploadTitle" placeholder="标题（可选）" class="up-title">
+              <button class="btn primary" :disabled="busy || !uploadFile" @click="uploadCommunity"><e-icon name="upload" :size="14"></e-icon> 上传分享</button>
+            </div>
+          </div>
+
+          <div class="res-grid">
+            <div v-if="!community.length" class="tbempty box">社区还是空的——上传第一份资源吧！</div>
+            <div v-for="it in community" :key="it.id" class="res-card">
+              <div class="res-head">
+                <span class="res-icon"><e-icon :name="kindIcon(it.kind)" :size="17"></e-icon></span>
+                <div class="res-titles">
+                  <div class="res-title">{{ it.title }}</div>
+                  <div class="res-sub">
+                    <span class="badge" :class="it.builtin ? '' : 'gray'">{{ it.builtin ? '内置' : KIND_LABEL[it.kind] }}</span>
+                    {{ it.uploader }} · {{ it.createdAt.slice(5, 16) }}
+                  </div>
+                </div>
+              </div>
+              <div class="res-meta">
+                <template v-if="it.kind==='db'">{{ it.rows }} 张表 · {{ (it.tables || []).slice(0, 5).map(t => t.name).join(' · ') }}<template v-if="(it.tables || []).length > 5"> …</template></template>
+                <template v-else>{{ fmtSize(it.size) }} · 下载 {{ it.downloads }} 次</template>
+              </div>
+              <div class="res-actions">
+                <button v-if="it.kind==='db'" class="btn mini primary" @click="openDbDetail(it)">查看详情</button>
+                <button v-if="it.kind==='py'" class="btn mini primary" @click="openPyItem(it)">打开到编辑器</button>
+                <button v-if="it.kind==='py' || it.kind==='csv' || it.kind==='xlsx'" class="btn mini primary" @click="importItem(it)">导入</button>
+                <button class="btn mini soft" @click="downloadItem(it)"><e-icon name="download" :size="13"></e-icon> 下载</button>
+                <button v-if="!it.builtin && user && it.uploader===user.name" class="btn mini ghost danger" @click="deleteItem(it)">删除</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+    <!-- 移动端：侧边栏悬浮入口 -->
+    <button v-show="view==='sql'" class="fab-drawer m-only" @click="drawer='sql'">
+      <e-icon name="menu" :size="16"></e-icon> 数据库
+      <span class="cnt">{{ databases.length }}</span>
+    </button>
+
+    <!-- 移动端：文件侧边栏悬浮入口 -->
+    <button v-show="view==='py'" class="fab-drawer m-only" @click="drawer='py'">
+      <e-icon name="code" :size="16"></e-icon> 文件
+      <span class="cnt">{{ pyFiles.length }}</span>
+    </button>
+
+    <!-- 移动端底部导航 -->
+    <nav class="tabbar">
+      <button :class="{active: view==='sql'}" @click="switchView('sql')">
+        <e-icon name="database" :size="19"></e-icon><span>MySQL</span>
+      </button>
+      <button :class="{active: view==='py'}" @click="switchView('py')">
+        <e-icon name="code" :size="19"></e-icon><span>Python</span>
+      </button>
+      <button :class="{active: view==='community'}" @click="switchView('community')">
+        <e-icon name="globe" :size="19"></e-icon><span>社区</span>
+      </button>
+    </nav>
+  </template>
+
+  <!-- ================= 导入文件弹窗 ================= -->
+  <dialog ref="importDlg">
+    <div class="dlg-head">
+      <span class="dlg-ico"><e-icon name="folder-open" :size="19"></e-icon></span>
+      <div class="dlg-head-t">
+        <div class="dlg-name">导入文件</div>
+        <div class="dlg-sub">导入到我的数据库 · CSV / Excel / SQL 脚本 · 最大 5MB</div>
+      </div>
+    </div>
+    <div class="pbody">
+      <div class="dropzone" :class="{over: dragOver}"
+           @click="pickImportFile" @dragover.prevent="dragOver=true" @dragleave.prevent="dragOver=false"
+           @drop.prevent="onImportDrop">
+        <e-icon name="upload" :size="22"></e-icon>
+        <div class="dz-main">点击选择或拖拽文件到此处</div>
+        <div class="tip">.csv / .xlsx / .sql · 最大 5MB</div>
+      </div>
+      <input type="file" ref="importFileEl" hidden accept=".csv,.xlsx,.sql,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" @change="onImportPicked">
+      <div v-if="importForm.file" class="file-chip">
+        <e-icon :name="isSqlFile ? 'database' : 'table'" :size="14"></e-icon>
+        <span class="mono">{{ importForm.file.name }}</span>
+        <span class="muted">{{ fmtSize(importForm.file.size) }}</span>
+        <span class="spacer"></span>
+        <button class="icon-btn" @click="clearImportFile"><e-icon name="x" :size="12"></e-icon></button>
+      </div>
+      <template v-if="importForm.file && !isSqlFile">
+        <label class="f">表名</label>
+        <input type="text" v-model.trim="importForm.table" placeholder="留空则使用文件名">
+        <label class="chk"><input type="checkbox" v-model="importForm.header"> 首行是表头</label>
+      </template>
+      <p v-else-if="importForm.file" class="tip" style="margin-top:10px">SQL 脚本会逐条执行，导入到当前数据库。</p>
+      <details class="cheat" style="margin-top:12px">
+        <summary>多个表怎么放？——看这个模板</summary>
+        <pre>-- 一个 .sql 文件 = 一个库，有几张 CREATE TABLE 就导入几张表
+CREATE TABLE student (
+  id INT PRIMARY KEY,
+  name VARCHAR(20),
+  age INT
+);
+INSERT INTO student VALUES (1,'张三',18),(2,'李四',19);
+
+CREATE TABLE course (
+  id INT PRIMARY KEY,
+  title VARCHAR(50)
+);
+INSERT INTO course VALUES (1,'数学');</pre>
+      </details>
+      <label class="chk" v-if="importForm.file"><input type="checkbox" v-model="importForm.overwrite"> 覆盖同名表</label>
+    </div>
+    <div class="dlg-foot">
+      <span class="tip">导入即写入你自己的数据库，不影响他人</span>
+      <span class="spacer"></span>
+      <button class="btn ghost" @click="closeImport">取消</button>
+      <button class="btn primary" :disabled="busy || !importForm.file" @click="submitImport"><e-icon name="download" :size="13"></e-icon> 开始导入</button>
+    </div>
+  </dialog>
+
+  <!-- ================= 社区数据库详情弹窗 ================= -->
+  <dialog ref="dbDlg" class="wide-dlg">
+    <div class="dlg-head">
+      <span class="dlg-ico"><e-icon name="database" :size="19"></e-icon></span>
+      <div class="dlg-head-t">
+        <div class="dlg-name">{{ detail.title }}</div>
+        <div class="dlg-sub">来源：{{ detail.uploader }} · {{ (detail.tables || []).length }} 张表</div>
+      </div>
+      <span class="spacer"></span>
+      <button class="icon-btn big" @click="closeDbDetail"><e-icon name="x" :size="15"></e-icon></button>
+    </div>
+    <div class="dlg-field">
+      <label class="f" style="margin-top:0">导入到自己名下的库名</label>
+      <input type="text" v-model.trim="detail.newDbName" placeholder="默认使用分享者设定的库名">
+    </div>
+    <div class="pbody">
+      <div v-if="detail.loading" class="muted pad">加载中…</div>
+      <template v-else-if="detail.isScript">
+        <div class="empty-box">这是一个整库 SQL 脚本，包含 {{ (detail.tables || []).length }} 张表：<br>
+          <span class="mono">{{ (detail.tables || []).map(t => t.name).join(' · ') || '（未解析到建表语句）' }}</span><br><br>
+          导入将执行脚本内全部语句。</div>
+      </template>
+      <template v-else>
+        <div class="grid-wrap"><table class="dtable">
+          <thead><tr><th>表名</th><th style="text-align:right">行数</th><th style="text-align:right">操作</th></tr></thead>
+          <tbody><tr v-for="t in detail.tables" :key="t.name">
+            <td class="mono">{{ t.name }}</td>
+            <td style="text-align:right">{{ t.rows === null ? '—' : t.rows }}</td>
+            <td style="text-align:right"><button class="btn mini" @click="importDbTable(t.name)">导入此表</button></td>
+          </tr></tbody>
+        </table></div>
+      </template>
+    </div>
+    <div class="dlg-foot">
+      <button class="btn primary" @click="importWholeDb"><e-icon name="download" :size="13"></e-icon> 导入整个数据库</button>
+      <button class="btn" @click="downloadItem(detail)"><e-icon name="download" :size="13"></e-icon> 下载 .sql</button>
+      <span class="spacer"></span>
+      <button class="btn soft" @click="closeDbDetail">关闭</button>
+    </div>
+  </dialog>
+
+  <!-- ================= 分享数据库弹窗 ================= -->
+  <dialog ref="shareDlg">
+    <div class="dlg-head">
+      <span class="dlg-ico"><e-icon name="share" :size="19"></e-icon></span>
+      <div class="dlg-head-t">
+        <div class="dlg-name">分享数据库</div>
+        <div class="dlg-sub">私有分享 · {{ shareForm.db }} · {{ (dbTables[shareForm.db] || []).length }} 张表</div>
+      </div>
+    </div>
+    <div class="pbody">
+      <label class="f" style="margin-top:0">对方导入后的库名</label>
+      <input type="text" v-model.trim="shareForm.shareName" placeholder="默认使用当前库名">
+      <div class="tip">
+        这是一条<strong>私有链接</strong>：只有拿到链接的人才能导入，不会出现在社区广场。
+        如果想让所有人浏览，请到「社区」页用「发布到社区」。
+      </div>
+      <template v-if="shareForm.link">
+        <label class="f">分享链接（复制发给同学）</label>
+        <div class="share-link"><span class="mono">{{ shareForm.link }}</span>
+          <button class="btn mini soft" @click="copyShareLink">复制</button>
+        </div>
+      </template>
+    </div>
+    <div class="dlg-actions">
+      <span class="tip">也可以在社区页上传 .sql 文件分享</span>
+      <span class="spacer"></span>
+      <button class="btn ghost" @click="closeShareDlg">取消</button>
+      <button class="btn primary" :disabled="busy || shareForm.done" @click="generateShareLink">生成分享链接</button>
+    </div>
+  </dialog>
+
+  <!-- ================= 表预览弹窗 ================= -->
+  <dialog ref="previewDlg" class="wide-dlg">
+    <div class="dlg-head">
+      <span class="dlg-ico"><e-icon name="table" :size="19"></e-icon></span>
+      <div class="dlg-head-t">
+        <div class="dlg-name">{{ preview.name }}</div>
+        <div class="dlg-sub">表预览 · 数据 / 结构 / 源文件</div>
+      </div>
+      <span class="spacer"></span>
+      <button class="icon-btn big" @click="closePreview"><e-icon name="x" :size="15"></e-icon></button>
+    </div>
+    <div class="ptabs2">
+      <button :class="{active: preview.tab==='data'}" @click="previewTab('data')"><e-icon name="table" :size="13"></e-icon> 数据</button>
+      <button :class="{active: preview.tab==='struct'}" @click="previewTab('struct')"><e-icon name="list" :size="13"></e-icon> 结构</button>
+      <button :class="{active: preview.tab==='source'}" @click="previewTab('source')"><e-icon name="file-text" :size="13"></e-icon> 源文件</button>
+    </div>
+    <div class="pbody">
+      <div v-if="preview.loading" class="muted pad">加载中…</div>
+      <template v-else-if="preview.tab==='data'">
+        <div v-if="!preview.rows" class="muted pad">空表，还没有数据。</div>
+        <div v-else class="grid-wrap"><table class="dtable">
+          <thead><tr><th class="rowid">#</th><th v-for="c in preview.columns" :key="c">{{ c }}</th></tr></thead>
+          <tbody><tr v-for="(row,k) in preview.rows" :key="k">
+            <td class="rowid">{{ k + 1 }}</td>
+            <td v-for="(v,kk) in row" :key="kk" :class="{null: v===null}">{{ v === null ? 'NULL' : v }}</td>
+          </tr></tbody>
+        </table></div>
+      </template>
+      <template v-else-if="preview.tab==='struct'">
+        <div v-if="preview.desc" class="grid-wrap"><table class="dtable">
+          <thead><tr><th v-for="c in preview.descColumns" :key="c">{{ c }}</th></tr></thead>
+          <tbody><tr v-for="(row,k) in preview.desc" :key="k">
+            <td v-for="(v,kk) in row" :key="kk">{{ v === null ? 'NULL' : v }}</td>
+          </tr></tbody>
+        </table></div>
+        <div class="out-label">建表语句</div>
+        <pre class="ddl-pre">{{ preview.ddl }}</pre>
+      </template>
+      <template v-else>
+        <div v-if="preview.source" class="src-box">
+          <div class="src-head">
+            <span class="src-name"><e-icon name="file-text" :size="13"></e-icon> {{ preview.source.filename }}</span>
+            <span class="src-meta">{{ fmtSize(preview.source.size) }} · {{ preview.source.createdAt }}</span>
+            <span class="spacer"></span>
+            <button class="btn mini soft" @click="downloadSource"><e-icon name="download" :size="13"></e-icon> 下载源文件</button>
+          </div>
+          <pre v-if="preview.source.text !== null && preview.source.text !== undefined" class="src-pre">{{ preview.source.text }}</pre>
+          <div v-else class="muted pad">二进制文件（Excel），请下载后查看。</div>
+        </div>
+        <div v-else class="empty-box">这张表没有存档的源文件（可能是手写建表或社区导入的）。<br>「结构」页里有它的建表语句。</div>
+      </template>
+    </div>
+    <div class="dlg-foot">
+      <button class="btn" @click="queryFromPreview"><e-icon name="search" :size="13"></e-icon> 查询前20条 → 编辑器</button>
+      <button class="btn" @click="publishFromPreview"><e-icon name="share" :size="13"></e-icon> 发布到社区</button>
+      <button class="btn danger-soft" @click="dropFromPreview"><e-icon name="trash" :size="13"></e-icon> 删除表</button>
+      <span class="spacer"></span>
+      <button class="btn soft" @click="closePreview">关闭</button>
+    </div>
+  </dialog>
+
+  <!-- ================= 管理弹窗 ================= -->
+  <dialog ref="adminDlg" class="admin-dlg">
+    <div class="dlg-head">
+      <span class="dlg-ico"><e-icon name="shield" :size="19"></e-icon></span>
+      <div class="dlg-head-t">
+        <div class="dlg-name">管理后台</div>
+        <div class="dlg-sub">共 {{ (adminKind==='guest'?adminGuests:adminUsers).length }} 个{{ adminKind==='guest' ? '游客' : '注册用户' }}</div>
+      </div>
+      <span class="spacer"></span>
+      <button class="icon-btn big" @click="closeAdmin"><e-icon name="x" :size="15"></e-icon></button>
+    </div>
+    <div class="ptabs2 admin-tabs">
+      <button :class="{active: adminKind==='user'}" @click="switchAdminKind('user')">
+        <e-icon name="user" :size="13"></e-icon> 注册用户 <span class="cnt">{{ adminUsers.length }}</span>
+      </button>
+      <button :class="{active: adminKind==='guest'}" @click="switchAdminKind('guest')">
+        <e-icon name="user-x" :size="13"></e-icon> 游客 <span class="cnt">{{ adminGuests.length }}</span>
+      </button>
+    </div>
+    <div class="pbody admin-body">
+      <div v-if="!(adminKind==='guest'?adminGuests:adminUsers).length" class="muted pad">暂无记录</div>
+      <div class="u-list">
+        <div v-for="u in (adminKind==='guest'?adminGuests:adminUsers)" :key="u.id" class="u-card">
+          <div class="u-card-main">
+            <div class="u-name">{{ u.username }}
+              <span v-if="u.role==='admin'" class="badge tiny">管理员</span>
+            </div>
+            <div class="u-meta">
+              <span class="u-chip"><e-icon name="database" :size="11"></e-icon>{{ u.db }}</span>
+              <span v-if="u.dbCount>1" class="u-chip">{{ u.dbCount }} 个库</span>
+              <span class="u-chip"><e-icon name="globe" :size="11"></e-icon>{{ u.lastIp }}</span>
+              <span class="u-chip"><e-icon name="clock" :size="11"></e-icon>{{ u.lastSeen }}</span>
+            </div>
+          </div>
+          <div class="u-card-act">
+            <template v-if="u.kind==='user' && u.role!=='admin'">
+              <button class="btn mini" @click="resetPw(u)">重置密码</button>
+              <button class="btn mini danger" @click="deleteUser(u)">删除</button>
+            </template>
+            <button v-else-if="u.kind==='guest'" class="btn mini danger" @click="deleteUser(u)">删除</button>
+            <span v-else class="muted">—</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="dlg-foot">
+      <button class="btn soft" @click="loadAdmin(adminKind)"><e-icon name="refresh" :size="13"></e-icon> 刷新</button>
+      <span class="spacer"></span>
+      <button class="btn ghost" @click="closeAdmin">关闭</button>
+    </div>
+  </dialog>
+
+  <div id="toast" :class="{show: toastMsg}">{{ toastMsg }}</div>
+  <div id="busy" v-show="busy"><div class="spin"></div></div>
+</div>
+
+<script src="/vendor/vue.global.prod.js"></script>
+<script src="/vendor/codemirror/codemirror.js"></script>
+<script src="/vendor/codemirror/mode/python/python.js"></script>
+<script src="/vendor/codemirror/mode/sql/sql.js"></script>
+<script src="/vendor/codemirror/addon/edit/matchbrackets.js"></script>
+<script src="/vendor/codemirror/addon/edit/closebrackets.js"></script>
+<script src="/vendor/codemirror/addon/selection/active-line.js"></script>
+<script src="/vendor/codemirror/addon/display/placeholder.js"></script>
+<script src="/vendor/codemirror/addon/hint/show-hint.js"></script>
+<script src="/vendor/codemirror/addon/hint/sql-hint.js"></script>
+<script src="/app.js?v=83"></script>
+</body>
+</html>

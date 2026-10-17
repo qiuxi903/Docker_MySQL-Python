@@ -1,0 +1,18 @@
+# 本地配置（含密码，绝不入库）
+.env
+
+# 构建产物 / 缓存
+__pycache__/
+*.pyc
+*.pyo
+MySQLPython.zip
+
+# 日志与系统文件
+*.log
+.DS_Store
+Thumbs.db
+
+# 编辑器 / 工具目录
+.zcode/
+.idea/
+.vscode/
