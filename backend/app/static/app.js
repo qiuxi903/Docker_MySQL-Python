@@ -182,24 +182,7 @@ const CmEditor = {
   },
   template: "<textarea></textarea>",
   mounted() {
-    const extra = {
-      "Ctrl-Enter": () => this.run && this.run(),
-      "Cmd-Enter": () => this.run && this.run(),
-    };
-    if (this.mode === "text/x-mysql") {
-      extra["Ctrl-Space"] = (cm) => cm.showHint({
-        hint: CodeMirror.hint.sql,
-        tables: this.hintTables || {},
-        completeSingle: false,
-      });
-    }
-    if (this.mode === "text/x-python") {
-      extra["Tab"] = (cm) => {
-        // 补全弹层开着时交给它处理（Tab 选中补全项）
-        if (cm.state.completionActive) return;
-        cm.replaceSelection("    ");
-      };
-    }
+    const extra = this.buildExtra(this.mode);
     this.cm = CodeMirror.fromTextArea(this.$el, {
       mode: this.mode,
       lineNumbers: true,
@@ -232,13 +215,39 @@ const CmEditor = {
     this.cm.on("change", () => this.$emit("change", this.cm.getValue()));
   },
   watch: {
-    // 编辑器在启动遮罩期间就已挂载，登录后父组件才把初始内容设进来，
-    // 必须跟着 prop 同步，否则首次访问的预填 SQL 不会出现
+    // 父组件异步拿到内容后要同步进来（编辑器可能在数据到达前就已挂载）
     value(v) {
       if (this.cm && v !== this.cm.getValue()) this.cm.setValue(v);
     },
+    // 同一套题里可能既有 SQL 题又有 Python 题，切换时高亮和快捷键要跟着变
+    mode(m) {
+      if (!this.cm) return;
+      this.cm.setOption("mode", m);
+      this.cm.setOption("extraKeys", this.buildExtra(m));
+    },
   },
   methods: {
+    buildExtra(mode) {
+      const extra = {
+        "Ctrl-Enter": () => this.run && this.run(),
+        "Cmd-Enter": () => this.run && this.run(),
+      };
+      if (mode === "text/x-mysql") {
+        extra["Ctrl-Space"] = (cm) => cm.showHint({
+          hint: CodeMirror.hint.sql,
+          tables: this.hintTables || {},
+          completeSingle: false,
+        });
+      }
+      if (mode === "text/x-python") {
+        extra["Tab"] = (cm) => {
+          // 补全弹层开着时交给它处理（Tab 选中补全项）
+          if (cm.state.completionActive) return;
+          cm.replaceSelection("    ");
+        };
+      }
+      return extra;
+    },
     refresh() { if (this.cm) this.cm.refresh(); },
     getValue() { return this.cm ? this.cm.getValue() : ""; },
     setValue(v) { if (this.cm) this.cm.setValue(v); },
@@ -324,6 +333,8 @@ const App = {
       ],
       drillList: [],
       drillCurrent: null,
+      drillLoading: false,
+      drillOpenSeq: 0,
       drillResult: null,
       drillCode: "",
       drillPick: "",
@@ -772,6 +783,7 @@ const App = {
         this.drillProgress = pr.progress || {};
         if (this.drillCourse === "wrong") {
           // 错题本没有「套」的概念，直接把做错的题铺成卡片
+          this.drillList = d.drills || [];
           this.papers = (d.drills || []).map(x => ({
             id: -x.id, single: true, drillId: x.id, course: "wrong",
             title: x.title, description: x.stem || "", questionCount: 1,
@@ -806,8 +818,7 @@ const App = {
       // 错题本里的卡片是单题，直接进做题页
       if (p.single) {
         this.paperCurrent = null;
-        this.drillView = "do";
-        await this.openDrill({ id: p.drillId });
+        await this.startDrill({ id: p.drillId });
         return;
       }
       try {
@@ -857,8 +868,46 @@ const App = {
     },
 
     async startDrill(d) {
+      // 已经在这道题里就不用重新加载，避免把正在写的内容重置
+      if (this.drillView === "do" && this.drillCurrent && this.drillCurrent.id === d.id) return;
       this.drillView = "do";
+      window.scrollTo(0, 0);
       await this.openDrill(d);
+    },
+
+    // ---------- 每题草稿（学生自己的输入，不是默认内容） ----------
+    _drillDraftKey(id) {
+      const who = (this.user && this.user.name) || "?";
+      return "lab_drill_draft:" + who + ":" + id;
+    },
+    loadDrillDraft(id) {
+      try {
+        const raw = localStorage.getItem(this._drillDraftKey(id));
+        return raw ? JSON.parse(raw) : null;
+      } catch (e) { return null; }
+    },
+    saveDrillDraft() {
+      const d = this.drillCurrent;
+      if (!d || !d.id) return;
+      clearTimeout(this.drillDraftTimer);
+      this.drillDraftTimer = setTimeout(() => {
+        try {
+          const key = this._drillDraftKey(d.id);
+          const data = { code: this.drillCode || "", pick: this.drillPick || "",
+                         fill: this.drillFill || "",
+                         multi: Array.isArray(this.drillMulti) ? this.drillMulti : [] };
+          if (!data.code.trim() && !data.pick && !data.fill.trim() && !data.multi.length) {
+            localStorage.removeItem(key);
+          } else {
+            localStorage.setItem(key, JSON.stringify(data));
+          }
+        } catch (e) { /* 隐私模式下 localStorage 可能不可用，忽略 */ }
+      }, 250);
+    },
+    // 题目自带的序号（"1. xxx"）在试卷里已经有编号，显示时去掉避免重复
+    qTitle(t) {
+      const s = String(t || "");
+      return s.replace(/^\s*\d+\s*[.、．)）]\s*/, "") || s;
     },
 
     async loadDrills(autopick) {
@@ -881,42 +930,55 @@ const App = {
     },
 
     async openDrill(d) {
+      // 快速连点不同题目时，只认最后一次请求，避免旧响应把新题覆盖掉
+      const seq = ++this.drillOpenSeq;
+      this.drillLoading = true;
+      this.drillCurrent = null;
       this.drillBusy = false;
       this.drillResult = null;
       this.drillShowSetup = false;
       this.drillShowHint = false;
-      this.drillPick = "";
-      this.drillFill = "";
-      this.drillCode = "";
-      this.drillMulti = [];
       this.drillRunLog = [];
       this.drillSandbox = { db: "", tables: [], loading: false };
       try {
         const det = await this.api(`/api/drills/${d.id}`);
+        if (seq !== this.drillOpenSeq) return;
         this.drillCurrent = det;
         this.drawer = "";
+        // 恢复这道题上次写了一半的内容（按账号 + 题目分开存，换题不互相覆盖）
+        const draft = this.loadDrillDraft(det.id) || {};
+        this.drillCode = draft.code || "";
+        this.drillPick = draft.pick || "";
+        this.drillFill = draft.fill || "";
+        this.drillMulti = Array.isArray(draft.multi) ? draft.multi : [];
         if (det.type === "sql") {
           // 建/复用本题的沙箱库（初始化 SQL 已在里面跑好），侧栏显示它的表
           this.drillSandbox.loading = true;
           try {
-            const sb = await this.api(`/api/drills/${det.id}/sandbox`, { method: "POST", body: { reset: false } });
+            const sb = await this.api(`/api/drills/${det.id}/sandbox`,
+                                      { method: "POST", body: { reset: false } });
+            if (seq !== this.drillOpenSeq) return;
             this.drillSandbox = { db: sb.db, tables: sb.tables || [], loading: false };
           } catch (e) {
+            if (seq !== this.drillOpenSeq) return;
             this.drillSandbox = { db: "", tables: [], loading: false };
             this.toast(e.message);
           }
         }
-        // 答题区一律空白，不预填任何命令或起始代码
         if (det.type === "sql" || det.type === "python") {
           this.$nextTick(() => {
+            if (seq !== this.drillOpenSeq) return;
             if (this.$refs.cmDrillRef) {
-              this.$refs.cmDrillRef.setValue("");
-              this.drillCode = "";
+              this.$refs.cmDrillRef.setValue(this.drillCode);
               this.$refs.cmDrillRef.refresh();
             }
           });
         }
-      } catch (e) { this.toast(e.message); }
+      } catch (e) {
+        if (seq === this.drillOpenSeq) this.toast(e.message);
+      } finally {
+        if (seq === this.drillOpenSeq) this.drillLoading = false;
+      }
     },
 
     // 左侧沙箱库里的表 → 看数据/结构（和主页「点表名预览」一致）
@@ -955,7 +1017,7 @@ const App = {
       this.drillCode = "";
     },
 
-    onDrillCodeChange(v) { this.drillCode = v || ""; },
+    onDrillCodeChange(v) { this.drillCode = v || ""; this.saveDrillDraft(); },
 
     pickDrillOption(key) {
       if (this.drillCurrent && this.drillCurrent.type === "multiple") {
@@ -964,6 +1026,7 @@ const App = {
       } else {
         this.drillPick = key;
       }
+      this.saveDrillDraft();
     },
 
     resetDrillCode() {
@@ -974,6 +1037,7 @@ const App = {
       this.drillPick = "";
       this.drillMulti = [];
       this.drillResult = null;
+      this.saveDrillDraft();
     },
 
     /* ---------- 出题中心：统一入口，先选类型 ---------- */
@@ -1340,6 +1404,10 @@ const App = {
       if (!d) return;
       const code = this.drillCode;
       if (!code.trim()) { this.toast("先写点内容再运行"); return; }
+      if (d.type === "sql" && !this.drillSandbox.db) {
+        this.toast("本题数据库还在准备中，请稍候再运行");
+        return;
+      }
       this.drillBusy = true;
       try {
         if (d.type === "sql") {
@@ -1397,10 +1465,10 @@ const App = {
       this.drillResult = null;
       try {
         // 1) 先像主页一样真跑一遍，把过程留在控制台（SQL 跑在本题沙箱库，Python 走沙箱）
-        if (d.type === "sql") {
+        if (d.type === "sql" && this.drillSandbox.db) {
           try {
             const run = await this.api("/api/sql", { method: "POST",
-              body: { sql: answer, db: this.drillSandbox.db || "" } });
+              body: { sql: answer, db: this.drillSandbox.db } });
             this.drillRunLog.push({ code: answer, results: run.results || [] });
           } catch (e) {
             this.drillRunLog.push({ code: answer,

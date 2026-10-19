@@ -589,6 +589,13 @@ li.CodeMirror-hint-active { background: var(--accent); color: #fff; }
 }
 .drill-tag.err { color: var(--err); border-color: var(--err); }
 
+.drill-db-loading {
+  display: flex; align-items: center; gap: 8px;
+  margin-top: 10px; padding: 9px 11px;
+  font-size: 12px; color: var(--muted);
+  border: 1px dashed var(--line); border-radius: var(--radius);
+}
+.spin.small { width: 13px; height: 13px; border-width: 2px; }
 .drill-pts {
   flex: 0 0 auto; font-family: var(--mono); font-size: 10.5px; color: var(--muted);
   border: 1px solid var(--line); border-radius: 999px; padding: 0 6px; line-height: 15px;
@@ -730,7 +737,10 @@ li.CodeMirror-hint-active { background: var(--accent); color: #fff; }
 }
 .paper-q.done .pq-no { color: var(--accent); font-weight: 700; }
 .pq-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
-.pq-title { font-size: 13.5px; line-height: 1.5; }
+.pq-title {
+  font-size: 13.5px; line-height: 1.5;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
 .pq-sub { font-size: 11.5px; color: var(--muted); }
 .pq-score {
   flex: 0 0 auto; font-family: var(--mono); font-size: 12px; color: var(--muted);
@@ -875,6 +885,10 @@ li.CodeMirror-hint-active { background: var(--accent); color: #fff; }
 .drill-paper .drill-stem { margin: 0 0 6px; }
 .drill-paper .drill-setup { max-height: 140px; margin: 6px 0 0; }
 .drill-paper .drill-hint { margin: 6px 0 0; }
+.drill-data-paper { max-height: 26%; }
+.drill-data-h {
+  font-size: 11.5px; font-weight: 600; color: var(--muted); margin-bottom: 2px;
+}
 .drill-obj { padding: 0 !important; overflow: auto; }
 .drill-obj-box { padding: 18px; display: flex; flex-direction: column; gap: 10px; max-width: 620px; }
 .drill-obj-box .drill-stem { margin: 0 0 4px; }

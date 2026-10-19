@@ -27,7 +27,7 @@ html[data-theme="light"] body { background: #f6f8fa; }
 <link rel="stylesheet" href="/vendor/codemirror/codemirror.css">
 <link rel="stylesheet" href="/vendor/codemirror/addon/hint/show-hint.css">
 <link rel="stylesheet" href="/fonts/misans/misans.css">
-<link rel="stylesheet" href="/style.css?v=123">
+<link rel="stylesheet" href="/style.css?v=125">
 </head>
 <body>
 <div id="app" v-cloak>
@@ -311,7 +311,7 @@ html[data-theme="light"] body { background: #f6f8fa; }
                     <e-icon :name="p.course==='python' ? 'code' : (p.course==='basic' ? 'list' : (p.single ? 'shield' : 'database'))" :size="18"></e-icon>
                   </span>
                   <span class="pc-title-wrap">
-                    <span class="pc-title">{{ p.title }}</span>
+                    <span class="pc-title">{{ qTitle(p.title) }}</span>
                     <span class="pc-sub">
                       <span v-if="p.uploader">{{ p.uploader }}</span>
                       <span v-if="p.publishedAt">{{ p.publishedAt.slice(0,10) }}</span>
@@ -353,7 +353,7 @@ html[data-theme="light"] body { background: #f6f8fa; }
             <button class="btn mini ghost" @click="backToPapers">
               <e-icon name="chevron-right" :size="13" style="transform:rotate(180deg);display:inline-block"></e-icon> 返回清单
             </button>
-            <span class="auth-title">{{ paperCurrent.title }}</span>
+            <span class="auth-title">{{ qTitle(paperCurrent.title) }}</span>
             <span class="spacer"></span>
             <button v-if="paperCurrent.mine && user && user.canPublish" class="btn mini ghost"
                     @click="renamePaper(paperCurrent)"><e-icon name="file-text" :size="12"></e-icon> 改名</button>
@@ -373,7 +373,7 @@ html[data-theme="light"] body { background: #f6f8fa; }
                       :class="{done: q.passed}" @click="startDrill(q)">
                 <span class="pq-no">{{ String(q.no).padStart(2,'0') }}</span>
                 <span class="pq-main">
-                  <span class="pq-title">{{ q.title }}</span>
+                  <span class="pq-title">{{ qTitle(q.stem || q.title) }}</span>
                   <span class="pq-sub">{{ q.typeLabel }} · {{ q.judgeLabel }}</span>
                 </span>
                 <span class="pq-score"><b>{{ q.gotScore }}</b> / {{ q.score }} 分</span>
@@ -399,7 +399,7 @@ html[data-theme="light"] body { background: #f6f8fa; }
               <button class="icon-btn" title="返回" @click="paperCurrent ? backToPaper() : backToPapers()">
                 <e-icon name="chevron-right" :size="14" style="transform:rotate(180deg);display:inline-block"></e-icon>
               </button>
-              <span class="panel-title">{{ paperCurrent ? paperCurrent.title : '练习题目' }}</span>
+              <span class="panel-title">{{ paperCurrent ? qTitle(paperCurrent.title) : '练习题目' }}</span>
               <span class="spacer"></span>
               <span class="drill-side-score" v-if="paperCurrent">
                 {{ paperCurrent.myScore }}/{{ paperCurrent.totalScore }}
@@ -419,7 +419,7 @@ html[data-theme="light"] body { background: #f6f8fa; }
                   <e-icon v-if="d.passed" name="check" :size="13"></e-icon>
                   <template v-else>{{ String(di+1).padStart(2,'0') }}</template>
                 </span>
-                <span class="drill-t">{{ d.title }}</span>
+                <span class="drill-t">{{ qTitle(d.title) }}</span>
                 <span class="drill-pts">{{ d.score }}分</span>
                 <span v-if="drillCourse==='wrong'" class="drill-tag err">做错</span>
                 <span v-else-if="!d.status" class="drill-tag">草稿</span>
@@ -427,6 +427,10 @@ html[data-theme="light"] body { background: #f6f8fa; }
               <div v-if="!drillSideList.length" class="tbempty">这里还没有练习题</div>
 
               <!-- SQL 题的沙箱库（和主页的数据库树一样，可点表预览） -->
+              <div v-if="drillCurrent && drillCurrent.type==='sql' && drillSandbox.loading"
+                   class="drill-db-loading">
+                <div class="spin small"></div> 正在准备本题数据库…
+              </div>
               <template v-if="drillCurrent && drillCurrent.type==='sql' && drillSandbox.db">
                 <div class="dbnode sel drill-dbnode" style="margin-top:10px">
                   <span class="tb-ico"><e-icon name="database" :size="14"></e-icon></span>
@@ -452,9 +456,15 @@ html[data-theme="light"] body { background: #f6f8fa; }
           <div class="wsmain">
             <template v-if="!drillCurrent">
               <div class="drill-blank">
-                <e-icon name="target" :size="34"></e-icon>
-                <p>从左边挑一道题开始</p>
-                <p class="tip">SQL 题会在你自己的沙箱数据库里真实执行，Python 题在沙箱里真实运行</p>
+                <template v-if="drillLoading">
+                  <div class="spin"></div>
+                  <p>正在准备本题…</p>
+                </template>
+                <template v-else>
+                  <e-icon name="target" :size="34"></e-icon>
+                  <p>从左边挑一道题开始</p>
+                  <p class="tip">SQL 题会在你自己的沙箱数据库里真实执行，Python 题在沙箱里真实运行</p>
+                </template>
               </div>
             </template>
             <template v-else>
@@ -466,19 +476,20 @@ html[data-theme="light"] body { background: #f6f8fa; }
                   </button>
                   <span class="drill-idx">{{ String(drillSideList.findIndex(x => drillCurrent && x.id === drillCurrent.id) + 1).padStart(2, '0') }}</span>
                   <span class="drill-badge">{{ drillCurrent.typeLabel }}</span>
-                  <span class="panel-title">{{ drillCurrent.title }}</span>
+                  <span class="panel-title">{{ qTitle(drillCurrent.title) }}</span>
                   <span class="drill-pts-badge">{{ drillCurrent.score }} 分</span>
                   <span v-if="drillCurrent.passed" class="drill-passed"><e-icon name="check" :size="12"></e-icon> 已通过</span>
                   <span class="spacer"></span>
                   <button v-if="drillCurrent.setupSql" class="btn mini ghost" @click="drillShowSetup=!drillShowSetup">
-                    <e-icon name="database" :size="12"></e-icon> {{ drillShowSetup ? '隐藏题面' : '题面' }}
+                    <e-icon name="database" :size="12"></e-icon> {{ drillShowSetup ? '隐藏数据' : '题目数据' }}
                   </button>
                   <button v-if="drillCurrent.hint" class="btn mini ghost" @click="drillShowHint=!drillShowHint">
                     <e-icon name="shield" :size="12"></e-icon> 提示
                   </button>
                   <button v-if="drillCurrent.mine && user && user.canPublish" class="btn mini ghost" @click="openDrillEditor(drillCurrent)">编辑</button>
                   <button class="btn mini ghost" @click="clearDrillCode"><e-icon name="x" :size="13"></e-icon> 清空</button>
-                  <button class="btn" :disabled="drillBusy || !drillCodeType" @click="runDrillOnly">
+                  <button class="btn" :disabled="drillBusy || !drillCodeType ||
+                          (drillCurrent.type==='sql' && !drillSandbox.db)" @click="runDrillOnly">
                     <e-icon name="play" :size="13"></e-icon> 运行
                   </button>
                   <button class="btn run run-btn" :disabled="drillBusy" @click="submitDrill">
@@ -486,11 +497,15 @@ html[data-theme="light"] body { background: #f6f8fa; }
                   </button>
                 </div>
 
-                <!-- 题面（可展开） -->
-                <div v-show="drillShowSetup || drillShowHint" class="drill-paper">
+                <!-- 题干常显：进题就能看到要求；初始化数据和提示按需展开 -->
+                <div v-if="drillCodeType && (drillCurrent.stem || (drillShowHint && drillCurrent.hint))"
+                     class="drill-paper">
                   <p class="drill-stem" v-if="drillCurrent.stem">{{ drillCurrent.stem }}</p>
-                  <pre v-if="drillShowSetup && drillCurrent.setupSql" class="drill-setup">{{ drillCurrent.setupSql }}</pre>
                   <div v-if="drillShowHint && drillCurrent.hint" class="drill-hint">{{ drillCurrent.hint }}</div>
+                </div>
+                <div v-if="drillShowSetup && drillCurrent.setupSql" class="drill-paper drill-data-paper">
+                  <div class="drill-data-h">题目数据（初始化 SQL）</div>
+                  <pre class="drill-setup">{{ drillCurrent.setupSql }}</pre>
                 </div>
 
                 <!-- 代码题：编辑器（与主页一致） -->
@@ -504,7 +519,8 @@ html[data-theme="light"] body { background: #f6f8fa; }
                   <div class="drill-obj-box">
                     <p class="drill-stem" v-if="drillCurrent.stem">{{ drillCurrent.stem }}</p>
                     <template v-if="drillCurrent.type==='fill'">
-                      <input type="text" class="drill-fill" v-model.trim="drillFill" placeholder="在这里作答" @keyup.enter="submitDrill">
+                      <input type="text" class="drill-fill" v-model.trim="drillFill" placeholder="在这里作答"
+                             @input="saveDrillDraft" @keyup.enter="submitDrill">
                     </template>
                     <template v-else>
                       <button v-for="o in drillCurrent.options" :key="o.key" class="drill-opt" :class="{on: drillPick===o.key}"
@@ -1844,6 +1860,6 @@ INSERT INTO course VALUES (1,'数学');</pre>
 <script src="/vendor/codemirror/addon/display/placeholder.js"></script>
 <script src="/vendor/codemirror/addon/hint/show-hint.js"></script>
 <script src="/vendor/codemirror/addon/hint/sql-hint.js"></script>
-<script src="/app.js?v=122"></script>
+<script src="/app.js?v=124"></script>
 </body>
 </html>
