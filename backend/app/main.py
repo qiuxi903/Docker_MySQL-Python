@@ -987,6 +987,8 @@ class DrillBody(BaseModel):
     testCases: str = ""
     publish: bool = False
     answer_text: object = ""
+    paper: str = ""
+    score: int = 0
 
 
 @app.get("/api/drills/progress")
@@ -1025,6 +1027,49 @@ def api_drills_list(request: Request, course: str = ""):
         raise HTTPException(400, str(e))
 
 
+# ---------- 试卷（练习页的卡片清单：一套题 = 一张卡片） ----------
+
+@app.get("/api/papers")
+def api_papers_list(request: Request, course: str = ""):
+    a = acct(sess(request))
+    try:
+        return {"papers": drills.list_papers(a, course=course)}
+    except DrillError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.get("/api/papers/{pid}")
+def api_paper_detail(pid: int, request: Request):
+    a = acct(sess(request))
+    try:
+        return drills.get_paper(a, pid)
+    except DrillError as e:
+        raise HTTPException(400, str(e))
+
+
+class PaperRenameBody(BaseModel):
+    title: str = ""
+
+
+@app.post("/api/papers/{pid}/rename")
+def api_paper_rename(pid: int, b: PaperRenameBody, request: Request):
+    a = acct(sess(request))
+    try:
+        return drills.rename_paper(a, pid, b.title)
+    except DrillError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.delete("/api/papers/{pid}")
+def api_paper_delete(pid: int, request: Request):
+    a = acct(sess(request))
+    try:
+        drills.delete_paper(a, pid)
+        return {"ok": True}
+    except DrillError as e:
+        raise HTTPException(400, str(e))
+
+
 @app.post("/api/drills")
 def api_drills_save(b: DrillBody, request: Request):
     a = acct(sess(request))
@@ -1036,6 +1081,7 @@ def api_drills_save(b: DrillBody, request: Request):
             "expectedOutput": b.expectedOutput, "options": b.options,
             "answer": b.answer, "hint": b.hint,
             "judgeMode": b.judgeMode, "testCases": b.testCases,
+            "paper": b.paper, "score": b.score,
         })
         if b.publish:
             drills.publish(a, r["id"], True)

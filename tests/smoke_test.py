@@ -665,12 +665,13 @@ code, r = call("/api/author/try_sql", {"setup": S2, "sql": "SELECT * FROM mm"}, 
 check("无出题权限不能试跑", code == 403, f"{code} {str(r)[:100]}")
 
 print("== 8h. 题目包导入（题干 + 答案 + 数据） ==")
-QP_STEM = """【题  干】
-人力资源管理系统数据库db_hrm，包含 t_employee、t_department、t_salary 三张表。
+QP_TAG = uuid.uuid4().hex[:6]
+QP_STEM = f"""【题  干】
+人力资源管理系统数据库db_hrm {QP_TAG}，包含 t_employee、t_department、t_salary 三张表。
 
-1. 创建采购表 t_purchase，字段 id INT 主键、name VARCHAR(30)。
-2. 向 t_employee 插入员工 10051 林子山。
-3. 查询薪资 6000 到 8000 的记录。
+1. 创建采购表 t_purchase {QP_TAG}，字段 id INT 主键、name VARCHAR(30)。
+2. 向 t_employee 插入员工 10051 林子山 {QP_TAG}。
+3. 查询薪资 6000 到 8000 的记录 {QP_TAG}。
 """
 QP_ANSWERS = """-- 1
 CREATE TABLE t_purchase (
@@ -792,9 +793,53 @@ _, r = call(f"/api/drills/{qp_ids[2]}/submit",
             {"answer_text": "SELECT * FROM t_salary WHERE money > 9000;"}, token=tok_md)
 check("题目包：错误查询被拒", r.get("passed") is False, str(r)[:160])
 
+# ---- 试卷卡片与得分 ----
+code, pl = call("/api/papers?course=sql", token=tok_md)
+mine = [p for p in pl.get("papers", []) if p["id"] == made.get("paperId")]
+check("试卷：导入生成一张卡片", code == 200 and len(mine) == 1, str(pl)[:200])
+if mine:
+    card = mine[0]
+    check("试卷：卡片带题数与总分",
+          card["questionCount"] == 3 and card["totalScore"] == 30, str(card)[:200])
+    check("试卷：卡片显示我的得分", card["myScore"] == 30 and card["doneCount"] == 3,
+          str(card)[:200])
+    code, pd = call(f"/api/papers/{card['id']}", token=tok_md)
+    qs = pd.get("questions") or []
+    check("试卷：详情列出全部题目", code == 200 and len(qs) == 3, str(pd)[:160])
+    check("试卷：详情按题号排序", [q["no"] for q in qs] == [1, 2, 3], str([q["no"] for q in qs]))
+    check("试卷：详情不泄露答案",
+          not any(k in qs[0] for k in ("verifySql", "expectedOutput", "answer", "answerJson")),
+          str(list(qs[0].keys()))[:160])
+    check("试卷：详情显示每题得分与状态",
+          qs[0]["gotScore"] == qs[0]["score"] and qs[0]["passed"] is True, str(qs[0])[:160])
+    # 改名
+    code, rn = call(f"/api/papers/{card['id']}/rename", {"title": "改名后的试卷"}, token=tok_ad2)
+    check("试卷：可以改名", code == 200 and rn.get("title") == "改名后的试卷", str(rn)[:120])
+    # 非本人不能改名
+    code, r = call(f"/api/papers/{card['id']}/rename", {"title": "x"}, token=tok_md)
+    check("试卷：别人不能改名", code == 400, f"{code} {str(r)[:100]}")
+    # 学生看不到草稿试卷
+    code, r = call(f"/api/papers/{card['id']}", token=tok_md)
+    check("试卷：已发布学生可看", code == 200, str(r)[:100])
+
+# 提交判分返回分值
+code, r = call(f"/api/drills/{qp_ids[0]}/submit",
+               {"answer_text": answers["-- 1"]}, token=tok_md)
+check("判分：返回本题得分",
+      r.get("score") == r.get("maxScore") == 10, str({k: r.get(k) for k in
+                                                     ("passed", "score", "maxScore")}))
+check("判分：返回本套累计得分",
+      (r.get("paper") or {}).get("totalScore") == 30 and
+      (r.get("paper") or {}).get("myScore") == 30, str(r.get("paper"))[:160])
+_, r = call(f"/api/drills/{qp_ids[0]}/submit", {"answer_text": "SELECT 1;"}, token=tok_md)
+check("判分：未通过记 0 分", r.get("score") == 0 and r.get("maxScore") == 10, str(r)[:120])
+
 # 清理
 for i in qp_ids:
     call(f"/api/drills/{i}", token=tok_ad2, method="DELETE")
+code, pl = call("/api/papers?course=sql", token=tok_ad2)
+check("试卷：删空后卡片消失",
+      not any(p["id"] == made.get("paperId") for p in pl.get("papers", [])), str(pl)[:160])
 
 print("== 8f. 用户系统与管理后台 ==")
 tok_ad = admin_login()

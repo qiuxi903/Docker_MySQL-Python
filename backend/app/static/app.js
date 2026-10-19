@@ -312,6 +312,16 @@ const App = {
       qBusy: false,
       // 练习
       drillCourse: "sql",
+      drillView: "list",            // list 清单 / paper 试卷详情 / do 做题
+      papers: [],
+      paperCurrent: null,
+      papersBusy: false,
+      drillTabs: [
+        { value: "sql", label: "MySQL", icon: "database" },
+        { value: "python", label: "Python", icon: "code" },
+        { value: "basic", label: "客观题", icon: "list" },
+        { value: "wrong", label: "错题本", icon: "shield" },
+      ],
       drillList: [],
       drillCurrent: null,
       drillResult: null,
@@ -339,7 +349,8 @@ const App = {
       dq: { id: 0, course: "sql", type: "sql", typeLabel: "", title: "", stem: "", hint: "",
             setupSql: "", verifySql: "", starterCode: "", inputData: "", expectedOutput: "",
             optionsText: "", rightKey: "", multiKeys: [], fillAnswers: "", status: 1,
-            judgeMode: "result", cases: [], trySql: "", tryCode: "", importDb: "" },
+            judgeMode: "result", cases: [], trySql: "", tryCode: "", importDb: "",
+            paper: "", score: 10 },
       dqBusy: false,
       authorDirty: false,
       tryResult: null,
@@ -416,6 +427,34 @@ const App = {
         })));
     },
     drillPassedCount() { return this.drillList.filter(d => d.passed).length; },
+    // 做题页左侧列的是「本套试卷的题目」，不在试卷里时退回按分类的题目列表
+    drillSideList() {
+      return (this.paperCurrent && this.paperCurrent.questions) || this.drillList;
+    },
+    paperStats() {
+      const p = this.paperCurrent;
+      if (!p) return { total: 0, got: 0, done: 0, count: 0, pct: 0 };
+      const pct = p.totalScore ? Math.round(p.myScore / p.totalScore * 100) : 0;
+      return { total: p.totalScore, got: p.myScore, done: p.doneCount,
+               count: p.questionCount, pct };
+    },
+    courseStat() {
+      const p = this.drillProgress[this.drillCourse] || {};
+      return { total: p.total || 0, done: p.done || 0,
+               maxScore: p.maxScore || 0, myScore: p.myScore || 0 };
+    },
+    paperPct() {
+      return (p) => (p && p.totalScore
+        ? Math.round((p.myScore || 0) / p.totalScore * 100) : 0);
+    },
+    courseProgress() {
+      const out = {};
+      for (const t of this.drillTabs) {
+        const p = this.drillProgress[t.value];
+        out[t.value] = p ? p.done : 0;
+      }
+      return out;
+    },
     textChoice() { return ["single", "multiple", "boolean"].includes(this.dq.type); },
     judgeModeOptions() { return this.judgeModes[this.dq.type] || []; },
     judgeModeHint() {
@@ -726,10 +765,110 @@ const App = {
       this.view = v;
       this.drawer = "";
       if (v === "community" && !this.community.length) this.loadCommunity();
-      if (v === "drills") this.loadDrills();
+      if (v === "drills") this.loadPapers();
     },
 
-    /* ---------- 练习（做题 / 判分） ---------- */
+    /* ---------- 练习：清单 → 试卷详情 → 做题 ---------- */
+
+    async loadPapers() {
+      this.papersBusy = true;
+      try {
+        const path = this.drillCourse === "wrong"
+          ? "/api/drills/wrong"
+          : "/api/papers?course=" + encodeURIComponent(this.drillCourse);
+        const [d, pr] = await Promise.all([this.api(path), this.api("/api/drills/progress")]);
+        this.drillProgress = pr.progress || {};
+        if (this.drillCourse === "wrong") {
+          // 错题本没有「套」的概念，直接把做错的题铺成卡片
+          this.papers = (d.drills || []).map(x => ({
+            id: -x.id, single: true, drillId: x.id, course: "wrong",
+            title: x.title, description: x.stem || "", questionCount: 1,
+            totalScore: x.score || 0, myScore: 0, doneCount: 0, triedCount: x.attempts || 0,
+            uploader: x.uploader, courseLabel: "错题重做", typeLabel: x.typeLabel,
+          }));
+        } else {
+          this.papers = d.papers || [];
+        }
+      } catch (e) { this.toast(e.message); }
+      finally { this.papersBusy = false; }
+    },
+
+    async switchDrillCourse(c) {
+      this.drillCourse = c;
+      this.drillView = "list";
+      this.paperCurrent = null;
+      this.drillCurrent = null;
+      this.drillResult = null;
+      await this.loadPapers();
+    },
+
+    backToPapers() {
+      this.drillView = "list";
+      this.paperCurrent = null;
+      this.drillCurrent = null;
+      this.drillResult = null;
+      this.loadPapers();
+    },
+
+    async openPaper(p) {
+      // 错题本里的卡片是单题，直接进做题页
+      if (p.single) {
+        this.paperCurrent = null;
+        this.drillView = "do";
+        await this.openDrill({ id: p.drillId });
+        return;
+      }
+      try {
+        this.paperCurrent = await this.api(`/api/papers/${p.id}`);
+        this.drillCurrent = null;
+        this.drillResult = null;
+        this.drillView = "paper";
+        window.scrollTo(0, 0);
+      } catch (e) { this.toast(e.message); }
+    },
+
+    async refreshPaper() {
+      if (!this.paperCurrent) return;
+      try {
+        this.paperCurrent = await this.api(`/api/papers/${this.paperCurrent.id}`);
+      } catch (e) { /* 忽略：刷新失败不影响做题 */ }
+    },
+
+    backToPaper() {
+      this.drillView = "paper";
+      this.drillCurrent = null;
+      this.drillResult = null;
+      this.refreshPaper();
+    },
+
+    async deletePaper(p) {
+      if (!await this.askConfirm("删除整套题",
+        `将删除「${p.title}」里的 ${p.questionCount} 道题和全部作答记录，无法恢复。继续？`)) return;
+      try {
+        await this.api(`/api/papers/${p.id}`, { method: "DELETE" });
+        this.toast("已删除整套题");
+        await this.loadPapers();
+      } catch (e) { this.toast(e.message); }
+    },
+
+    async renamePaper(p) {
+      const name = await this.askText("试卷名称", "练习页卡片上显示的标题", p.title);
+      if (name === null) return;
+      const t = String(name).trim();
+      if (!t || t === p.title) return;
+      try {
+        await this.api(`/api/papers/${p.id}/rename`, { method: "POST", body: { title: t } });
+        this.toast("已改名");
+        if (this.paperCurrent && this.paperCurrent.id === p.id) this.paperCurrent.title = t;
+        await this.loadPapers();
+      } catch (e) { this.toast(e.message); }
+    },
+
+    async startDrill(d) {
+      this.drillView = "do";
+      await this.openDrill(d);
+    },
+
     async loadDrills(autopick) {
       try {
         const path = this.drillCourse === "wrong"
@@ -745,16 +884,8 @@ const App = {
           const fresh = this.drillList.find(x => x.id === this.drillCurrent.id);
           if (fresh) { this.drillCurrent = Object.assign({}, this.drillCurrent, fresh); return; }
         }
-        // 进入练习页自动打开第一题，右边不留空白
         if (autopick !== false && this.drillList.length) await this.openDrill(this.drillList[0]);
       } catch (e) { this.toast(e.message); }
-    },
-
-    async switchDrillCourse(c) {
-      this.drillCourse = c;
-      this.drillCurrent = null;
-      this.drillResult = null;
-      await this.loadDrills();
     },
 
     async openDrill(d) {
@@ -875,7 +1006,8 @@ const App = {
     exitQpack() {
       this.view = "drills";
       this.qpack = null;
-      this.loadDrills();
+      this.drillView = "list";
+      this.loadPapers();
     },
     resetQpack() { this.qpack = null; },
 
@@ -938,7 +1070,8 @@ const App = {
         this.qpack = null;
         this.view = "drills";
         this.drillCourse = "sql";
-        await this.loadDrills();
+        this.drillView = "list";
+        await this.loadPapers();
       } catch (e) { this.toast(e.message); }
       finally { this.qpackBusy = false; }
     },
@@ -1032,7 +1165,8 @@ const App = {
     exitAuthor() {
       this.view = "drills";
       this.authorDirty = false;
-      this.loadDrills();
+      this.drillView = "list";
+      this.loadPapers();
     },
     pickDrillType(t) {
       this.dq.type = t;
@@ -1074,6 +1208,9 @@ const App = {
           cases,
           trySql: d.verifySql || "",
           tryCode: d.starterCode || "",
+          paper: this.paperCurrent && this.paperCurrent.id === d.paperId
+            ? this.paperCurrent.title : "",
+          score: d.score || 10,
         };
       } else {
         this.dq = {
@@ -1083,6 +1220,7 @@ const App = {
           optionsText: "", rightKey: "", multiKeys: [], fillAnswers: "", status: 1,
           judgeMode: "result", cases: [{ input: "", expected: "" }],
           trySql: "", tryCode: "",
+          paper: this.paperCurrent ? this.paperCurrent.title : "", score: 10,
         };
       }
       this.authorDirty = false;
@@ -1098,7 +1236,7 @@ const App = {
         hint: d.hint, setupSql: d.setupSql, verifySql: d.verifySql,
         starterCode: d.starterCode, inputData: d.inputData,
         expectedOutput: d.expectedOutput, options: [], answer: {}, publish,
-        judgeMode: d.judgeMode,
+        judgeMode: d.judgeMode, paper: d.paper || "", score: d.score || 10,
         testCases: d.type === "python" && d.judgeMode === "tests"
           ? JSON.stringify((d.cases || []).filter(c => (c.input || "").trim() !== ""
                                                      || (c.expected || "").trim() !== ""))
@@ -1136,7 +1274,8 @@ const App = {
         this.authorDirty = false;
         this.toast(publish ? "题目已发布，学生现在能做了" : "已保存草稿");
         this.drillCourse = this.dq.course === "basic" ? "basic" : this.dq.course;
-        await this.loadDrills();
+        this.drillView = "list";
+        await this.loadPapers();
         return r;
       } catch (e) { this.toast(e.message); }
       finally { this.dqBusy = false; }
@@ -1207,7 +1346,7 @@ const App = {
       try {
         await this.api(`/api/drills/${this.dq.id}/publish`, { method: "POST", body: { publish: on } });
         this.toast(on ? "已发布" : "已撤回为草稿");
-        await this.loadDrills();
+        await this.loadPapers();
       } catch (e) { this.toast(e.message); }
     },
 
@@ -1314,8 +1453,11 @@ const App = {
         });
         this.drillResult = r;
         this.scrollConsole("drillConsoleEl");
-        this.toast(r.passed ? "通过！" : (r.reason || "没通过，再想想"));
-        await this.loadDrills();
+        const got = r.score != null ? `本题 ${r.score}/${r.maxScore} 分` : "";
+        const tot = r.paper ? ` · 本套 ${r.paper.myScore}/${r.paper.totalScore} 分` : "";
+        this.toast(r.passed ? `通过！${got}${tot}` : (r.reason || "没通过，再想想"));
+        await this.loadDrills(false);
+        this.refreshPaper();
         const fresh = this.drillList.find(x => x.id === d.id);
         if (fresh) this.drillCurrent = Object.assign({}, this.drillCurrent, fresh);
       } catch (e) { this.toast(e.message); }

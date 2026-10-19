@@ -55,6 +55,9 @@ TYPE_LABEL = {"sql": "SQL 练习题", "python": "Python 练习题", "single": "�
 TITLE_MAX = 160
 DRILL_MAX = 200          # 每人最多题目数
 PY_RUN_TIMEOUT = 25.0    # 判分时沙箱最长等待（秒）
+SCORE_DEFAULT = 10       # 单题默认分值
+SCORE_MIN, SCORE_MAX = 1, 100
+PAPER_TITLE_MAX = 120
 
 
 class DrillError(Exception):
@@ -104,6 +107,30 @@ def init():
                             "ADD COLUMN test_cases MEDIUMTEXT")
             except Exception:
                 pass
+            # 一套题 = 一张试卷卡片：题目归属试卷，并带分值
+            cur.execute(f"""
+                CREATE TABLE IF NOT EXISTS {q_ident(C.COMMUNITY_DB)}.drill_papers (
+                    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                    account_id BIGINT NOT NULL,
+                    uploader VARCHAR(64) NOT NULL DEFAULT '',
+                    course VARCHAR(16) NOT NULL DEFAULT 'sql',
+                    title VARCHAR(200) NOT NULL DEFAULT '',
+                    description TEXT,
+                    status TINYINT(1) NOT NULL DEFAULT 0,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    published_at DATETIME NULL,
+                    KEY idx_owner (account_id),
+                    KEY idx_course (course, status)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+            try:
+                cur.execute(f"ALTER TABLE {q_ident(C.COMMUNITY_DB)}.drills "
+                            f"ADD COLUMN paper_id BIGINT NOT NULL DEFAULT 0")
+                cur.execute(f"ALTER TABLE {q_ident(C.COMMUNITY_DB)}.drills "
+                            f"ADD COLUMN score INT NOT NULL DEFAULT {SCORE_DEFAULT}")
+            except Exception:
+                pass
+            _migrate_papers(cur)
             cur.execute(f"""
                 CREATE TABLE IF NOT EXISTS {q_ident(C.COMMUNITY_DB)}.drill_submissions (
                     id BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -120,6 +147,67 @@ def init():
             """)
     finally:
         conn.close()
+
+
+def _migrate_papers(cur):
+    """旧库升级：把还没有归属试卷的题目按「同一次创建」归成一套，各建一张试卷。
+
+    同一次批量导入（题目包）的题创建时间在同一秒内，据此分组；单独出的题各自成一套。
+    """
+    db = q_ident(C.COMMUNITY_DB)
+    cur.execute(f"""SELECT id, account_id, uploader, course, title, status, created_at
+                    FROM {db}.drills WHERE paper_id=0
+                    ORDER BY account_id, course, created_at, id""")
+    rows = cur.fetchall()
+    groups = {}
+    for r in rows:
+        groups.setdefault((r[1], r[3], str(r[6])), []).append(r)
+    for (acc, course, _ts), items in groups.items():
+        title = (items[0][4] or "未命名试卷")[:PAPER_TITLE_MAX]
+        if len(items) > 1:
+            title = f"{title[:40]} 等 {len(items)} 题"
+        published = any(x[5] for x in items)
+        cur.execute(f"""INSERT INTO {db}.drill_papers
+                        (account_id, uploader, course, title, description, status,
+                         created_at, published_at)
+                        VALUES (%s,%s,%s,%s,'',%s,%s,%s)""",
+                    (acc, items[0][2], course, title, 1 if published else 0,
+                     items[0][6], items[0][6] if published else None))
+        pid = cur.lastrowid
+        ids = [x[0] for x in items]
+        marks = ",".join(["%s"] * len(ids))
+        cur.execute(f"UPDATE {db}.drills SET paper_id=%s WHERE id IN ({marks})", [pid] + ids)
+
+
+def _ensure_paper(cur, account: dict, course: str, title: str, description: str = "",
+                  publish: bool = False) -> int:
+    """按名字找试卷，没有就建一张（同一账号 + 分类 + 同名视为同一套）。"""
+    name = (title or "").strip()[:PAPER_TITLE_MAX] or "未命名试卷"
+    cur.execute("""SELECT id FROM drill_papers
+                   WHERE account_id=%s AND course=%s AND title=%s LIMIT 1""",
+                (account["id"], course, name))
+    row = cur.fetchone()
+    if row:
+        return int(row[0])
+    cur.execute("""INSERT INTO drill_papers
+                   (account_id, uploader, course, title, description, status, published_at)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s)""",
+                (account["id"], account["display"], course, name, description or "",
+                 1 if publish else 0, None))
+    return int(cur.lastrowid)
+
+
+def _sync_paper_status(cur, paper_id: int):
+    """试卷可见性跟着题目走：只要有一道题发布了，这张卡片就算已发布。"""
+    if not paper_id:
+        return
+    cur.execute("""UPDATE drill_papers p
+                   SET p.status = (SELECT MAX(d.status) FROM drills d WHERE d.paper_id=p.id),
+                       p.published_at = COALESCE(
+                           p.published_at,
+                           (SELECT MIN(d.published_at) FROM drills d
+                            WHERE d.paper_id=p.id AND d.published_at IS NOT NULL))
+                   WHERE p.id=%s""", (paper_id,))
 
 
 # ---------------- 比对规则 ----------------
@@ -170,7 +258,8 @@ def normalize_text(s):
 
 _COLS = ("id, account_id, uploader, course, type, title, stem, setup_sql, verify_sql, "
          "starter_code, input_data, expected_output, options_json, answer_json, hint, "
-         "status, builtin, created_at, updated_at, published_at, judge_mode, test_cases")
+         "status, builtin, created_at, updated_at, published_at, judge_mode, test_cases, "
+         "paper_id, score")
 _N_DRILL_COLS = len(_COLS.split(","))          # 题面列数（后面才是进度列）
 
 
@@ -184,6 +273,7 @@ def _row_to_dict(r):
         "createdAt": str(r[17]), "updatedAt": str(r[18]),
         "publishedAt": str(r[19]) if r[19] else "",
         "judgeMode": r[20] or "", "testCases": r[21] or "",
+        "paperId": int(r[22] or 0), "score": int(r[23] or 0),
     }
 
 
@@ -246,6 +336,181 @@ def list_drills(account: dict, course: str = "", mine: bool = False) -> list[dic
     return out
 
 
+# ---------------- 试卷（一套题 = 一张卡片） ----------------
+
+def _paper_row(r) -> dict:
+    return {
+        "id": int(r[0]), "uploader": r[2] or "", "course": r[3] or "sql",
+        "title": r[4] or "(未命名试卷)", "description": r[5] or "",
+        "status": int(r[6] or 0), "createdAt": str(r[7]),
+        "publishedAt": str(r[8]) if r[8] else "",
+        "questionCount": int(r[9] or 0), "totalScore": int(r[10] or 0),
+        "myScore": int(r[11] or 0), "doneCount": int(r[12] or 0),
+        "triedCount": int(r[13] or 0),
+    }
+
+
+_PAPER_SELECT = """
+    SELECT p.id, p.account_id, p.uploader, p.course, p.title, p.description,
+           p.status, p.created_at, p.published_at,
+           COUNT(d.id) AS qn,
+           COALESCE(SUM(d.score), 0) AS total_score,
+           COALESCE(SUM(CASE WHEN s.passed = 1 THEN d.score ELSE 0 END), 0) AS my_score,
+           COALESCE(SUM(CASE WHEN s.passed = 1 THEN 1 ELSE 0 END), 0) AS done_n,
+           COALESCE(SUM(CASE WHEN s.attempts > 0 THEN 1 ELSE 0 END), 0) AS tried_n
+      FROM drill_papers p
+      LEFT JOIN drills d
+             ON d.paper_id = p.id AND (d.status = 1 OR d.account_id = %s)
+      LEFT JOIN (SELECT drill_id, MAX(passed) AS passed, COUNT(*) AS attempts
+                   FROM drill_submissions WHERE account_id = %s
+                  GROUP BY drill_id) s ON s.drill_id = d.id
+"""
+
+
+def list_papers(account: dict, course: str = "") -> list[dict]:
+    """练习页的卡片清单：已发布的试卷 + 自己的草稿试卷，带我的得分与进度。"""
+    where = ["(p.status = 1 OR p.account_id = %s)"]
+    params = [account["id"], account["id"], account["id"]]
+    if course:
+        where.append("p.course = %s")
+        params.append(course)
+    conn = root_conn(C.COMMUNITY_DB)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(f"""{_PAPER_SELECT}
+                            WHERE {' AND '.join(where)}
+                            GROUP BY p.id
+                            HAVING qn > 0
+                            ORDER BY FIELD(p.course,'sql','python','basic'),
+                                     p.status DESC, p.published_at DESC, p.id DESC""", params)
+            rows = cur.fetchall()
+    finally:
+        conn.close()
+    out = []
+    for r in rows:
+        p = _paper_row(r)
+        p["courseLabel"] = COURSE_LABEL.get(p["course"], p["course"])
+        p["mine"] = r[1] == account["id"]
+        p["finished"] = p["questionCount"] > 0 and p["doneCount"] >= p["questionCount"]
+        out.append(p)
+    return out
+
+
+def get_paper(account: dict, pid: int) -> dict:
+    """试卷详情：题目清单（不含答案）+ 我的得分。"""
+    conn = root_conn(C.COMMUNITY_DB)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(f"""{_PAPER_SELECT}
+                            WHERE p.id = %s
+                            GROUP BY p.id""",
+                        [account["id"], account["id"], pid])
+            r = cur.fetchone()
+            if not r:
+                raise DrillError("试卷不存在")
+            if not r[6] and r[1] != account["id"] and account.get("role") != "admin":
+                raise DrillError("这是别人的草稿，不能查看")
+            cur.execute(f"""SELECT d.{_COLS.replace(', ', ', d.')},
+                                   MAX(s.passed) AS passed, COUNT(s.id) AS attempts,
+                                   MAX(s.created_at) AS last_at
+                              FROM drills d
+                              LEFT JOIN drill_submissions s
+                                     ON s.drill_id = d.id AND s.account_id = %s
+                             WHERE d.paper_id = %s AND (d.status = 1 OR d.account_id = %s)
+                             GROUP BY d.id
+                             ORDER BY d.id ASC""",
+                        (account["id"], pid, account["id"]))
+            rows = cur.fetchall()
+    finally:
+        conn.close()
+    p = _paper_row(r)
+    p["courseLabel"] = COURSE_LABEL.get(p["course"], p["course"])
+    p["mine"] = r[1] == account["id"]
+    p["finished"] = p["questionCount"] > 0 and p["doneCount"] >= p["questionCount"]
+    qs = []
+    for i, row in enumerate(rows, 1):
+        n = _N_DRILL_COLS
+        d = _public(_row_to_dict(row[:n]), with_answer=False)
+        d["no"] = i
+        d["passed"] = bool(row[n])
+        d["attempts"] = int(row[n + 1] or 0)
+        d["lastAt"] = str(row[n + 2]) if row[n + 2] else ""
+        d["gotScore"] = d["score"] if d["passed"] else 0
+        qs.append(d)
+    p["questions"] = qs
+    return p
+
+
+def paper_score(account_id: int, paper_id: int) -> dict:
+    """某张试卷里「我」的得分汇总（提交后回显用）。"""
+    if not paper_id:
+        return {}
+    conn = root_conn(C.COMMUNITY_DB)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""SELECT COUNT(d.id), COALESCE(SUM(d.score), 0),
+                                  COALESCE(SUM(CASE WHEN s.passed = 1 THEN d.score ELSE 0 END), 0),
+                                  COALESCE(SUM(CASE WHEN s.passed = 1 THEN 1 ELSE 0 END), 0)
+                             FROM drills d
+                             LEFT JOIN (SELECT drill_id, MAX(passed) AS passed
+                                          FROM drill_submissions WHERE account_id = %s
+                                         GROUP BY drill_id) s ON s.drill_id = d.id
+                            WHERE d.paper_id = %s AND d.status = 1""", (account_id, paper_id))
+            r = cur.fetchone()
+            cur.execute("SELECT title FROM drill_papers WHERE id=%s", (paper_id,))
+            t = cur.fetchone()
+    finally:
+        conn.close()
+    return {"id": paper_id, "title": (t[0] if t else "") or "",
+            "questionCount": int(r[0] or 0), "totalScore": int(r[1] or 0),
+            "myScore": int(r[2] or 0), "doneCount": int(r[3] or 0)}
+
+
+def rename_paper(account: dict, pid: int, title: str) -> dict:
+    """改试卷名（练习页卡片上的标题）。"""
+    name = (title or "").strip()[:PAPER_TITLE_MAX]
+    if not name:
+        raise DrillError("试卷名不能为空")
+    conn = root_conn(C.COMMUNITY_DB)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT account_id FROM drill_papers WHERE id=%s", (pid,))
+            r = cur.fetchone()
+            if not r:
+                raise DrillError("试卷不存在")
+            if r[0] != account["id"] and account.get("role") != "admin":
+                raise DrillError("只能改自己的试卷")
+            cur.execute("UPDATE drill_papers SET title=%s WHERE id=%s", (name, pid))
+        conn.commit()
+    finally:
+        conn.close()
+    return {"id": pid, "title": name}
+
+
+def delete_paper(account: dict, pid: int):
+    """删掉整套题（连同它的题目与提交记录）。"""
+    conn = root_conn(C.COMMUNITY_DB)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT account_id FROM drill_papers WHERE id=%s", (pid,))
+            r = cur.fetchone()
+            if not r:
+                raise DrillError("试卷不存在")
+            if r[0] != account["id"] and account.get("role") != "admin":
+                raise DrillError("只能删除自己的试卷")
+            cur.execute("SELECT id FROM drills WHERE paper_id=%s AND builtin=1", (pid,))
+            if cur.fetchone():
+                raise DrillError("这套题里有内置题目，不能删除")
+            cur.execute("""DELETE s FROM drill_submissions s
+                           JOIN drills d ON d.id = s.drill_id
+                           WHERE d.paper_id = %s""", (pid,))
+            cur.execute("DELETE FROM drills WHERE paper_id=%s", (pid,))
+            cur.execute("DELETE FROM drill_papers WHERE id=%s", (pid,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def get_full(did: int) -> dict:
     """完整题面（含 verify_sql / expected_output / answer）——仅服务端判分使用，绝不下发给学生。"""
     conn = root_conn(C.COMMUNITY_DB)
@@ -290,7 +555,10 @@ def progress(account: dict) -> dict:
     try:
         with conn.cursor() as cur:
             cur.execute("""SELECT d.course, COUNT(*) AS total,
-                                  SUM(CASE WHEN p.passed=1 THEN 1 ELSE 0 END) AS done
+                                  SUM(CASE WHEN p.passed=1 THEN 1 ELSE 0 END) AS done,
+                                  COALESCE(SUM(d.score), 0) AS max_score,
+                                  COALESCE(SUM(CASE WHEN p.passed=1 THEN d.score ELSE 0 END), 0)
+                                      AS my_score
                            FROM drills d
                            LEFT JOIN (SELECT drill_id, MAX(passed) AS passed
                                       FROM drill_submissions WHERE account_id=%s
@@ -301,8 +569,9 @@ def progress(account: dict) -> dict:
     finally:
         conn.close()
     res = {}
-    for course, total, done in rows:
-        res[course] = {"total": int(total or 0), "done": int(done or 0)}
+    for course, total, done, max_score, my_score in rows:
+        res[course] = {"total": int(total or 0), "done": int(done or 0),
+                       "maxScore": int(max_score or 0), "myScore": int(my_score or 0)}
     return res
 
 
@@ -364,11 +633,16 @@ def save(account: dict, did: int, p: dict) -> dict:
     _require_perm(account)
     dr_type = p.get("type") or "sql"
     title, course, judge_mode = _validate(account, p, dr_type)
+    try:
+        score = int(p.get("score") or SCORE_DEFAULT)
+    except (TypeError, ValueError):
+        score = SCORE_DEFAULT
+    score = max(SCORE_MIN, min(SCORE_MAX, score))
     conn = root_conn(C.COMMUNITY_DB)
     try:
         with conn.cursor() as cur:
             if did:
-                cur.execute("SELECT account_id, builtin FROM drills WHERE id=%s", (did,))
+                cur.execute("SELECT account_id, builtin, paper_id FROM drills WHERE id=%s", (did,))
                 row = cur.fetchone()
                 if not row:
                     raise DrillError("题目不存在")
@@ -376,11 +650,18 @@ def save(account: dict, did: int, p: dict) -> dict:
                     raise DrillError("只能改自己的题目")
                 if row[1]:
                     raise DrillError("内置题目不能改")
+                paper_id = int(row[2] or 0)
+                # 出题人填了试卷名 → 归到那张试卷；没填就沿用原来的归属
+                paper_name = (p.get("paper") or "").strip()
+                if paper_name:
+                    paper_id = _ensure_paper(cur, account, course, paper_name)
+                elif not paper_id:
+                    paper_id = _ensure_paper(cur, account, course, title)
                 cur.execute(f"""UPDATE drills SET course=%s, type=%s, title=%s, stem=%s,
                                        setup_sql=%s, verify_sql=%s, starter_code=%s,
                                        input_data=%s, expected_output=%s,
                                        options_json=%s, answer_json=%s, hint=%s,
-                                       judge_mode=%s, test_cases=%s
+                                       judge_mode=%s, test_cases=%s, paper_id=%s, score=%s
                                WHERE id=%s""",
                             (course, dr_type, title, p.get("stem") or "",
                              p.get("setupSql") or "", p.get("verifySql") or "",
@@ -389,28 +670,32 @@ def save(account: dict, did: int, p: dict) -> dict:
                              json.dumps(p.get("options") or [], ensure_ascii=False),
                              json.dumps(p.get("answer") or {}, ensure_ascii=False),
                              p.get("hint") or "", judge_mode,
-                             p.get("testCases") or "", did))
+                             p.get("testCases") or "", paper_id, score, did))
             else:
                 cur.execute("SELECT COUNT(*) FROM drills WHERE account_id=%s", (account["id"],))
                 if cur.fetchone()[0] >= DRILL_MAX:
                     raise DrillError(f"最多出 {DRILL_MAX} 道题")
+                # 一道题也是一套：没指定试卷名就用题目标题当试卷名
+                paper_name = (p.get("paper") or "").strip() or title
+                paper_id = _ensure_paper(cur, account, course, paper_name)
                 cur.execute(f"""INSERT INTO drills
                     (account_id, uploader, course, type, title, stem, setup_sql, verify_sql,
                      starter_code, input_data, expected_output, options_json, answer_json, hint,
-                     judge_mode, test_cases)
-                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                     judge_mode, test_cases, paper_id, score)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                             (account["id"], account["display"], course, dr_type, title,
                              p.get("stem") or "", p.get("setupSql") or "",
                              p.get("verifySql") or "", p.get("starterCode") or "",
                              p.get("inputData") or "", p.get("expectedOutput") or "",
                              json.dumps(p.get("options") or [], ensure_ascii=False),
                              json.dumps(p.get("answer") or {}, ensure_ascii=False),
-                             p.get("hint") or "", judge_mode, p.get("testCases") or ""))
+                             p.get("hint") or "", judge_mode, p.get("testCases") or "",
+                             paper_id, score))
                 did = cur.lastrowid
         conn.commit()
     finally:
         conn.close()
-    return {"id": did}
+    return {"id": did, "paperId": paper_id, "score": score}
 
 
 def publish(account: dict, did: int, on: bool) -> dict:
@@ -451,6 +736,10 @@ def publish(account: dict, did: int, on: bool) -> dict:
                            published_at=CASE WHEN %s=1 AND published_at IS NULL THEN NOW()
                                              WHEN %s=0 THEN NULL ELSE published_at END
                            WHERE id=%s""", (1 if on else 0, 1 if on else 0, 1 if on else 0, did))
+            cur.execute("SELECT paper_id FROM drills WHERE id=%s", (did,))
+            pr = cur.fetchone()
+            if pr:
+                _sync_paper_status(cur, int(pr[0] or 0))
         conn.commit()
     finally:
         conn.close()
@@ -461,7 +750,7 @@ def delete(account: dict, did: int):
     conn = root_conn(C.COMMUNITY_DB)
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT account_id, builtin FROM drills WHERE id=%s", (did,))
+            cur.execute("SELECT account_id, builtin, paper_id FROM drills WHERE id=%s", (did,))
             row = cur.fetchone()
             if not row:
                 raise DrillError("题目不存在")
@@ -471,6 +760,14 @@ def delete(account: dict, did: int):
                 raise DrillError("内置题目不能删除")
             cur.execute("DELETE FROM drill_submissions WHERE drill_id=%s", (did,))
             cur.execute("DELETE FROM drills WHERE id=%s", (did,))
+            # 一套题删空了就把这张卡片也收掉
+            pid = int(row[2] or 0)
+            if pid:
+                cur.execute("SELECT COUNT(*) FROM drills WHERE paper_id=%s", (pid,))
+                if not cur.fetchone()[0]:
+                    cur.execute("DELETE FROM drill_papers WHERE id=%s", (pid,))
+                else:
+                    _sync_paper_status(cur, pid)
         conn.commit()
     finally:
         conn.close()
@@ -810,9 +1107,12 @@ def create_from_package(account: dict, pkg: dict, publish: bool = True,
     conn = root_conn(C.COMMUNITY_DB)
     try:
         with conn.cursor() as cur:
-            # 同一份试卷重复导入时跳过同名题，避免点两次「创建」就多出一整套
-            cur.execute("SELECT title FROM drills WHERE account_id=%s AND course='sql'",
-                        (account["id"],))
+            paper_title = (pkg.get("title") or "未命名试卷")[:PAPER_TITLE_MAX]
+            # 先建一张试卷卡片，再往里放题；重复导入落到同一张卡片
+            paper_id = _ensure_paper(cur, account, "sql", paper_title,
+                                     pkg.get("description") or "", publish)
+            # 只跟「同一张试卷」里的题比：不同试卷可以有同名小题，重复导入才跳过
+            cur.execute("SELECT title FROM drills WHERE paper_id=%s", (paper_id,))
             existing = {r[0] for r in cur.fetchall()}
             for q in questions:
                 if not (q.get("answer") or "").strip():
@@ -824,22 +1124,27 @@ def create_from_package(account: dict, pkg: dict, publish: bool = True,
                     continue
                 # DDL / DML 用 state 判分：答案作为“校验语句”不合适时，改用查询校验
                 verify = q["answer"]
+                score = int(q.get("score") or SCORE_DEFAULT)
+                score = max(SCORE_MIN, min(SCORE_MAX, score))
                 cur.execute(f"""INSERT INTO drills
                     (account_id, uploader, course, type, title, stem, setup_sql, verify_sql,
                      starter_code, input_data, expected_output, options_json, answer_json, hint,
-                     judge_mode, test_cases, status, published_at)
+                     judge_mode, test_cases, status, published_at, paper_id, score)
                     VALUES (%s,%s,'sql','sql',%s,%s,%s,%s,'','','','[]','{{}}',%s,%s,'',
-                            %s, CASE WHEN %s=1 THEN NOW() ELSE NULL END)""",
+                            %s, CASE WHEN %s=1 THEN NOW() ELSE NULL END,%s,%s)""",
                     (account["id"], account["display"], title,
                      (q.get("text") or "") + (("\n\n" + q["note"]) if q.get("note") else ""),
                      data_sql, verify, q.get("note", ""), mode,
-                     1 if publish else 0, 1 if publish else 0))
-                created.append({"id": cur.lastrowid, "no": q["no"], "title": title})
+                     1 if publish else 0, 1 if publish else 0, paper_id, score))
+                created.append({"id": cur.lastrowid, "no": q["no"], "title": title,
+                                "score": score})
                 existing.add(title)
+            _sync_paper_status(cur, paper_id)
         conn.commit()
     finally:
         conn.close()
-    return {"created": created, "duplicates": duplicates,
+    return {"created": created, "duplicates": duplicates, "paperId": paper_id,
+            "paperTitle": paper_title,
             "skipped": len(questions) - len(created) - len(duplicates)}
 
 
@@ -1307,6 +1612,10 @@ def submit(account: dict, did: int, answer) -> dict:
         res = judge_objective(full, answer)
     ms = int((time.monotonic() - t0) * 1000)
     res["ms"] = ms
+    # 分值：通过拿满分，没通过 0 分；同时回传本套题的累计得分
+    max_score = int(full.get("score") or SCORE_DEFAULT)
+    res["maxScore"] = max_score
+    res["score"] = max_score if res["passed"] else 0
     conn = root_conn(C.COMMUNITY_DB)
     try:
         with conn.cursor() as cur:
@@ -1321,6 +1630,9 @@ def submit(account: dict, did: int, answer) -> dict:
     finally:
         conn.close()
     res["passed"] = bool(res["passed"])
+    paper = paper_score(account["id"], int(full.get("paperId") or 0))
+    if paper:
+        res["paper"] = paper
     return res
 
 
