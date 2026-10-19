@@ -74,6 +74,20 @@ def multipart(field, filename, content, extra=None):
     return buf.getvalue(), f"multipart/form-data; boundary={boundary}"
 
 
+def multipart_files(items, field="files"):
+    """一次上传多个文件：items = [(文件名, 内容), ...]。"""
+    boundary = uuid.uuid4().hex
+    buf = io.BytesIO()
+    for name, content in items:
+        buf.write(f"--{boundary}\r\nContent-Disposition: form-data; name=\"{field}\"; "
+                  f"filename=\"{name}\"\r\n"
+                  "Content-Type: application/octet-stream\r\n\r\n".encode())
+        buf.write(content if isinstance(content, bytes) else content.encode())
+        buf.write(b"\r\n")
+    buf.write(f"--{boundary}--\r\n".encode())
+    return buf.getvalue(), f"multipart/form-data; boundary={boundary}"
+
+
 print("== 1. 注册 / 登录 / 游客 ==")
 u1 = "stu" + uuid.uuid4().hex[:6]
 code, d = call("/api/login", {"mode": "register", "username": u1, "password": "Test1234abc"})
@@ -649,6 +663,123 @@ code, r = call("/api/author/try_python", {"code": "print('ok')"}, token=tok_ad2)
 check("出题试跑 Python", code == 200 and "ok" in (r.get("out") or ""), str(r)[:160])
 code, r = call("/api/author/try_sql", {"setup": S2, "sql": "SELECT * FROM mm"}, token=tok_md)
 check("无出题权限不能试跑", code == 403, f"{code} {str(r)[:100]}")
+
+print("== 8h. 题目包导入（题干 + 答案 + 数据） ==")
+QP_STEM = """【题  干】
+人力资源管理系统数据库db_hrm，包含 t_employee、t_department、t_salary 三张表。
+
+1. 创建采购表 t_purchase，字段 id INT 主键、name VARCHAR(30)。
+2. 向 t_employee 插入员工 10051 林子山。
+3. 查询薪资 6000 到 8000 的记录。
+"""
+QP_ANSWERS = """-- 1
+CREATE TABLE t_purchase (
+    id INT(8) PRIMARY KEY,
+    name VARCHAR(30)
+);
+
+-- 2
+INSERT INTO t_employee VALUES (10051, '林子山', '男', 24, '实习生', 10002);
+
+-- 3
+SELECT * FROM t_salary WHERE money BETWEEN 6000 AND 8000;
+"""
+# 数据文件是「做完题之后」的库快照：里面已经有答案产物（新表和新增行）
+QP_DATA = """/* Navicat MySQL dump */
+DROP TABLE IF EXISTS `t_department`;
+CREATE TABLE `t_department` (
+  `id` int(10) NOT NULL,
+  `name` varchar(50) DEFAULT NULL,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+INSERT INTO `t_department` VALUES (10002, '行政部');
+DROP TABLE IF EXISTS `t_employee`;
+CREATE TABLE `t_employee` (
+  `id` int(10) NOT NULL,
+  `name` varchar(30) DEFAULT NULL,
+  `sex` char(2) DEFAULT NULL,
+  `age` int(5) DEFAULT NULL,
+  `position` varchar(30) DEFAULT NULL,
+  `d_id` int(10) DEFAULT NULL,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+INSERT INTO `t_employee` VALUES (10001, '曹岚', '女', 25, '正式员工', 10002);
+INSERT INTO `t_employee` VALUES (10051, '林子山', '男', 24, '实习生', 10002);
+DROP TABLE IF EXISTS `t_purchase`;
+CREATE TABLE `t_purchase` (
+  `id` int(8) NOT NULL,
+  `name` varchar(30) DEFAULT NULL,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+DROP TABLE IF EXISTS `t_salary`;
+CREATE TABLE `t_salary` (
+  `id` int(10) NOT NULL,
+  `e_id` int(10) DEFAULT NULL,
+  `money` decimal(10,2) DEFAULT NULL,
+  `time` date DEFAULT NULL,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+INSERT INTO `t_salary` VALUES (10001, 10001, 7000.00, '2023-12-15');
+INSERT INTO `t_salary` VALUES (10002, 10001, 9000.00, '2023-11-15');
+"""
+
+# GBK 编码的题干也要能读
+body, ct = multipart_files([("22试题描述.txt", QP_STEM.encode("gbk")),
+                            ("answer.txt", QP_ANSWERS),
+                            ("db_hrm.myd", QP_DATA)])
+code, pkg = call("/api/author/qpack/parse", raw=body, ctype=ct, token=tok_ad2)
+check("题目包：解析成功", code == 200 and pkg.get("stats", {}).get("total") == 3, str(pkg)[:200])
+check("题目包：GBK 题干正确解码",
+      "人力资源" in (pkg.get("title") or "") or "人力资源" in (pkg.get("description") or ""),
+      (pkg.get("title") or "")[:80])
+check("题目包：3 道题都配上答案", pkg.get("stats", {}).get("withAnswer") == 3, str(pkg.get("stats")))
+check("题目包：识别出数据表", sorted(pkg.get("tables") or []) ==
+      ["t_department", "t_employee", "t_salary"], str(pkg.get("tables")))
+check("题目包：自动剔除答案产物", bool(pkg.get("stripped")), str(pkg.get("stripped")))
+check("题目包：建表题用整库状态判分",
+      pkg["questions"][0].get("kind") == "sql_ddl" and
+      pkg["questions"][0].get("judgeMode") == "dbstate", str(pkg["questions"][0]))
+check("题目包：查询题用结果集判分",
+      pkg["questions"][2].get("judgeMode") == "result", str(pkg["questions"][2]))
+
+# 无出题权限不能解析/创建
+code, r = call("/api/author/qpack/parse", raw=body, ctype=ct, token=tok_md)
+check("题目包：无权限不能解析", code == 403, f"{code} {str(r)[:100]}")
+
+# 创建（按解析结果的判分模式）
+code, made = call("/api/author/qpack/create",
+                  {"package": pkg, "publish": True, "judge": {}}, token=tok_ad2)
+check("题目包：批量创建 3 道题", code == 200 and len(made.get("created") or []) == 3, str(made)[:200])
+qp_ids = [x["id"] for x in made.get("created") or []]
+check("题目包：发布后学生可见",
+      all(any(d["id"] == i for d in call("/api/drills?course=sql", token=tok_md)[1]["drills"])
+          for i in qp_ids))
+
+# 重复导入去重
+code, again = call("/api/author/qpack/create",
+                   {"package": pkg, "publish": True, "judge": {}}, token=tok_ad2)
+check("题目包：重复导入自动跳过",
+      code == 200 and not again.get("created") and len(again.get("duplicates") or []) == 3,
+      str(again)[:200])
+
+# 学生作答：标准答案通过、错误答案被拒
+answers = {"-- 1": "CREATE TABLE t_purchase (id INT(8) PRIMARY KEY, name VARCHAR(30));",
+           "-- 2": "INSERT INTO t_employee VALUES (10051, '林子山', '男', 24, '实习生', 10002);",
+           "-- 3": "SELECT * FROM t_salary WHERE money BETWEEN 6000 AND 8000;"}
+for did, key in zip(qp_ids, ["-- 1", "-- 2", "-- 3"]):
+    _, r = call(f"/api/drills/{did}/submit", {"answer_text": answers[key]}, token=tok_md)
+    check(f"题目包：第 {key[3:]} 题标准答案通过", r.get("passed") is True, str(r)[:160])
+_, r = call(f"/api/drills/{qp_ids[0]}/submit",
+            {"answer_text": "CREATE TABLE t_purchase (id INT(8) PRIMARY KEY);"}, token=tok_md)
+check("题目包：少字段建表被拒", r.get("passed") is False and "字段不一致" in (r.get("reason") or ""),
+      str(r)[:160])
+_, r = call(f"/api/drills/{qp_ids[2]}/submit",
+            {"answer_text": "SELECT * FROM t_salary WHERE money > 9000;"}, token=tok_md)
+check("题目包：错误查询被拒", r.get("passed") is False, str(r)[:160])
+
+# 清理
+for i in qp_ids:
+    call(f"/api/drills/{i}", token=tok_ad2, method="DELETE")
 
 print("== 8f. 用户系统与管理后台 ==")
 tok_ad = admin_login()

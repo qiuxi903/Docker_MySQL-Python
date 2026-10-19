@@ -80,8 +80,100 @@ def drop_db_targets(sql: str) -> list[str]:
     return out
 
 
+_DELIM_RE = re.compile(r"^\s*DELIMITER\s+(\S+)\s*$", re.I | re.M)
+# 复合语句（存储过程 / 函数 / 触发器 / 事件）：内部的分号不能当语句结束
+_COMPOUND_START = re.compile(
+    r"^\s*CREATE\s+(?:DEFINER\s*=\s*\S+\s+)?(PROCEDURE|FUNCTION|TRIGGER|EVENT)\b", re.I)
+_END_LINE = re.compile(r"^\s*END\s*(?:;|//|;;|//\s*;|;\s*//)?\s*$", re.I)
+
+
+def strip_delimiter(sql: str) -> str:
+    """把 mysql 客户端的存储过程/触发器块整理成 PyMySQL 能执行的形式。
+
+    两种常见导出都支持：
+      A) 标准 mysqldump：DELIMITER // ... END// DELIMITER ;
+      B) Navicat：DELIMITER ; 后接 CREATE PROCEDURE ... BEGIN ...; ... END （分号单独一行）
+
+    做法：块内部的换行保留，但把内部分号替换成占位符，避免被 split_sql 提前切断；
+    末尾统一输出一个 ";". split_sql 之后再还原占位符。
+    """
+    text = sql or ""
+    if not re.search(r"^\s*DELIMITER\s+", text, re.I | re.M) \
+            and not re.search(r"^\s*CREATE\s+(?:DEFINER\s*=\s*\S+\s+)?(PROCEDURE|FUNCTION|TRIGGER|EVENT)\b",
+                              text, re.I | re.M):
+        return text
+
+    lines = text.splitlines()
+    out: list[str] = []
+    buf: list[str] = []          # 当前普通语句缓冲
+    comp: list[str] | None = None  # 正在收集的复合语句
+    delim = ";"
+    pending_split = False        # 上一行是单独的定界符，等待并入块
+
+    def flush_normal():
+        nonlocal buf
+        if buf:
+            out.append("\n".join(buf))
+            buf = []
+
+    for raw in lines:
+        m = _DELIM_RE.match(raw)
+        if m:
+            flush_normal()
+            delim = m.group(1)
+            continue
+
+        stripped = raw.strip()
+
+        if comp is None:
+            # 复合语句开始：把已缓冲的行先落盘
+            if _COMPOUND_START.match(raw):
+                flush_normal()
+                comp = [raw]
+                continue
+            # 普通语句：遇到行尾定界符就结束（定界符不是 ";" 时）
+            if delim != ";" and stripped.endswith(delim):
+                body = stripped[: -len(delim)].rstrip()
+                buf.append(body)
+                flush_normal()
+                continue
+            buf.append(raw)
+            continue
+
+        # ---- 收集复合语句内部 ----
+        # 找到 END（可能跟定界符），整块结束
+        if _END_LINE.match(stripped):
+            comp.append("END;")
+            out.append(_protect_compound("\n".join(comp)))
+            comp = None
+            continue
+        comp.append(raw)
+
+    if comp:
+        out.append(_protect_compound("\n".join(comp)))
+    flush_normal()
+    return "\n".join(out)
+
+
+def _protect_compound(block: str) -> str:
+    """把复合语句内部的分号换成占位符（保留最后的 END;）。"""
+    body = block.rstrip()
+    if body.endswith(";"):
+        body = body[:-1]
+    body = body.replace(";", _SEMI_PLACEHOLDER)
+    return body + ";"
+
+
+_SEMI_PLACEHOLDER = "\x00SEMI\x00"
+
+
+def restore_semicolons(stmt: str) -> str:
+    return stmt.replace(_SEMI_PLACEHOLDER, ";")
+
+
 def split_sql(sql: str) -> list[str]:
     """按分号切分 SQL，跳过字符串/反引号里的分号和三种注释。"""
+    sql = strip_delimiter(sql)
     stmts: list[str] = []
     buf: list[str] = []
     i, n = 0, len(sql)
@@ -218,6 +310,7 @@ def run_sql(db_name: str, mysql_user: str, mysql_pass: str, sql: str,
 
         for idx, stmt in enumerate(stmts, 1):
             t0 = time.monotonic()
+            stmt = restore_semicolons(stmt)
             guard_msg = drop_db_message(stmt, db_name, owned_dbs)
             if guard_msg:
                 results.append({"type": "error", "index": idx, "sql": _short(stmt),

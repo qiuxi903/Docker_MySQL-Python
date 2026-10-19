@@ -27,7 +27,7 @@ html[data-theme="light"] body { background: #f6f8fa; }
 <link rel="stylesheet" href="/vendor/codemirror/codemirror.css">
 <link rel="stylesheet" href="/vendor/codemirror/addon/hint/show-hint.css">
 <link rel="stylesheet" href="/fonts/misans/misans.css">
-<link rel="stylesheet" href="/style.css?v=113">
+<link rel="stylesheet" href="/style.css?v=115">
 </head>
 <body>
 <div id="app" v-cloak>
@@ -499,6 +499,107 @@ html[data-theme="light"] body { background: #f6f8fa; }
         </button>
       </section>
 
+      <!-- ========== 导入题目包（一份试卷 → 多道练习题） ========== -->
+      <section v-show="view==='qpack'" class="author-page qpack-page">
+        <header class="auth-top">
+          <button class="btn mini ghost" @click="exitQpack">
+            <e-icon name="chevron-right" :size="13" style="transform:rotate(180deg);display:inline-block"></e-icon> 返回
+          </button>
+          <span class="auth-title">导入题目包</span>
+          <span class="spacer"></span>
+          <template v-if="qpack">
+            <span class="auth-state">{{ qpack.stats.total }} 题 · 有答案 {{ qpack.stats.withAnswer }}</span>
+            <button class="btn mini ghost" @click="resetQpack">重新选择</button>
+            <button class="btn mini primary" :disabled="qpackBusy || !qpack.stats.withAnswer"
+                    @click="createQpackQuestions">
+              <e-icon name="check" :size="12"></e-icon> 创建 {{ qpack.stats.withAnswer }} 道题
+            </button>
+          </template>
+        </header>
+
+        <div class="qpack-body">
+          <!-- 上传区 -->
+          <div v-if="!qpack" class="qpack-drop" :class="{over: qpackDrag}"
+               @click="$refs.qpackFileEl.click()"
+               @dragover.prevent="qpackDrag = true" @dragleave.prevent="qpackDrag = false"
+               @drop.prevent="onQpackDrop">
+            <e-icon name="upload" :size="34"></e-icon>
+            <div class="qpack-drop-t">把题目包拖进来，或点击选择</div>
+            <div class="qpack-drop-d">
+              可以一次选多个文件：<b>题干</b>（.txt / .md）+ <b>参考答案</b>（.txt / .md）+ <b>数据</b>（.sql / .myd）
+            </div>
+            <div class="qpack-drop-tip">
+              支持 GBK / UTF-8 编码；题干按 <code>1、2、3…</code> 编号拆题，答案按 <code>-- 1</code> / <code>---8</code> 对应。
+            </div>
+            <input type="file" ref="qpackFileEl" hidden multiple
+                   accept=".txt,.md,.sql,.myd,.csv" @change="onQpackPicked">
+          </div>
+
+          <!-- 解析结果 -->
+          <div v-else class="qpack-result">
+            <div class="qpack-summary">
+              <div class="qpack-sum-main">
+                <div class="qpack-sum-title">{{ qpack.title }}</div>
+                <div class="qpack-sum-sub" v-if="qpack.description">{{ qpack.description }}</div>
+              </div>
+              <div class="qpack-sum-stats">
+                <span class="qpack-chip"><b>{{ qpack.stats.total }}</b> 小题</span>
+                <span class="qpack-chip ok"><b>{{ qpack.stats.withAnswer }}</b> 有答案</span>
+                <span class="qpack-chip" v-if="qpack.tables.length"><b>{{ qpack.tables.length }}</b> 张数据表</span>
+              </div>
+            </div>
+
+            <div class="qpack-warn" v-if="qpack.warnings && qpack.warnings.length">
+              <e-icon name="shield" :size="14"></e-icon>
+              <div>
+                <b>有 {{ qpack.warnings.length }} 个提醒</b>
+                <div v-for="(w, i) in qpack.warnings" :key="i" class="qpack-warn-item">{{ w }}</div>
+              </div>
+            </div>
+
+            <div class="qpack-data" v-if="qpack.tables.length">
+              <span class="qpack-label">题目数据（所有小题共用）</span>
+              <div class="qpack-tables">
+                <span v-for="t in qpack.tables" :key="t" class="q-part mono">{{ t }}</span>
+              </div>
+              <div v-if="qpack.stripped && qpack.stripped.length" class="qpack-stripped">
+                已自动从题目数据里移除「答案产物」（否则学生作答会报已存在）：
+                <span class="mono">{{ qpack.stripped.join('、') }}</span>
+              </div>
+              <details class="qpack-sql">
+                <summary>查看初始化 SQL（{{ qpack.dataSql.length }} 字符）</summary>
+                <pre class="dq-area code" style="max-height:220px;overflow:auto">{{ qpack.dataSql }}</pre>
+              </details>
+            </div>
+
+            <div class="qpack-list-h">
+              <span>解析出的题目</span>
+              <span class="spacer"></span>
+              <span class="tip">没有参考答案的题会跳过（无法判分）</span>
+            </div>
+            <div class="qpack-list">
+              <div v-for="q in qpack.questions" :key="q.no" class="qpack-item" :class="{skip: !q.hasAnswer}">
+                <div class="qpack-item-h">
+                  <span class="qpack-no">{{ q.no }}</span>
+                  <span class="qpack-kind" :class="q.kind">{{ kindLabel(q.kind) }}</span>
+                  <span class="spacer"></span>
+                  <span v-if="!q.hasAnswer" class="qpack-skip">无答案，跳过</span>
+                  <x-select v-else v-model="q.judgeMode" :options="sqlJudgeOptions" style="width:190px"></x-select>
+                </div>
+                <div class="qpack-item-t">{{ q.text }}</div>
+                <div class="qpack-item-note" v-if="q.note">{{ q.note }}</div>
+                <details class="qpack-answer" v-if="q.hasAnswer">
+                  <summary>参考答案</summary>
+                  <pre class="dq-area code" style="max-height:180px;overflow:auto">{{ q.answer }}</pre>
+                </details>
+              </div>
+            </div>
+          </div>
+
+          <div v-if="qpackBusy" class="qpack-loading"><div class="spin"></div><span>解析中…</span></div>
+        </div>
+      </section>
+
       <!-- ========== 出题（独立全屏工作台） ========== -->
       <section v-show="view==='author'" class="author-page">
         <header class="auth-top">
@@ -930,6 +1031,14 @@ INSERT INTO course VALUES (1,'数学');</pre>
         <span class="hub-t">练习题（自动判分）</span>
         <span class="hub-d">进「练习」页，学生做完自动判对错、记进度和错题本。
           SQL 题填「初始化 SQL + 标准答案 SQL」，Python 题填「代码 + 期望输出」，也有单选/判断/填空。</span>
+      </span>
+    </button>
+    <button class="hub-card" @click="pickAuthor('qpack')">
+      <span class="hub-ico"><e-icon name="upload" :size="18"></e-icon></span>
+      <span class="hub-main">
+        <span class="hub-t">导入题目包 <span class="hub-badge">批量</span></span>
+        <span class="hub-d">已有现成的试卷？上传题干 + 参考答案 + 数据库文件，自动拆成多道练习题，
+          题号自动对应答案、题型自动识别，确认后一次发布。</span>
       </span>
     </button>
     <button class="hub-card" @click="pickAuthor('material')">
@@ -1595,6 +1704,6 @@ INSERT INTO course VALUES (1,'数学');</pre>
 <script src="/vendor/codemirror/addon/display/placeholder.js"></script>
 <script src="/vendor/codemirror/addon/hint/show-hint.js"></script>
 <script src="/vendor/codemirror/addon/hint/sql-hint.js"></script>
-<script src="/app.js?v=115"></script>
+<script src="/app.js?v=118"></script>
 </body>
 </html>

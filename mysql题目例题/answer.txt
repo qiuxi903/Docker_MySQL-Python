@@ -1,0 +1,53 @@
+-- 1
+CREATE TABLE t_purchase (  
+    id INT(8) PRIMARY KEY,  
+    name VARCHAR(30),  
+    num INT(5) DEFAULT 1,  
+    money DOUBLE(10,2),  
+    date DATE  
+);
+-- 2
+INSERT INTO t_employee   
+VALUES (10051,'林子山', '男', 24, '实习生', 10002);
+-- 3
+DELETE FROM t_salary WHERE id = 10040;
+-- 4
+UPDATE t_department SET name = '后勤服务部' WHERE name = '后勤部';
+-- 5
+SELECT * FROM t_salary WHERE money BETWEEN 6000 AND 8000;
+-- 6
+SELECT d.name AS 部门名称, AVG(s.money) AS 平均薪资  
+FROM t_department d  
+JOIN  t_employee e ON e.d_id = d.id 
+JOIN t_salary s ON s.e_id=e.id
+GROUP BY d.id, d.name;
+-- 7
+CREATE VIEW v_hrm AS  
+SELECT d.name AS 部门名称, e.name AS 员工姓名, e.sex AS 性别, e.age AS 年龄, e.position AS 职位  
+FROM t_employee e  
+JOIN t_department d ON e.d_id = d.id
+ORDER BY d.name;
+---8
+DELIMITER //
+CREATE TRIGGER update_department_description
+BEFORE INSERT ON t_employee
+FOR EACH ROW
+BEGIN
+    IF NEW.d_id IS NOT NULL THEN
+        UPDATE t_department
+        SET description = '部门描述待更新'
+        WHERE id = NEW.d_id AND description IS NULL;
+    END IF;
+END;//
+DELIMITER ;
+
+--9
+
+DELIMITER //
+CREATE PROCEDURE calculate_total_salary(IN emp_id INT, OUT total_salary DOUBLE)
+BEGIN
+    SELECT SUM(money) INTO total_salary
+    FROM t_salary
+    WHERE e_id = emp_id;
+END;//
+DELIMITER ;

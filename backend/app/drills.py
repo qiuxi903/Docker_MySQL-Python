@@ -23,12 +23,12 @@ import urllib.request
 import pymysql
 
 from .config import C
-from .db import q_ident, root_conn
+from .db import conv_value, q_ident, root_conn
 
 DRILL_TYPES = ("sql", "python", "single", "multiple", "boolean", "fill")
 # 各题型的判分模式（出题人可选，默认第一个）
 JUDGE_MODES = {
-    "sql": ["result", "result_ordered", "rows_only", "cell", "contains", "state"],
+    "sql": ["result", "result_ordered", "rows_only", "cell", "contains", "state", "dbstate"],
     "python": ["output", "contains", "regex", "tests"],
     "single": ["key"], "multiple": ["keys"], "boolean": ["key"],
     "fill": ["loose"],
@@ -40,6 +40,7 @@ JUDGE_LABEL = {
     "cell": "只检查一个值（首个单元格）",
     "contains": "结果中包含指定值",
     "state": "改数据题：执行后校验数据状态",
+    "dbstate": "比对整库状态（建表/增删改通用）",
     "output": "输出完全一致",
     "contains": "输出包含指定文字",
     "regex": "输出匹配正则表达式",
@@ -228,7 +229,7 @@ def list_drills(account: dict, course: str = "", mine: bool = False) -> list[dic
                             WHERE {' AND '.join(where)}
                             GROUP BY d.id
                             ORDER BY FIELD(d.course,'sql','python','basic'), d.builtin DESC,
-                                     d.published_at DESC, d.id DESC""",
+                                     d.published_at DESC, d.title ASC, d.id ASC""",
                         [account["id"]] + params[1:] if mine else [account["id"]] + params)
             rows = cur.fetchall()
     finally:
@@ -641,6 +642,170 @@ def try_python(account: dict, code: str, stdin_text: str = "") -> dict:
             "exit": r.get("exit"), "why": r.get("why") or ""}
 
 
+# ---------------- 题目包导入（一份试卷 + 参考答案 → 多道练习题） ----------------
+
+QPACK_MAX_FILES = 12
+QPACK_FILE_MAX = 8 * 1024 * 1024
+
+
+def parse_package(files: list[dict]) -> dict:
+    """解析上传的题目包，返回预览：试卷信息 + 每道小题（含答案、建议判分方式）。
+
+    files: [{name, data(bytes)}]
+    分类规则（按扩展名 + 内容特征）：
+      .sql / .myd / .txt 里含 CREATE TABLE → 数据脚本（所有小题共用）
+      .txt/.md 里含「题 干」或「1、2、」编号 → 题干
+      其余含 -- 1 / ---8 分隔或 SQL 关键字 → 参考答案
+    """
+    from . import qpack
+
+    if not files:
+        raise DrillError("没有收到文件")
+    if len(files) > QPACK_MAX_FILES:
+        raise DrillError(f"一次最多 {QPACK_MAX_FILES} 个文件")
+
+    data_sqls = []
+    stem_texts = []
+    ans_texts = []
+    names = []
+
+    for f in files:
+        name = (f.get("name") or "").strip()
+        raw = f.get("data") or b""
+        if len(raw) > QPACK_FILE_MAX:
+            raise DrillError(f"文件 {name} 超过 8MB")
+        names.append(name)
+        low = name.lower()
+        text = qpack.decode_text(raw)
+
+        # 1) 参考答案最先判定：有 -- 1 / ---8 这类题号分隔（题干和数据脚本都不会这样写）
+        if re.search(r"^\s*-{2,}\s*(?:第\s*)?\d+\s*(?:题)?\s*$", text, re.M):
+            ans_texts.append(text)
+            continue
+        # 2) 数据脚本：扩展名 .sql/.myd，或纯建表语句
+        if low.endswith((".sql", ".myd")) or (
+                low.endswith(".txt") and "CREATE TABLE" in text.upper() and "题" not in text[:200]):
+            data_sqls.append(text)
+            continue
+        # 3) 题干：含「题 干」标记，或连续编号小题且不含 SQL 语句
+        has_stem_mark = bool(re.search(r"[『【]?\s*题\s*干\s*[』】]?", text))
+        numbered = len(re.findall(r"^\s*(?:\d+\s*[、.．)]|[(（]\d+[)）])", text, re.M))
+        has_sql = bool(re.search(r"\b(SELECT|INSERT|UPDATE|DELETE|CREATE)\b", text, re.I))
+        if has_stem_mark or (numbered >= 3 and not has_sql):
+            stem_texts.append(text)
+            continue
+        # 4) 其余含 SQL 关键字的当答案
+        if has_sql:
+            ans_texts.append(text)
+            continue
+        stem_texts.append(text)   # 兜底当题干
+
+    if not stem_texts:
+        raise DrillError("没有找到题干文件（需要含 1、2、3… 编号的小题）")
+
+    stem = qpack.parse_stem("\n\n".join(stem_texts))
+    answers = qpack.split_answer_files([{"content": t} for t in ans_texts])
+    data_sql = qpack.clean_data_sql("\n\n".join(data_sqls)) if data_sqls else ""
+    # 老师给的数据文件常常是「做完题之后」的库快照 —— 先把答案产物（建的表、
+    # 插入的行、视图/触发器/存储过程）剔掉，否则学生作答会报“已存在/主键重复”。
+    stripped_note = []
+    if data_sql and answers:
+        data_sql, stripped_note = qpack.strip_answer_artifacts(
+            data_sql, [answers[k] for k in sorted(answers)])
+
+    if not stem["questions"]:
+        raise DrillError("题干里没有解析出小题（需要 1、2、3… 这样编号）")
+
+    items = []
+    for q in stem["questions"]:
+        ans = answers.get(q["no"], "")
+        qtype = qpack.guess_type(q["text"], ans)
+        # 建对象/改数据题一律用「整库状态」判分：学生答案和参考答案各在一个干净库里
+        # 执行，再比较最终数据库状态（不会重复执行同一句 SQL 导致“已存在”）
+        if qtype in ("sql_dml", "sql_ddl"):
+            mode = "dbstate"
+        else:
+            mode = "result"
+        items.append({
+            "no": q["no"],
+            "text": q["text"],
+            "note": q.get("note", ""),
+            "answer": qpack.clean_answer(ans),
+            "kind": qtype,
+            "judgeMode": mode,
+            "hasAnswer": bool(ans.strip()),
+        })
+
+    from .community import parse_script_tables
+
+    return {
+        "title": stem["title"] or "未命名试卷",
+        "description": stem["description"],
+        "dataSql": data_sql,
+        "tables": parse_script_tables(data_sql) if data_sql else [],
+        "questions": items,
+        "files": names,
+        "stripped": stripped_note,
+        "warnings": qpack.answer_touches_missing_data(
+            data_sql, [qpack.clean_answer(answers[k]) for k in sorted(answers)]),
+        "stats": {
+            "total": len(items),
+            "withAnswer": sum(1 for x in items if x["hasAnswer"]),
+            "select": sum(1 for x in items if x["kind"] == "sql_select"),
+            "dml": sum(1 for x in items if x["kind"] == "sql_dml"),
+            "ddl": sum(1 for x in items if x["kind"] == "sql_ddl"),
+        },
+    }
+
+
+def create_from_package(account: dict, pkg: dict, publish: bool = True,
+                        judge_override: dict | None = None) -> dict:
+    """把解析好的题目包批量建成练习题（共用同一份初始化数据）。"""
+    _require_perm(account)
+    questions = pkg.get("questions") or []
+    if not questions:
+        raise DrillError("没有可创建的题目")
+    data_sql = pkg.get("dataSql") or ""
+    judge_override = judge_override or {}
+
+    created = []
+    duplicates = []
+    conn = root_conn(C.COMMUNITY_DB)
+    try:
+        with conn.cursor() as cur:
+            # 同一份试卷重复导入时跳过同名题，避免点两次「创建」就多出一整套
+            cur.execute("SELECT title FROM drills WHERE account_id=%s AND course='sql'",
+                        (account["id"],))
+            existing = {r[0] for r in cur.fetchall()}
+            for q in questions:
+                if not (q.get("answer") or "").strip():
+                    continue      # 没有参考答案的题跳过（无法判分）
+                mode = judge_override.get(str(q["no"])) or q.get("judgeMode") or "result"
+                title = f"{q['no']}. " + " ".join((q.get("text") or "").split())[:60]
+                if title in existing:
+                    duplicates.append({"no": q["no"], "title": title})
+                    continue
+                # DDL / DML 用 state 判分：答案作为“校验语句”不合适时，改用查询校验
+                verify = q["answer"]
+                cur.execute(f"""INSERT INTO drills
+                    (account_id, uploader, course, type, title, stem, setup_sql, verify_sql,
+                     starter_code, input_data, expected_output, options_json, answer_json, hint,
+                     judge_mode, test_cases, status, published_at)
+                    VALUES (%s,%s,'sql','sql',%s,%s,%s,%s,'','','','[]','{{}}',%s,%s,'',
+                            %s, CASE WHEN %s=1 THEN NOW() ELSE NULL END)""",
+                    (account["id"], account["display"], title,
+                     (q.get("text") or "") + (("\n\n" + q["note"]) if q.get("note") else ""),
+                     data_sql, verify, q.get("note", ""), mode,
+                     1 if publish else 0, 1 if publish else 0))
+                created.append({"id": cur.lastrowid, "no": q["no"], "title": title})
+                existing.add(title)
+        conn.commit()
+    finally:
+        conn.close()
+    return {"created": created, "duplicates": duplicates,
+            "skipped": len(questions) - len(created) - len(duplicates)}
+
+
 # ---------------- SQL 题沙箱库 ----------------
 # 每个（学生, 题目）一个独立的真实数据库，初始化 SQL 跑在里面。
 # 学生可以像主页一样自由查询、点表预览，交卷时再用另一个临时库判分（不影响沙箱）。
@@ -741,6 +906,69 @@ def _all_cells(rs):
     return [v for row in (rs or {}).get("rows") or [] for v in row]
 
 
+def snapshot_db(db: str, user: str, password: str, max_rows: int = 500) -> dict:
+    """整库快照：{表名: {cols, rows}}，用于 dbstate 判分（建表/增删改通用）。"""
+    from .db import q_ident, user_conn
+
+    out = {}
+    conn = user_conn(db, user, password)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SHOW TABLES")
+            names = [r[0] for r in cur.fetchall() if not str(r[0]).startswith("__")]
+            for name in sorted(names):
+                try:
+                    cur.execute(f"SELECT * FROM {q_ident(name)} LIMIT %s", (max_rows,))
+                    cols = [d[0] for d in cur.description]
+                    rows = [[conv_value(v) for v in r] for r in cur.fetchall()]
+                    out[str(name).lower()] = {"cols": cols, "rows": rows}
+                except Exception:
+                    out[str(name).lower()] = {"cols": [], "rows": []}
+    finally:
+        conn.close()
+    return out
+
+
+def compare_db(student: dict, expected: dict) -> tuple[bool, str]:
+    """比较两个整库快照。返回 (是否一致, 说明)。"""
+    sk, ek = set(student), set(expected)
+    missing = sorted(ek - sk)
+    extra = sorted(sk - ek)
+    if missing:
+        return False, "缺少对象：" + "、".join(missing[:6])
+    if extra:
+        return False, "多了不该有的对象：" + "、".join(extra[:6])
+    for t in sorted(ek):
+        s_cols = [str(c) for c in student[t]["cols"]]
+        e_cols = [str(c) for c in expected[t]["cols"]]
+        if s_cols != e_cols:
+            return False, f"表 {t} 的字段不一致（期望 {', '.join(e_cols[:6])}）"
+        s_rows = sorted([str(v) for v in row] for row in student[t]["rows"])
+        e_rows = sorted([str(v) for v in row] for row in expected[t]["rows"])
+        if s_rows != e_rows:
+            if len(s_rows) != len(e_rows):
+                return False, (f"表 {t} 的数据不一致（期望 {len(e_rows)} 行，"
+                               f"你的是 {len(s_rows)} 行）")
+            # 行数相同但内容不同：指出第一处差异，学生才知道错在哪
+            s_set, e_set = set(map(tuple, s_rows)), set(map(tuple, e_rows))
+            lost = next(iter(e_set - s_set), None)
+            made = next(iter(s_set - e_set), None)
+            cols = [str(c) for c in e_cols]
+
+            def fmt(row):
+                pairs = [f"{c}={v}" for c, v in zip(cols, row) if v not in ("None", "")]
+                return ", ".join(pairs[:4]) or "(空行)"
+
+            detail = []
+            if lost:
+                detail.append(f"缺少 {fmt(lost)}")
+            if made:
+                detail.append(f"多了 {fmt(made)}")
+            return False, (f"表 {t} 的数据不一致（行数都是 {len(e_rows)} 行，"
+                           f"但内容不同：{'；'.join(detail)}）")
+    return True, "数据库状态与标准答案一致。"
+
+
 def judge_sql(account: dict, dr: dict, answer: str) -> dict:
     """SQL 判分，按 dr.judgeMode 选择比对方式。"""
     from . import sessions, sqlrun
@@ -782,6 +1010,30 @@ def judge_sql(account: dict, dr: dict, answer: str) -> dict:
                     "student": None, "expected": None}
 
         # ---- 改数据题：学生 SQL 已执行，再跑校验读「实际状态」 ----
+        if mode == "dbstate":
+            # 学生 SQL 已执行完，比较「整库」的结构与数据
+            student_snap = snapshot_db(db, account["mysql_user"], account["mysql_pass"])
+            db2 = None
+            try:
+                db2 = new_db("exam_key")
+                if setup.strip():
+                    run(db2, setup)
+                _, e2, _ = run(db2, verify)
+                if e2:
+                    return {"passed": False, "kind": "sql", "mode": mode,
+                            "reason": "标准答案执行出错（请检查参考答案）：" + e2,
+                            "student": None, "expected": None}
+                expected_snap = snapshot_db(db2, account["mysql_user"], account["mysql_pass"])
+                passed, why = compare_db(student_snap, expected_snap)
+                rows_out = [[k, len(v["rows"])] for k, v in sorted(expected_snap.items())]
+                return {"passed": passed, "kind": "sql", "mode": mode,
+                        "reason": why if not passed else "数据库状态正确，通过。",
+                        "student": {"columns": ["对象", "行数"],
+                                    "rows": [[k, len(v["rows"])] for k, v in sorted(student_snap.items())]},
+                        "expected": {"columns": ["对象", "行数"], "rows": rows_out}}
+            finally:
+                drop(db2)
+
         if mode == "state":
             _, vf_err, actual = run(db, verify)
             if vf_err or actual is None:
@@ -824,9 +1076,12 @@ def judge_sql(account: dict, dr: dict, answer: str) -> dict:
                 drop(db2)
 
         if student is None:
-            return {"passed": False, "kind": "sql", "mode": mode,
-                    "reason": "没有查到结果：请用一条 SELECT 查询语句作答。",
-                    "student": None, "expected": None}
+            if mode in ("state", "dbstate"):
+                student = {"columns": [], "rows": []}
+            else:
+                return {"passed": False, "kind": "sql", "mode": mode,
+                        "reason": "没有查到结果：请用一条 SELECT 查询语句作答。",
+                        "student": None, "expected": None}
 
         # ---- 其余模式：拿标准答案的结果集来比 ----
         _, vf_err, expected = run(db, verify)

@@ -322,6 +322,17 @@ const App = {
       drillShowSetup: false,
       drillShowHint: false,
       drillProgress: {},
+      qpack: null,
+      qpackBusy: false,
+      qpackDrag: false,
+      sqlJudgeOptions: [
+        { value: "dbstate", label: "整库状态（建表/增删改）" },
+        { value: "result", label: "结果集一致" },
+        { value: "result_ordered", label: "结果集（含顺序）" },
+        { value: "rows_only", label: "只比数据" },
+        { value: "cell", label: "只比单值" },
+        { value: "state", label: "校验指定查询" },
+      ],
       drillSandbox: { db: "", tables: [], loading: false },
       drillRunLog: [],
       drillMulti: [],
@@ -545,6 +556,9 @@ const App = {
 
   methods: {
     /* ---------- 基础 ---------- */
+    kindLabel(kind) {
+      return { sql_select: "查询题", sql_dml: "修改/新增题", sql_ddl: "建对象题" }[kind] || kind;
+    },
     toggleTheme() {
       this.theme = this.theme === "dark" ? "light" : "dark";
       document.documentElement.dataset.theme = this.theme;
@@ -850,8 +864,74 @@ const App = {
       this.$refs.hubDlg.showModal();
     },
     closeAuthorHub() { this.$refs.hubDlg.close(); },
+    /* ---------- 导入题目包 ---------- */
+    openQpack() {
+      if (!this.user || !this.user.canPublish) { this.toast("还没有出题权限（找老师开通）"); return; }
+      this.qpack = null;
+      this.qpackBusy = false;
+      this.view = "qpack";
+      window.scrollTo(0, 0);
+    },
+    exitQpack() {
+      this.view = "drills";
+      this.qpack = null;
+      this.loadDrills();
+    },
+    resetQpack() { this.qpack = null; },
+
+    async onQpackPicked(ev) {
+      const files = Array.from(ev.target.files || []);
+      ev.target.value = "";
+      if (files.length) await this.uploadQpack(files);
+    },
+    async onQpackDrop(ev) {
+      this.qpackDrag = false;
+      const files = Array.from((ev.dataTransfer && ev.dataTransfer.files) || []);
+      if (files.length) await this.uploadQpack(files);
+    },
+    async uploadQpack(files) {
+      this.qpackBusy = true;
+      try {
+        const form = new FormData();
+        for (const f of files) form.append("files", f);
+        const d = await this.api("/api/author/qpack/parse", { method: "POST", form });
+        this.qpack = d;
+        if (!d.stats.withAnswer) {
+          this.toast("没有匹配到参考答案，请检查答案文件（题号分隔要用 -- 1 / ---8）");
+        } else {
+          this.toast(`解析出 ${d.stats.total} 道题，其中 ${d.stats.withAnswer} 道有答案`);
+        }
+      } catch (e) { this.toast(e.message); }
+      finally { this.qpackBusy = false; }
+    },
+
+    async createQpackQuestions() {
+      if (!this.qpack) return;
+      const judge = {};
+      for (const q of this.qpack.questions) {
+        if (q.hasAnswer) judge[String(q.no)] = q.judgeMode;
+      }
+      if (!await this.askConfirm("创建题目",
+        `将创建 ${this.qpack.stats.withAnswer} 道练习题并直接发布，学生马上能做题。继续？`)) return;
+      this.qpackBusy = true;
+      try {
+        const r = await this.api("/api/author/qpack/create", { method: "POST",
+          body: { package: this.qpack, publish: true, judge } });
+        const dup = (r.duplicates || []).length;
+        this.toast(dup
+          ? `已创建 ${r.created.length} 道题，跳过 ${dup} 道重复题`
+          : `已创建 ${r.created.length} 道题并发布`);
+        this.qpack = null;
+        this.view = "drills";
+        this.drillCourse = "sql";
+        await this.loadDrills();
+      } catch (e) { this.toast(e.message); }
+      finally { this.qpackBusy = false; }
+    },
+
     pickAuthor(kind) {
       this.$refs.hubDlg.close();
+      if (kind === "qpack") { this.openQpack(); return; }
       if (kind === "drill") this.openDrillEditor();
       else { this.switchView("community"); this.qTab = "drafts"; this.openQuestionEditor(); }
     },

@@ -1,0 +1,276 @@
+/*
+ Navicat MySQL Data Transfer
+
+ Source Server         : localhost_3306
+ Source Server Type    : MySQL
+ Source Server Version : 50743 (5.7.43-log)
+ Source Host           : localhost:6033
+ Source Schema         : db_hrm
+
+ Target Server Type    : MySQL
+ Target Server Version : 50743 (5.7.43-log)
+ File Encoding         : 65001
+
+ Date: 12/08/2024 11:40:01
+*/
+
+SET NAMES utf8mb4;
+SET FOREIGN_KEY_CHECKS = 0;
+
+-- ----------------------------
+-- Table structure for t_department
+-- ----------------------------
+DROP TABLE IF EXISTS `t_department`;
+CREATE TABLE `t_department`  (
+  `id` int(10) NOT NULL AUTO_INCREMENT,
+  `name` varchar(50) CHARACTER SET utf8 COLLATE utf8_general_ci NULL DEFAULT NULL,
+  `description` varchar(255) CHARACTER SET utf8 COLLATE utf8_general_ci NULL DEFAULT NULL,
+  PRIMARY KEY (`id`) USING BTREE
+) ENGINE = InnoDB AUTO_INCREMENT = 10007 CHARACTER SET = utf8 COLLATE = utf8_general_ci ROW_FORMAT = DYNAMIC;
+
+-- ----------------------------
+-- Records of t_department
+-- ----------------------------
+INSERT INTO `t_department` VALUES (10001, '财务部', '财务部是指在本机构一定的整体目标下，关于资产的购置（投资），资本的融通（筹资）和经营中现金流量（营运资金），以及利润分配的管理的部门。');
+INSERT INTO `t_department` VALUES (10002, '行政部', '行政部门是组织或企业中负责管理和支持日常行政事务的部门。');
+INSERT INTO `t_department` VALUES (10003, '销售部', '销售部门是组织内负责销售和市场推广活动的部门。其主要职责是促进产品或服务的销售，实现组织的销售目标和利润增长。销售部门通常与市场部门密切协作，共同制定销售策略和营销计划。');
+INSERT INTO `t_department` VALUES (10004, '技术部', '技术部门是一个组织内负责技术开发、技术支持和技术管理的部门。其主要职责是提供技术解决方案，支持组织的技术需求，并确保技术的有效运作和发展。');
+INSERT INTO `t_department` VALUES (10005, '后勤服务部', '后勤部是为其它各部门职能能够顺利实现提供物质服务的一个部门');
+
+-- ----------------------------
+-- Table structure for t_employee
+-- ----------------------------
+DROP TABLE IF EXISTS `t_employee`;
+CREATE TABLE `t_employee`  (
+  `id` int(10) NOT NULL AUTO_INCREMENT,
+  `name` varchar(30) CHARACTER SET utf8 COLLATE utf8_general_ci NULL DEFAULT NULL,
+  `sex` char(2) CHARACTER SET utf8 COLLATE utf8_general_ci NULL DEFAULT NULL,
+  `age` int(5) NULL DEFAULT NULL,
+  `position` varchar(30) CHARACTER SET utf8 COLLATE utf8_general_ci NULL DEFAULT NULL,
+  `d_id` int(10) NULL DEFAULT NULL,
+  PRIMARY KEY (`id`) USING BTREE
+) ENGINE = InnoDB AUTO_INCREMENT = 10052 CHARACTER SET = utf8 COLLATE = utf8_general_ci ROW_FORMAT = DYNAMIC;
+
+-- ----------------------------
+-- Records of t_employee
+-- ----------------------------
+INSERT INTO `t_employee` VALUES (10001, '曹岚', '女', 25, '正式员工', 10003);
+INSERT INTO `t_employee` VALUES (10002, '丁子韬', '男', 34, '正式员工', 10004);
+INSERT INTO `t_employee` VALUES (10003, '陈睿', '男', 40, '高级员工', 10005);
+INSERT INTO `t_employee` VALUES (10004, '彭宇宁', '男', 28, '经理', 10003);
+INSERT INTO `t_employee` VALUES (10005, '孟宇宁', '男', 34, '高级员工', 10005);
+INSERT INTO `t_employee` VALUES (10006, '郭嘉伦', '男', 27, '高级员工', 10004);
+INSERT INTO `t_employee` VALUES (10007, '顾子异', '男', 32, '高级员工', 10003);
+INSERT INTO `t_employee` VALUES (10008, '孔岚', '女', 27, '经理', 10005);
+INSERT INTO `t_employee` VALUES (10009, '曹宇宁', '男', 29, '高级员工', 10002);
+INSERT INTO `t_employee` VALUES (10010, '向云熙', '男', 34, '高级员工', 10001);
+INSERT INTO `t_employee` VALUES (10011, '陈致远', '男', 25, '经理', 10001);
+INSERT INTO `t_employee` VALUES (10012, '武璐', '女', 34, '正式员工', 10003);
+INSERT INTO `t_employee` VALUES (10013, '郝晓明', '男', 31, '实习生', 10005);
+INSERT INTO `t_employee` VALUES (10014, '韩晓明', '男', 30, '实习生', 10003);
+INSERT INTO `t_employee` VALUES (10015, '戴安琪', '女', 24, '实习生', 10002);
+INSERT INTO `t_employee` VALUES (10016, '徐宇宁', '男', 35, '经理', 10002);
+INSERT INTO `t_employee` VALUES (10017, '魏安琪', '女', 40, '实习生', 10004);
+INSERT INTO `t_employee` VALUES (10018, '余安琪', '女', 36, '高级员工', 10002);
+INSERT INTO `t_employee` VALUES (10019, '向璐', '女', 29, '经理', 10004);
+INSERT INTO `t_employee` VALUES (10020, '崔致远', '男', 35, '高级员工', 10002);
+INSERT INTO `t_employee` VALUES (10021, '任宇宁', '男', 29, '实习生', 10005);
+INSERT INTO `t_employee` VALUES (10022, '叶睿', '男', 36, '高级员工', 10004);
+INSERT INTO `t_employee` VALUES (10023, '邓宇宁', '男', 35, '实习生', 10004);
+INSERT INTO `t_employee` VALUES (10024, '阎秀英', '女', 34, '高级员工', 10001);
+INSERT INTO `t_employee` VALUES (10025, '孟致远', '男', 34, '实习生', 10001);
+INSERT INTO `t_employee` VALUES (10026, '雷睿', '男', 39, '实习生', 10004);
+INSERT INTO `t_employee` VALUES (10027, '罗璐', '女', 27, '正式员工', 10002);
+INSERT INTO `t_employee` VALUES (10028, '蔡睿', '男', 30, '实习生', 10001);
+INSERT INTO `t_employee` VALUES (10029, '袁岚', '女', 34, '实习生', 10002);
+INSERT INTO `t_employee` VALUES (10030, '江宇宁', '男', 29, '高级员工', 10001);
+INSERT INTO `t_employee` VALUES (10031, '董安琪', '女', 31, '正式员工', 10002);
+INSERT INTO `t_employee` VALUES (10032, '阎嘉伦', '男', 24, '正式员工', 10005);
+INSERT INTO `t_employee` VALUES (10033, '魏致远', '男', 27, '正式员工', 10002);
+INSERT INTO `t_employee` VALUES (10034, '于嘉伦', '男', 23, '实习生', 10002);
+INSERT INTO `t_employee` VALUES (10035, '韩宇宁', '男', 25, '正式员工', 10002);
+INSERT INTO `t_employee` VALUES (10036, '宋杰宏', '男', 34, '高级员工', 10003);
+INSERT INTO `t_employee` VALUES (10037, '汪璐', '女', 31, '实习生', 10001);
+INSERT INTO `t_employee` VALUES (10038, '韩子异', '男', 31, '正式员工', 10003);
+INSERT INTO `t_employee` VALUES (10039, '高睿', '男', 31, '正式员工', 10002);
+INSERT INTO `t_employee` VALUES (10040, '钱宇宁', '男', 28, '实习生', 10005);
+INSERT INTO `t_employee` VALUES (10041, '钟子韬', '男', 29, '高级员工', 10001);
+INSERT INTO `t_employee` VALUES (10042, '萧子韬', '男', 34, '正式员工', 10005);
+INSERT INTO `t_employee` VALUES (10043, '吴云熙', '男', 30, '高级员工', 10005);
+INSERT INTO `t_employee` VALUES (10044, '苏震南', '男', 37, '高级员工', 10001);
+INSERT INTO `t_employee` VALUES (10045, '黄岚', '女', 26, '正式员工', 10003);
+INSERT INTO `t_employee` VALUES (10046, '赵宇宁', '男', 33, '高级员工', 10005);
+INSERT INTO `t_employee` VALUES (10047, '许嘉伦', '男', 29, '实习生', 10002);
+INSERT INTO `t_employee` VALUES (10048, '孔睿', '男', 37, '高级员工', 10004);
+INSERT INTO `t_employee` VALUES (10049, '陈云熙', '男', 25, '正式员工', 10001);
+INSERT INTO `t_employee` VALUES (10050, '金宇宁', '男', 28, '正式员工', 10005);
+INSERT INTO `t_employee` VALUES (10051, '林子山', '男', 24, '实习生', 10002);
+
+-- ----------------------------
+-- Table structure for t_purchase
+-- ----------------------------
+DROP TABLE IF EXISTS `t_purchase`;
+CREATE TABLE `t_purchase`  (
+  `id` int(8) NOT NULL,
+  `name` varchar(30) CHARACTER SET utf8 COLLATE utf8_general_ci NULL DEFAULT NULL,
+  `num` int(5) NULL DEFAULT 1,
+  `money` double(10, 2) NULL DEFAULT NULL,
+  `date` date NULL DEFAULT NULL,
+  PRIMARY KEY (`id`) USING BTREE
+) ENGINE = InnoDB CHARACTER SET = utf8 COLLATE = utf8_general_ci ROW_FORMAT = DYNAMIC;
+
+-- ----------------------------
+-- Records of t_purchase
+-- ----------------------------
+
+-- ----------------------------
+-- Table structure for t_salary
+-- ----------------------------
+DROP TABLE IF EXISTS `t_salary`;
+CREATE TABLE `t_salary`  (
+  `id` int(10) NOT NULL AUTO_INCREMENT,
+  `e_id` int(10) NULL DEFAULT NULL,
+  `money` decimal(10, 2) NULL DEFAULT NULL,
+  `time` date NULL DEFAULT NULL,
+  PRIMARY KEY (`id`) USING BTREE
+) ENGINE = InnoDB AUTO_INCREMENT = 10101 CHARACTER SET = utf8 COLLATE = utf8_general_ci ROW_FORMAT = DYNAMIC;
+
+-- ----------------------------
+-- Records of t_salary
+-- ----------------------------
+INSERT INTO `t_salary` VALUES (10001, 10046, 6433.00, '2023-12-15');
+INSERT INTO `t_salary` VALUES (10002, 10041, 9790.00, '2023-12-15');
+INSERT INTO `t_salary` VALUES (10003, 10040, 8464.00, '2023-12-15');
+INSERT INTO `t_salary` VALUES (10004, 10028, 7018.00, '2023-12-15');
+INSERT INTO `t_salary` VALUES (10005, 10013, 5402.00, '2023-12-15');
+INSERT INTO `t_salary` VALUES (10006, 10022, 6368.00, '2023-12-15');
+INSERT INTO `t_salary` VALUES (10007, 10024, 7404.00, '2023-12-15');
+INSERT INTO `t_salary` VALUES (10008, 10042, 5401.00, '2023-12-15');
+INSERT INTO `t_salary` VALUES (10009, 10007, 6049.00, '2023-12-15');
+INSERT INTO `t_salary` VALUES (10010, 10048, 5281.00, '2023-12-15');
+INSERT INTO `t_salary` VALUES (10011, 10033, 7063.00, '2023-12-15');
+INSERT INTO `t_salary` VALUES (10012, 10035, 8835.00, '2023-12-15');
+INSERT INTO `t_salary` VALUES (10013, 10026, 7035.00, '2023-12-15');
+INSERT INTO `t_salary` VALUES (10014, 10012, 9922.00, '2023-12-15');
+INSERT INTO `t_salary` VALUES (10015, 10039, 6497.00, '2023-12-15');
+INSERT INTO `t_salary` VALUES (10016, 10017, 5886.00, '2023-12-15');
+INSERT INTO `t_salary` VALUES (10017, 10032, 5266.00, '2023-12-15');
+INSERT INTO `t_salary` VALUES (10018, 10034, 6711.00, '2023-12-15');
+INSERT INTO `t_salary` VALUES (10019, 10050, 7245.00, '2023-12-15');
+INSERT INTO `t_salary` VALUES (10020, 10049, 9272.00, '2023-12-15');
+INSERT INTO `t_salary` VALUES (10021, 10003, 5735.00, '2023-12-15');
+INSERT INTO `t_salary` VALUES (10022, 10014, 5654.00, '2023-12-15');
+INSERT INTO `t_salary` VALUES (10023, 10025, 6875.00, '2023-12-15');
+INSERT INTO `t_salary` VALUES (10024, 10021, 7578.00, '2023-12-15');
+INSERT INTO `t_salary` VALUES (10025, 10011, 5949.00, '2023-12-15');
+INSERT INTO `t_salary` VALUES (10026, 10020, 6050.00, '2023-12-15');
+INSERT INTO `t_salary` VALUES (10027, 10027, 9881.00, '2023-12-15');
+INSERT INTO `t_salary` VALUES (10028, 10037, 5912.00, '2023-12-15');
+INSERT INTO `t_salary` VALUES (10029, 10005, 6696.00, '2023-12-15');
+INSERT INTO `t_salary` VALUES (10030, 10002, 9584.00, '2023-12-15');
+INSERT INTO `t_salary` VALUES (10031, 10043, 6744.00, '2023-12-15');
+INSERT INTO `t_salary` VALUES (10032, 10006, 7471.00, '2023-12-15');
+INSERT INTO `t_salary` VALUES (10033, 10031, 9545.00, '2023-12-15');
+INSERT INTO `t_salary` VALUES (10034, 10029, 5758.00, '2023-12-15');
+INSERT INTO `t_salary` VALUES (10035, 10038, 9656.00, '2023-12-15');
+INSERT INTO `t_salary` VALUES (10036, 10019, 8875.00, '2023-12-15');
+INSERT INTO `t_salary` VALUES (10037, 10009, 9506.00, '2023-12-15');
+INSERT INTO `t_salary` VALUES (10038, 10018, 7310.00, '2023-12-15');
+INSERT INTO `t_salary` VALUES (10039, 10047, 9341.00, '2023-12-15');
+INSERT INTO `t_salary` VALUES (10041, 10015, 7182.00, '2023-12-15');
+INSERT INTO `t_salary` VALUES (10042, 10023, 7322.00, '2023-12-15');
+INSERT INTO `t_salary` VALUES (10043, 10008, 8605.00, '2023-12-15');
+INSERT INTO `t_salary` VALUES (10044, 10001, 8406.00, '2023-12-15');
+INSERT INTO `t_salary` VALUES (10045, 10030, 6779.00, '2023-12-15');
+INSERT INTO `t_salary` VALUES (10046, 10045, 7257.00, '2023-12-15');
+INSERT INTO `t_salary` VALUES (10047, 10036, 8226.00, '2023-12-15');
+INSERT INTO `t_salary` VALUES (10048, 10044, 6933.00, '2023-12-15');
+INSERT INTO `t_salary` VALUES (10049, 10016, 9858.00, '2023-12-15');
+INSERT INTO `t_salary` VALUES (10050, 10004, 5995.00, '2023-12-15');
+INSERT INTO `t_salary` VALUES (10051, 10035, 6439.00, '2023-11-15');
+INSERT INTO `t_salary` VALUES (10052, 10027, 9253.00, '2023-11-15');
+INSERT INTO `t_salary` VALUES (10053, 10038, 9502.00, '2023-11-15');
+INSERT INTO `t_salary` VALUES (10054, 10016, 5817.00, '2023-11-15');
+INSERT INTO `t_salary` VALUES (10055, 10013, 9357.00, '2023-11-15');
+INSERT INTO `t_salary` VALUES (10056, 10040, 7632.00, '2023-11-15');
+INSERT INTO `t_salary` VALUES (10057, 10050, 8117.00, '2023-11-15');
+INSERT INTO `t_salary` VALUES (10058, 10014, 6203.00, '2023-11-15');
+INSERT INTO `t_salary` VALUES (10059, 10002, 6592.00, '2023-11-15');
+INSERT INTO `t_salary` VALUES (10060, 10045, 5942.00, '2023-11-15');
+INSERT INTO `t_salary` VALUES (10061, 10003, 6926.00, '2023-11-15');
+INSERT INTO `t_salary` VALUES (10062, 10015, 9381.00, '2023-11-15');
+INSERT INTO `t_salary` VALUES (10063, 10049, 5525.00, '2023-11-15');
+INSERT INTO `t_salary` VALUES (10064, 10048, 7493.00, '2023-11-15');
+INSERT INTO `t_salary` VALUES (10065, 10021, 6205.00, '2023-11-15');
+INSERT INTO `t_salary` VALUES (10066, 10042, 9429.00, '2023-11-15');
+INSERT INTO `t_salary` VALUES (10067, 10018, 6815.00, '2023-11-15');
+INSERT INTO `t_salary` VALUES (10068, 10024, 8044.00, '2023-11-15');
+INSERT INTO `t_salary` VALUES (10069, 10020, 6381.00, '2023-11-15');
+INSERT INTO `t_salary` VALUES (10070, 10006, 6020.00, '2023-11-15');
+INSERT INTO `t_salary` VALUES (10071, 10044, 9105.00, '2023-11-15');
+INSERT INTO `t_salary` VALUES (10072, 10036, 7961.00, '2023-11-15');
+INSERT INTO `t_salary` VALUES (10073, 10047, 9417.00, '2023-11-15');
+INSERT INTO `t_salary` VALUES (10074, 10031, 9481.00, '2023-11-15');
+INSERT INTO `t_salary` VALUES (10075, 10032, 8984.00, '2023-11-15');
+INSERT INTO `t_salary` VALUES (10076, 10019, 9756.00, '2023-11-15');
+INSERT INTO `t_salary` VALUES (10077, 10025, 7597.00, '2023-11-15');
+INSERT INTO `t_salary` VALUES (10078, 10010, 7616.00, '2023-11-15');
+INSERT INTO `t_salary` VALUES (10079, 10008, 6574.00, '2023-11-15');
+INSERT INTO `t_salary` VALUES (10080, 10046, 9142.00, '2023-11-15');
+INSERT INTO `t_salary` VALUES (10081, 10041, 5881.00, '2023-11-15');
+INSERT INTO `t_salary` VALUES (10082, 10001, 5874.00, '2023-11-15');
+INSERT INTO `t_salary` VALUES (10083, 10005, 8222.00, '2023-11-15');
+INSERT INTO `t_salary` VALUES (10084, 10009, 6899.00, '2023-11-15');
+INSERT INTO `t_salary` VALUES (10085, 10029, 6606.00, '2023-11-15');
+INSERT INTO `t_salary` VALUES (10086, 10017, 5412.00, '2023-11-15');
+INSERT INTO `t_salary` VALUES (10087, 10023, 9739.00, '2023-11-15');
+INSERT INTO `t_salary` VALUES (10088, 10028, 8329.00, '2023-11-15');
+INSERT INTO `t_salary` VALUES (10089, 10033, 7426.00, '2023-11-15');
+INSERT INTO `t_salary` VALUES (10090, 10012, 7572.00, '2023-11-15');
+INSERT INTO `t_salary` VALUES (10091, 10034, 7821.00, '2023-11-15');
+INSERT INTO `t_salary` VALUES (10092, 10026, 9401.00, '2023-11-15');
+INSERT INTO `t_salary` VALUES (10093, 10022, 8226.00, '2023-11-15');
+INSERT INTO `t_salary` VALUES (10094, 10030, 8020.00, '2023-11-15');
+INSERT INTO `t_salary` VALUES (10095, 10011, 8723.00, '2023-11-15');
+INSERT INTO `t_salary` VALUES (10096, 10039, 8327.00, '2023-11-15');
+INSERT INTO `t_salary` VALUES (10097, 10004, 7497.00, '2023-11-15');
+INSERT INTO `t_salary` VALUES (10098, 10043, 5230.00, '2023-11-15');
+INSERT INTO `t_salary` VALUES (10099, 10007, 9206.00, '2023-11-15');
+INSERT INTO `t_salary` VALUES (10100, 10037, 7612.00, '2023-11-15');
+
+-- ----------------------------
+-- View structure for v_hrm
+-- ----------------------------
+DROP VIEW IF EXISTS `v_hrm`;
+CREATE ALGORITHM = UNDEFINED SQL SECURITY DEFINER VIEW `v_hrm` AS select `d`.`name` AS `部门名称`,`e`.`name` AS `员工姓名`,`e`.`sex` AS `性别`,`e`.`age` AS `年龄`,`e`.`position` AS `职位` from (`t_employee` `e` join `t_department` `d` on((`e`.`d_id` = `d`.`id`))) order by `d`.`name`;
+
+-- ----------------------------
+-- Procedure structure for calculate_total_salary
+-- ----------------------------
+DROP PROCEDURE IF EXISTS `calculate_total_salary`;
+delimiter ;;
+CREATE PROCEDURE `calculate_total_salary`(IN `emp_id` int,OUT `total_salary` double)
+BEGIN
+	SELECT SUM(money) INTO total_salary
+    FROM t_salary
+    WHERE e_id = emp_id;
+END
+;;
+delimiter ;
+
+-- ----------------------------
+-- Triggers structure for table t_employee
+-- ----------------------------
+DROP TRIGGER IF EXISTS `update_department_description`;
+delimiter ;;
+CREATE TRIGGER `update_department_description` BEFORE INSERT ON `t_employee` FOR EACH ROW BEGIN
+    IF NEW.d_id IS NOT NULL THEN
+        UPDATE t_department
+        SET description = '部门描述待更新'
+        WHERE id = NEW.d_id AND description IS NULL;
+    END IF;
+END
+;;
+delimiter ;
+
+SET FOREIGN_KEY_CHECKS = 1;

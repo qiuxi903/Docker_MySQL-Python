@@ -1104,6 +1104,44 @@ def api_author_try_python(b: TryPyBody, request: Request):
         raise HTTPException(400, str(e))
 
 
+@app.post("/api/author/qpack/parse")
+async def api_qpack_parse(request: Request, files: list[UploadFile] = File(...)):
+    """解析题目包（题干 + 参考答案 + 数据脚本），返回预览，不落库。"""
+    a = acct(sess(request))
+    if a["role"] != "admin" and not a.get("can_publish"):
+        raise HTTPException(403, "还没有出题权限")
+    if len(files) > drills.QPACK_MAX_FILES:
+        raise HTTPException(400, f"一次最多 {drills.QPACK_MAX_FILES} 个文件")
+    payload = []
+    for f in files:
+        raw = await f.read(drills.QPACK_FILE_MAX + 1)
+        if len(raw) > drills.QPACK_FILE_MAX:
+            raise HTTPException(400, f"文件 {f.filename} 超过 8MB")
+        payload.append({"name": f.filename or "", "data": raw})
+    try:
+        return drills.parse_package(payload)
+    except DrillError as e:
+        raise HTTPException(400, str(e))
+
+
+class QpackCreateBody(BaseModel):
+    package: dict
+    publish: bool = True
+    judge: dict = {}
+
+
+@app.post("/api/author/qpack/create")
+def api_qpack_create(b: QpackCreateBody, request: Request):
+    a = acct(sess(request))
+    if a["role"] != "admin" and not a.get("can_publish"):
+        raise HTTPException(403, "还没有出题权限")
+    try:
+        return drills.create_from_package(a, b.package, publish=b.publish,
+                                          judge_override=b.judge or {})
+    except DrillError as e:
+        raise HTTPException(400, str(e))
+
+
 class SetupFromDbBody(BaseModel):
     db: str = ""
 
