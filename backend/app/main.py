@@ -16,9 +16,11 @@ from pydantic import BaseModel
 
 import pymysql
 
-from . import community, importer, sessions, sqlrun
+from . import community, drills, importer, sessions, sqlrun, users
 from .config import C
 from .community import CommunityError
+from .drills import DrillError
+from .users import UserError
 from .importer import ImportError_ as ImportFormatError
 from .sessions import AuthError
 from .sqlrun import SqlError
@@ -43,6 +45,8 @@ async def lifespan(app: FastAPI):
     await asyncio.to_thread(sessions._init_meta)
     await asyncio.to_thread(sessions.ensure_admin)
     await asyncio.to_thread(community.ensure_builtin_seed)
+    await asyncio.to_thread(drills.init)
+    await asyncio.to_thread(users.init)
     task = asyncio.create_task(_cleanup_loop())
     yield
     task.cancel()
@@ -119,6 +123,7 @@ class SqlBody(BaseModel):
 class CodeBody(BaseModel):
     code: str
     db: str = ""
+    filename: str = ""
 
 
 class ShareBody(BaseModel):
@@ -157,13 +162,23 @@ def api_login(b: LoginBody, request: Request):
         raise HTTPException(400, str(e))
     token = sessions.create_session(account["id"])
     return {"token": token,
-            "user": {"name": account["display"], "kind": account["kind"], "role": account["role"]}}
+            "user": {"name": account["display"], "kind": account["kind"],
+                     "role": account["role"],
+                     "canPublish": account["role"] == "admin" or bool(account.get("can_publish"))}}
 
 
 @app.post("/api/logout")
 def api_logout(request: Request):
-    sessions.destroy_session(request.headers.get("x-token", ""))
+    sessions.logout_cleanup(request.headers.get("x-token", ""))
     return {"ok": True}
+
+
+@app.post("/api/pyfiles/clear-uploaded")
+def api_pyfiles_clear_uploaded(request: Request):
+    """删除当前账号所有「上传的临时 py 文件」（刷新页面时前端调用）。"""
+    a = acct(sess(request))
+    n = sessions.pyfiles_delete_uploaded(a["id"])
+    return {"removed": n}
 
 
 @app.get("/api/me")
@@ -171,10 +186,41 @@ def api_me(request: Request):
     s = sess(request)
     a = acct(s)
     return {"user": {"name": a["display"], "kind": a["kind"], "role": a["role"],
-                     "db": a["db_name"]},
+                     "db": a["db_name"],
+                     "canPublish": a["role"] == "admin" or bool(a.get("can_publish"))},
             "db": a["db_name"],
             "databases": sessions.list_dbs(a),
             "tables": sqlrun.list_tables(a["db_name"], a["mysql_user"], a["mysql_pass"])}
+
+
+class PwBody(BaseModel):
+    old_password: str = ""
+    new_password: str = ""
+
+
+@app.get("/api/me/profile")
+def api_me_profile(request: Request):
+    a = acct(sess(request))
+    try:
+        return users.profile(a)
+    except UserError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/me/password")
+def api_me_password(b: PwBody, request: Request):
+    a = acct(sess(request))
+    try:
+        return users.change_password(a, b.old_password, b.new_password,
+                                     request.headers.get("x-token", ""))
+    except UserError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/me/logout_all")
+def api_me_logout_all(request: Request):
+    a = acct(sess(request))
+    return users.logout_all(a, request.headers.get("x-token", ""))
 
 
 # ---------- SQL ----------
@@ -337,18 +383,21 @@ async def api_import(request: Request, file: UploadFile = File(...),
     return out
 
 
-# ---------- 表社区 ----------
+# ---------- 题库 ----------
 
 @app.get("/api/community")
 def api_community(request: Request):
     sess(request)
-    return {"items": community.list_items()}
+    return {"items": community.list_items(),
+            "questions": community.question_list_published()}
 
 
 @app.post("/api/community/upload")
 async def api_community_upload(request: Request, file: UploadFile = File(...),
                                title: str = Form("")):
     a = acct(sess(request))
+    if a["kind"] == "guest":
+        raise HTTPException(403, "游客不能上传到题库，注册账号后即可分享")
     data = await file.read()
     if len(data) > 8 * 1024 * 1024:
         raise HTTPException(400, "文件超过 8MB 上限")
@@ -361,6 +410,10 @@ async def api_community_upload(request: Request, file: UploadFile = File(...),
 @app.post("/api/community/publish")
 def api_community_publish(b: ShareBody, request: Request):
     a = acct(sess(request))
+    if a["kind"] == "guest":
+        raise HTTPException(403, "游客不能发布到题库，注册账号后即可分享")
+    if b.public:
+        _need_publish_perm(a)   # 私有分享链接不受限，公开发布需要权限
     try:
         if b.db.strip():
             owned = sessions.owned_dbs(a["id"])
@@ -435,6 +488,15 @@ def api_community_detail(item_id: int, request: Request):
         raise HTTPException(400, str(e))
 
 
+@app.get("/api/community/{item_id}/preview")
+def api_community_preview(item_id: int, request: Request, table: str):
+    sess(request)
+    try:
+        return community.item_table_preview(item_id, table)
+    except CommunityError as e:
+        raise HTTPException(400, str(e))
+
+
 @app.post("/api/community/open")
 def api_community_open(b: CommunityOpenBody, request: Request):
     a = acct(sess(request))
@@ -453,6 +515,39 @@ def api_community_open(b: CommunityOpenBody, request: Request):
 def api_pyfiles(request: Request):
     a = acct(sess(request))
     return {"files": sessions.pyfiles_list(a["id"])}
+
+
+@app.post("/api/pyfiles/upload")
+async def api_pyfiles_upload(request: Request, files: list[UploadFile] = File(...)):
+    a = acct(sess(request))
+    current = sessions.pyfiles_list(a["id"])
+    if len(current) + len(files) > sessions.PYFILE_MAX_COUNT:
+        raise HTTPException(400, f"文件数量超过上限（{sessions.PYFILE_MAX_COUNT} 个）")
+
+    uploads = []
+    for file in files:
+        filename = (file.filename or "").replace("\\", "/").rsplit("/", 1)[-1]
+        name = sessions.normalize_pyfile_name(filename)
+        if not name or not filename.lower().endswith(".py"):
+            raise HTTPException(400, f"只支持有效的 .py 文件：{filename or '未命名文件'}")
+        raw = await file.read(C.CODE_MAX + 1)
+        if len(raw) > C.CODE_MAX:
+            raise HTTPException(400, f"文件 {filename} 超过 256KB 上限")
+        try:
+            content = raw.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            raise HTTPException(400, f"文件 {filename} 不是 UTF-8 编码")
+        uploads.append((name, content))
+
+    saved = []
+    existing = {f["name"].casefold() for f in current}
+    for name, content in uploads:
+        final = sessions.pyfiles_unique_name(a["id"], name, existing)
+        # 上传的文件是临时文件：刷新页面或退出登录时自动删除
+        sessions.pyfiles_save(a["id"], final, content, uploaded=True)
+        existing.add(final.casefold())
+        saved.append({"name": final, "size": len(content.encode("utf-8"))})
+    return {"files": saved}
 
 
 @app.get("/api/pyfiles/{name}")
@@ -491,6 +586,102 @@ def api_pyfile_delete(name: str, request: Request):
     a = acct(sess(request))
     sessions.pyfiles_delete(a["id"], name)
     return {"ok": True}
+
+
+# ---------- 题目（草稿 → 发布） ----------
+
+class QuestionBody(BaseModel):
+    id: int = 0
+    title: str = ""
+    note: str = ""
+    db: str = ""
+    py: list[str] = []
+    publish: bool = False
+
+
+@app.get("/api/questions/mine")
+def api_questions_mine(request: Request):
+    a = acct(sess(request))
+    return {"questions": community.question_list_mine(a["id"]),
+            "databases": sessions.list_dbs(a)}
+
+
+def _need_publish_perm(a: dict):
+    if a["role"] != "admin" and not a.get("can_publish"):
+        raise HTTPException(403, "还没有出题权限（管理员可在「管理」面板按人开通）")
+
+
+@app.post("/api/questions/save")
+def api_questions_save(b: QuestionBody, request: Request):
+    a = acct(sess(request))
+    if a["kind"] == "guest":
+        raise HTTPException(403, "游客不能出题，注册账号后即可把素材分享给同学")
+    # 与练习出题同一口径：建草稿 / 发布都要「出题权限」（管理员默认有）
+    _need_publish_perm(a)
+    try:
+        return community.question_save(a, qid=b.id or None, title=b.title, note=b.note,
+                                       db_name=b.db, py_names=b.py, publish=b.publish)
+    except CommunityError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.get("/api/questions/{qid}")
+def api_question_detail(qid: int, request: Request):
+    a = acct(sess(request))
+    try:
+        return community.question_detail(a, qid)
+    except CommunityError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/questions/{qid}/publish")
+def api_question_publish(qid: int, b: QuestionBody, request: Request):
+    a = acct(sess(request))
+    if a["kind"] == "guest":
+        raise HTTPException(403, "游客不能发布题目，注册账号后即可分享")
+    if b.publish:
+        _need_publish_perm(a)
+    try:
+        return community.question_publish(a, qid, b.publish)
+    except CommunityError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.delete("/api/questions/{qid}")
+def api_question_delete(qid: int, request: Request):
+    a = acct(sess(request))
+    try:
+        community.question_delete(a, qid)
+    except CommunityError as e:
+        raise HTTPException(400, str(e))
+    return {"ok": True}
+
+
+@app.post("/api/questions/{qid}/import")
+def api_question_import(qid: int, b: QuestionBody, request: Request):
+    a = acct(sess(request))
+    try:
+        return community.question_import(a, qid, new_db_name=b.db.strip())
+    except CommunityError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.get("/api/questions/{qid}/download")
+def api_question_download(qid: int, request: Request):
+    sess(request)
+    from urllib.parse import quote
+
+    from fastapi.responses import Response
+
+    try:
+        filename, data = community.question_zip(qid)
+    except CommunityError as e:
+        raise HTTPException(400, str(e))
+    return Response(
+        content=data,
+        media_type="application/zip",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"},
+    )
 
 
 @app.get("/api/community/{item_id}/download")
@@ -563,7 +754,7 @@ def api_source_download(table: str, request: Request):
         raise HTTPException(400, "表名不合法")
     src = importer.get_source(a["db_name"], a["mysql_user"], a["mysql_pass"], table)
     if not src:
-        raise HTTPException(404, "这张表没有源文件（可能是手写建表或社区导入的）")
+        raise HTTPException(404, "这张表没有源文件（可能是手写建表或题库导入的）")
     return Response(
         content=src["data"],
         media_type="application/octet-stream",
@@ -604,8 +795,12 @@ def api_pyrun_start(b: CodeBody, request: Request):
     target = b.db.strip() or a["db_name"]
     if target not in sessions.owned_dbs(a["id"]):
         raise HTTPException(403, f"数据库 {target} 不在你的名下")
+    files = sessions.pyfiles_contents(a["id"])
+    if b.filename in files:
+        files[b.filename] = b.code
     d = _pyrun_forward("POST", "/start", {
         "code": b.code,
+        "files": files,
         "db": {"host": C.DB_HOST, "port": C.DB_PORT,
                "user": a["mysql_user"], "pass": a["mysql_pass"], "name": target},
     })
@@ -643,10 +838,99 @@ def require_admin(request: Request) -> dict:
     return s
 
 
-@app.get("/api/admin/users")
-def api_admin_users(request: Request, kind: str = "user"):
+@app.get("/api/admin/overview")
+def api_admin_overview(request: Request):
     require_admin(request)
-    return {"users": sessions.admin_list_users(kind), "kind": kind}
+    return users.overview()
+
+
+@app.get("/api/admin/users")
+def api_admin_users(request: Request, kind: str = "user", q: str = "",
+                    page: int = 1, size: int = 50, only: str = ""):
+    require_admin(request)
+    d = users.list_users(kind=kind, q=q, page=page, size=size, only=only)
+    d["kind"] = kind
+    return d
+
+
+class AdminCreateBody(BaseModel):
+    username: str
+    password: str
+    can_publish: bool = False
+
+
+class AdminUpdateBody(BaseModel):
+    can_publish: bool | None = None
+    disabled: bool | None = None
+    password: str = ""
+
+
+class AdminBatchBody(BaseModel):
+    ids: list[int] = []
+    action: str = ""
+
+
+@app.get("/api/admin/users/{uid}")
+def api_admin_user_detail(uid: int, request: Request):
+    require_admin(request)
+    try:
+        return users.detail(uid)
+    except UserError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/admin/users")
+def api_admin_user_create(b: AdminCreateBody, request: Request):
+    s = require_admin(request)
+    a = acct(s)
+    try:
+        return users.create_user(b.username.strip(), b.password, client_ip(request),
+                                 b.can_publish, a)
+    except UserError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/admin/users/{uid}/update")
+def api_admin_user_update(uid: int, b: AdminUpdateBody, request: Request):
+    s = require_admin(request)
+    a = acct(s)
+    fields = {}
+    if b.can_publish is not None:
+        fields["can_publish"] = b.can_publish
+    if b.disabled is not None:
+        fields["disabled"] = b.disabled
+    if b.password:
+        fields["password"] = b.password
+    if not fields:
+        raise HTTPException(400, "没有要修改的内容")
+    try:
+        return users.update(uid, fields, a)
+    except UserError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/admin/users/{uid}/revoke_sessions")
+def api_admin_revoke(uid: int, request: Request):
+    s = require_admin(request)
+    try:
+        return users.revoke_sessions(uid, acct(s))
+    except UserError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/admin/batch")
+def api_admin_batch(b: AdminBatchBody, request: Request):
+    s = require_admin(request)
+    try:
+        return users.batch(b.ids, b.action, acct(s))
+    except UserError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.get("/api/admin/auth_log")
+def api_admin_auth_log(request: Request, limit: int = 100, only_fail: bool = False):
+    require_admin(request)
+    return {"logs": users.auth_log(limit, only_fail)}
 
 
 @app.post("/api/admin/reset_password")
@@ -659,6 +943,20 @@ def api_admin_reset(b: AdminResetBody, request: Request):
     return {"ok": True}
 
 
+class AdminPermBody(BaseModel):
+    id: int
+    allow: bool = True
+
+
+@app.post("/api/admin/set_publish_permission")
+def api_admin_set_perm(b: AdminPermBody, request: Request):
+    require_admin(request)
+    try:
+        return sessions.set_publish_permission(b.id, b.allow)
+    except AuthError as e:
+        raise HTTPException(400, str(e))
+
+
 @app.post("/api/admin/delete_user")
 def api_admin_delete(b: AdminDeleteBody, request: Request):
     require_admin(request)
@@ -667,6 +965,194 @@ def api_admin_delete(b: AdminDeleteBody, request: Request):
     except AuthError as e:
         raise HTTPException(400, str(e))
     return {"ok": True}
+
+
+# ---------- 练习（可判分的题目） ----------
+
+class DrillBody(BaseModel):
+    id: int = 0
+    course: str = "sql"
+    type: str = "sql"
+    title: str = ""
+    stem: str = ""
+    setupSql: str = ""
+    verifySql: str = ""
+    starterCode: str = ""
+    inputData: str = ""
+    expectedOutput: str = ""
+    options: list[dict] = []
+    answer: dict = {}
+    hint: str = ""
+    judgeMode: str = ""
+    testCases: str = ""
+    publish: bool = False
+    answer_text: object = ""
+
+
+@app.get("/api/drills/progress")
+def api_drills_progress(request: Request):
+    a = acct(sess(request))
+    try:
+        return {"progress": drills.progress(a)}
+    except DrillError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.get("/api/drills/mine")
+def api_drills_mine(request: Request):
+    a = acct(sess(request))
+    try:
+        return {"drills": drills.list_drills(a, mine=True)}
+    except DrillError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.get("/api/drills/wrong")
+def api_drills_wrong(request: Request):
+    a = acct(sess(request))
+    try:
+        return {"drills": drills.my_wrong(a)}
+    except DrillError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.get("/api/drills")
+def api_drills_list(request: Request, course: str = ""):
+    a = acct(sess(request))
+    try:
+        return {"drills": drills.list_drills(a, course=course)}
+    except DrillError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/drills")
+def api_drills_save(b: DrillBody, request: Request):
+    a = acct(sess(request))
+    try:
+        r = drills.save(a, b.id, {
+            "course": b.course, "type": b.type, "title": b.title, "stem": b.stem,
+            "setupSql": b.setupSql, "verifySql": b.verifySql,
+            "starterCode": b.starterCode, "inputData": b.inputData,
+            "expectedOutput": b.expectedOutput, "options": b.options,
+            "answer": b.answer, "hint": b.hint,
+            "judgeMode": b.judgeMode, "testCases": b.testCases,
+        })
+        if b.publish:
+            drills.publish(a, r["id"], True)
+        return r
+    except DrillError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.get("/api/drills/{did}")
+def api_drill_detail(did: int, request: Request):
+    a = acct(sess(request))
+    try:
+        return drills.get_drill(a, did)
+    except DrillError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/drills/{did}/publish")
+def api_drill_publish(did: int, b: DrillBody, request: Request):
+    a = acct(sess(request))
+    try:
+        return drills.publish(a, did, b.publish)
+    except DrillError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.delete("/api/drills/{did}")
+def api_drill_delete(did: int, request: Request):
+    a = acct(sess(request))
+    try:
+        drills.delete(a, did)
+    except DrillError as e:
+        raise HTTPException(400, str(e))
+    return {"ok": True}
+
+
+class TrySqlBody(BaseModel):
+    setup: str = ""
+    sql: str = ""
+
+
+class TryPyBody(BaseModel):
+    code: str = ""
+    stdin: str = ""
+
+
+@app.post("/api/author/try_sql")
+def api_author_try_sql(b: TrySqlBody, request: Request):
+    a = acct(sess(request))
+    if a["role"] != "admin" and not a.get("can_publish"):
+        raise HTTPException(403, "还没有出题权限")
+    try:
+        return drills.try_sql(a, b.setup, b.sql)
+    except DrillError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/author/try_python")
+def api_author_try_python(b: TryPyBody, request: Request):
+    a = acct(sess(request))
+    if a["role"] != "admin" and not a.get("can_publish"):
+        raise HTTPException(403, "还没有出题权限")
+    try:
+        return drills.try_python(a, b.code, b.stdin)
+    except DrillError as e:
+        raise HTTPException(400, str(e))
+
+
+class SetupFromDbBody(BaseModel):
+    db: str = ""
+
+
+@app.post("/api/author/setup_from_db")
+def api_author_setup_from_db(b: SetupFromDbBody, request: Request):
+    a = acct(sess(request))
+    if a["role"] != "admin" and not a.get("can_publish"):
+        raise HTTPException(403, "还没有出题权限")
+    try:
+        return drills.setup_from_db(a, b.db)
+    except DrillError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/author/setup_from_file")
+async def api_author_setup_from_file(request: Request, file: UploadFile = File(...)):
+    a = acct(sess(request))
+    if a["role"] != "admin" and not a.get("can_publish"):
+        raise HTTPException(403, "还没有出题权限")
+    data = await file.read(8 * 1024 * 1024 + 1)
+    if len(data) > 8 * 1024 * 1024:
+        raise HTTPException(400, "文件超过 8MB")
+    try:
+        return drills.setup_from_file(file.filename or "", data)
+    except DrillError as e:
+        raise HTTPException(400, str(e))
+
+
+class SandboxBody(BaseModel):
+    reset: bool = False
+
+
+@app.post("/api/drills/{did}/sandbox")
+def api_drill_sandbox(did: int, b: SandboxBody, request: Request):
+    a = acct(sess(request))
+    try:
+        return drills.ensure_sandbox(a, did, b.reset)
+    except DrillError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/drills/{did}/submit")
+def api_drill_submit(did: int, b: DrillBody, request: Request):
+    a = acct(sess(request))
+    try:
+        return drills.submit(a, did, b.answer_text)
+    except DrillError as e:
+        raise HTTPException(400, str(e))
 
 
 @app.get("/api/health")
@@ -686,4 +1172,36 @@ def share_entry(code: str):
 
 # ---------- 静态页面（放在最后，/ 返回 index.html） ----------
 
-app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="static")
+class SPAStatic(StaticFiles):
+    """静态文件；找不到的页面请求回退到 index.html（单页应用刷新任意路径都不白屏）。"""
+
+    async def get_response(self, path, scope):
+        from starlette.exceptions import HTTPException as StarletteHTTPException
+
+        try:
+            return await super().get_response(path, scope)
+        except StarletteHTTPException as exc:
+            if exc.status_code != 404 or path.startswith("api/"):
+                raise
+            accept = ""
+            for k, v in scope.get("headers", []):
+                if k.lower() == b"accept":
+                    accept = v.decode("latin-1")
+                    break
+            # 只有浏览器"打开页面"的请求才回退；图片/脚本等资源缺失仍然 404
+            if "text/html" not in accept:
+                raise
+            resp = await super().get_response("index.html", scope)
+            resp.headers["Cache-Control"] = "no-cache"
+            return resp
+
+
+@app.get("/index.html")
+def index_canonical():
+    """统一入口地址：/index.html → /（地址栏始终是带斜杠的根路径）。"""
+    from fastapi.responses import RedirectResponse
+
+    return RedirectResponse("/", status_code=307)
+
+
+app.mount("/", SPAStatic(directory=str(STATIC_DIR), html=True), name="static")

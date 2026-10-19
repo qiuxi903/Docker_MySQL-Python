@@ -64,6 +64,9 @@ services:
       GUEST_TTL_DAYS: "7"
       SQL_TIMEOUT_SEC: "10"
       ROWS_LIMIT: "500"
+      # 放在 Nginx/宝塔反代后面时，.env 里设 TRUST_PROXY=1 才能拿到学生真实 IP
+      # （不设则只会记到 Docker 网关 IP）
+      TRUST_PROXY: ${TRUST_PROXY:-0}
     depends_on:
       db:
         condition: service_healthy

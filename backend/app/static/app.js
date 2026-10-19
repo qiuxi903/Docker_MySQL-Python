@@ -3,35 +3,6 @@
 
 const { createApp } = Vue;
 
-const EXAMPLES = [
-  {
-    name: "① Hello World",
-    code: 'print("你好，MySQL & Python！")\nprint("这是在服务器上真实运行的 Python")\n',
-  },
-  {
-    name: "② 循环与函数",
-    code: "def fib(n):\n    a, b = 0, 1\n    result = []\n    for _ in range(n):\n        result.append(a)\n        a, b = b, a + b\n    return result\n\nprint(\"斐波那契数列前 10 项：\", fib(10))\n\nfor i in range(1, 4):\n    print(\"*\" * i)\n",
-  },
-  {
-    name: "③ 连接 MySQL 查询",
-    code: '# query(sql) 直接查你自己的数据库，返回元组列表\nrows = query("SELECT ENAME, JOB, SAL FROM emp ORDER BY SAL DESC LIMIT 5")\nprint("工资前 5 名：")\nfor name, job, sal in rows:\n    print(f"  {name:<8}{job:<10}{sal}")\n\n# 写入用 execute(sql)，返回影响行数\nn = execute("UPDATE emp SET SAL = SAL WHERE 1=0")   # 安全示例，不改数据\nprint("影响行数：", n)\n',
-  },
-  {
-    name: "④ 交互问答（input 真的能用）",
-    code: `# 运行后控制台会等你输入，直接在上面打字回车即可
-name = input("你叫什么名字？")
-print("你好，" + name)
-
-n = int(input("再输入一个数字，我给你翻倍："))
-print("结果是：", n * 2)
-`,
-  },
-  {
-    name: "⑤ 手写 pymysql 连接",
-    code: 'import pymysql\n\nconn = get_conn()          # 等价于 pymysql.connect(...)，已帮你填好地址账号\ntry:\n    with conn.cursor() as cur:\n        cur.execute("SELECT DNAME, LOC FROM dept")\n        for dname, loc in cur.fetchall():\n            print(dname, "-", loc)\n    conn.commit()\nfinally:\n    conn.close()\n',
-  },
-];
-
 const KIND_LABEL = { db: "数据库", py: "Python代码", csv: "表格", xlsx: "Excel" };
 
 /* Lucide 风格 SVG 图标（线性、currentColor，自动适配主题） */
@@ -64,6 +35,9 @@ const ICONS = {
   "user-x": '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="22" x2="16" y1="11" y2="11"/>',
   "clock": '<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>',
   "chevron-right": '<polyline points="9 18 15 12 9 6"/>',
+  "plus": '<path d="M5 12h14"/><path d="M12 5v14"/>',
+  "check": '<polyline points="20 6 9 17 4 12"/>',
+  "target": '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.2"/>',
 };
 
 /* Python 补全词库：关键字 + 常用内置 + 平台内置函数 */
@@ -106,6 +80,94 @@ const EIcon = {
   template: `<svg :width="size" :height="size" viewBox="0 0 24 24" fill="none" stroke="currentColor"
     stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
     style="vertical-align:-2.5px; flex:0 0 auto" v-html="path"></svg>`,
+};
+
+/* 自建下拉选择：替代原生 <select>（手机内嵌浏览器会弹系统选择器，且样式与站点不统一）。
+   浮层用 fixed 按按钮坐标定位：弹窗内容区是 overflow:auto 的滚动容器，
+   绝对定位的浮层会撑大滚动区、被裁剪，fixed 不受影响也不会拉长弹窗。 */
+const XSelect = {
+  props: {
+    modelValue: String,
+    options: { type: Array, default: () => [] },   // [{ value, label }]
+  },
+  emits: ["update:modelValue"],
+  data() { return { open: false, pos: { top: 0, left: 0, width: 0, maxH: 240 } }; },
+  computed: {
+    label() {
+      const o = this.options.find(o => o.value === this.modelValue);
+      return o ? o.label : (this.modelValue || "请选择");
+    },
+    popStyle() {
+      return { top: this.pos.top + "px", left: this.pos.left + "px",
+               width: this.pos.width + "px", maxHeight: this.pos.maxH + "px" };
+    },
+  },
+  template: `<div class="xsel">
+    <button type="button" class="xsel-btn" ref="btn" :aria-expanded="open" @click.stop="toggle">
+      <span class="xsel-label">{{ label }}</span>
+      <e-icon name="chevron-down" :size="13"></e-icon>
+    </button>
+    <div class="xsel-pop" ref="pop" v-show="open" :style="popStyle">
+      <button type="button" v-for="o in options" :key="o.value" class="xsel-opt"
+              :class="{ on: o.value === modelValue }" @click.stop="pick(o.value)">
+        <span class="xsel-tick"><e-icon v-if="o.value === modelValue" name="check" :size="12"></e-icon></span>
+        <span>{{ o.label }}</span>
+      </button>
+    </div>
+  </div>`,
+  methods: {
+    toggle() {
+      if (this.open) { this.open = false; return; }
+      this.place();
+      this.open = true;
+    },
+    // 按按钮在屏幕上的实际位置摆放浮层：优先完整显示列表，下方不够就往上翻，
+    // 两边都不够才压缩高度（浮层自己滚动，绝不影响弹窗本身）
+    place() {
+      const btn = this.$refs.btn;
+      if (!btn) return;
+      const r = btn.getBoundingClientRect();
+      const vh = window.innerHeight || 800;
+      const gap = 4, pad = 8, ideal = 240;
+      const spaceBelow = vh - r.bottom - gap - pad;
+      const spaceAbove = r.top - gap - pad;
+      let top, maxH;
+      if (spaceBelow >= ideal) {
+        maxH = ideal; top = r.bottom + gap;
+      } else if (spaceAbove >= ideal) {
+        maxH = ideal; top = r.top - gap - ideal;
+      } else if (spaceBelow >= spaceAbove) {
+        maxH = Math.max(90, spaceBelow); top = r.bottom + gap;
+      } else {
+        maxH = Math.max(90, spaceAbove); top = r.top - gap - maxH;
+      }
+      this.pos = { top, left: r.left, width: r.width, maxH };
+    },
+    pick(v) { this.$emit("update:modelValue", v); this.open = false; },
+    outside(e) { if (!this.$el.contains(e.target)) this.open = false; },
+    follow() { if (this.open) this.place(); },   // 弹窗内容滚动时跟着按钮走
+  },
+  mounted() {
+    document.addEventListener("click", this.outside, true);
+    window.addEventListener("scroll", this.follow, true);
+    window.addEventListener("resize", this.follow);
+  },
+  unmounted() {
+    document.removeEventListener("click", this.outside, true);
+    window.removeEventListener("scroll", this.follow, true);
+    window.removeEventListener("resize", this.follow);
+  },
+};
+
+/* 自建复选框：替代原生 <input type=checkbox>，样式统一、手指点得准 */
+const XCheck = {
+  props: { modelValue: Boolean, label: String, slim: Boolean },
+  emits: ["update:modelValue"],
+  template: `<button type="button" class="xchk" :class="{ on: modelValue, slim }" role="checkbox"
+    :aria-checked="modelValue" @click="$emit('update:modelValue', !modelValue)">
+    <span class="xchk-box"><e-icon v-if="modelValue" name="check" :size="11"></e-icon></span>
+    <span class="xchk-label" v-if="label">{{ label }}</span>
+  </button>`,
 };
 
 /* CodeMirror 编辑器组件：Vue 的 DOM 锚点固定在 textarea 上，
@@ -210,38 +272,184 @@ const App = {
       sqlInit: "",
       pyInit: "",
       pyFiles: [],
+      pyOpenFiles: [],
       pyCurrent: "main.py",
       pySaveTimer: null,
+      pyDirty: new Set(),
+      pyCapsule: "",
+      pyCapsuleTimer: null,
       pyRunCount: 0,
       pyJob: "",
       pyStdin: "",
       pendingShareCode: "",
       shareForm: { db: "", shareName: "", link: "", done: false },
 
-      examples: EXAMPLES,
+      // 自制弹窗（内嵌浏览器会屏蔽原生 prompt/confirm，必须用页面内弹窗）
+      ask: { open: false, title: "", label: "", value: "", ok: null, _resolve: null },
+      confirmBox: { open: false, title: "", text: "", danger: false, _resolve: null },
+
       KIND_LABEL,
 
       importForm: { file: null, table: "", header: true, overwrite: false },
+
+      ctForm: { name: "", db: "", overwrite: false, cols: [{ name: "id", type: "INT", pk: true }] },
+      colTypes: [
+        { value: "INT", label: "整数 INT" },
+        { value: "VARCHAR(50)", label: "文字 VARCHAR" },
+        { value: "DOUBLE", label: "小数 DOUBLE" },
+        { value: "DATE", label: "日期 DATE" },
+        { value: "TEXT", label: "长文本 TEXT" },
+      ],
 
       preview: { open: false, tab: "data", name: "", loading: false, columns: [], rows: null,
                  desc: null, descColumns: [], ddl: "", source: null },
 
       community: [],
-      uploadFile: null,
-      uploadKind: "db",
-      uploadTitle: "",
+      communityQuestions: [],
+      myQuestions: [],
+      qTab: "square",
+      qForm: { id: 0, title: "", note: "", db: "", pyMap: {} },
+      qBusy: false,
+      // 练习
+      drillCourse: "sql",
+      drillList: [],
+      drillCurrent: null,
+      drillResult: null,
+      drillCode: "",
+      drillPick: "",
+      drillFill: "",
+      drillBusy: false,
+      drillShowSetup: false,
+      drillShowHint: false,
+      drillProgress: {},
+      drillSandbox: { db: "", tables: [], loading: false },
+      drillRunLog: [],
+      drillMulti: [],
+      dq: { id: 0, course: "sql", type: "sql", typeLabel: "", title: "", stem: "", hint: "",
+            setupSql: "", verifySql: "", starterCode: "", inputData: "", expectedOutput: "",
+            optionsText: "", rightKey: "", multiKeys: [], fillAnswers: "", status: 1,
+            judgeMode: "result", cases: [], trySql: "", tryCode: "", importDb: "" },
+      dqBusy: false,
+      authorDirty: false,
+      tryResult: null,
+      drillTypes: [
+        { value: "sql", label: "SQL 题", icon: "database", desc: "建表造数，学生写查询，按结果集判分" },
+        { value: "python", label: "Python 题", icon: "code", desc: "学生写代码，按输出/测试用例判分" },
+        { value: "single", label: "单选题", icon: "list", desc: "多个选项里选一个，自动判分" },
+        { value: "multiple", label: "多选题", icon: "list", desc: "可选多个正确项，全对才通过" },
+        { value: "boolean", label: "判断题", icon: "check", desc: "对 / 错 二选一" },
+        { value: "fill", label: "填空题", icon: "file-text", desc: "填一个词，宽松匹配大小写空格" },
+      ],
+      judgeModes: {
+        sql: [
+          { value: "result", label: "结果集一致（不看行序）" },
+          { value: "result_ordered", label: "结果集一致（行序也要对）" },
+          { value: "rows_only", label: "只比数据，不检查列名" },
+          { value: "cell", label: "只比第一个值" },
+          { value: "contains", label: "结果中包含指定值" },
+          { value: "state", label: "改数据题：校验执行后的数据状态" },
+        ],
+        python: [
+          { value: "output", label: "输出完全一致" },
+          { value: "contains", label: "输出包含指定文字" },
+          { value: "regex", label: "输出匹配正则" },
+          { value: "tests", label: "多组测试用例全部通过" },
+        ],
+        single: [{ value: "key", label: "选中正确选项" }],
+        multiple: [{ value: "keys", label: "选出全部正确选项" }],
+        boolean: [{ value: "key", label: "选中正确答案" }],
+        fill: [{ value: "loose", label: "宽松匹配（忽略大小写/空格/标点）" }],
+      },
+
+      qpv: { loading: false, id: 0, title: "", note: "", uploader: "", createdAt: "",
+             downloads: 0, tables: [], tableData: [], pyPreview: [] },
+      qpvFile: null,
+      qpvTable: null,
+      qpvTab: "data",
 
       detail: { open: false, loading: false, id: 0, title: "", uploader: "", isScript: false,
                 tables: [], builtin: false, filename: "" },
+      dbPv: { loading: false, name: "", cols: [], rows: [], ddl: "", script: false,
+              rowCount: null, truncated: false },
+      dbPvTab: "data",
 
-      adminUsers: [],
-      adminGuests: [],
-      adminKind: "user",
+      // 用户管理
+      adminTab: "overview",
+      adminOverview: null,
+      adminList: [],
+      adminTotal: 0, adminPage: 1, adminPages: 1,
+      adminQuery: "", adminOnly: "",
+      adminOnlyOptions: [
+        { value: "", label: "全部" },
+        { value: "publish", label: "有出题权限" },
+        { value: "nopublish", label: "无出题权限" },
+        { value: "disabled", label: "已禁用" },
+      ],
+      adminChecked: [],
+      adminLogs: [], adminLogOnlyFail: false,
+      userDetail: null,
+      // 个人中心
+      profile: null,
+      pwForm: { old: "", new: "", repeat: "" }, pwBusy: false,
+      // 新建账号
+      cuForm: { username: "", password: "", canPublish: false }, cuBusy: false,
       drawer: "",
     };
   },
 
   computed: {
+    dbOptions() {
+      return [{ value: "", label: "不包含 MySQL 部分" }].concat(
+        (this.databases || []).map(d => ({
+          value: d.name, label: d.name + (d.primary ? "（默认）" : "") + ` · ${d.tables} 张表`,
+        })));
+    },
+    drillPassedCount() { return this.drillList.filter(d => d.passed).length; },
+    textChoice() { return ["single", "multiple", "boolean"].includes(this.dq.type); },
+    judgeModeOptions() { return this.judgeModes[this.dq.type] || []; },
+    judgeModeHint() {
+      const t = this.dq.type, m = this.dq.judgeMode;
+      const map = {
+        "sql:result": "学生写好查询后，系统把标准答案跑一遍，比对列名和全部数据（行和列的顺序都不计较）。最常用。",
+        "sql:result_ordered": "同上，但要求行的顺序也完全一致（比如 ORDER BY 后顺序不同就算错）。",
+        "sql:rows_only": "只看查出来的数据是否一样，列名不同没关系（适合学生用别名的情况）。",
+        "sql:cell": "只比对查询结果的第一个格子，适合「查一个数」的题（如 COUNT、MAX）。",
+        "sql:contains": "标准答案只写一个值，学生的结果里包含这个值就算对（适合「找出某个人」）。",
+        "sql:state": "适合改数据题（UPDATE/INSERT/DELETE）：先执行学生的 SQL，再跑标准答案 SQL 取数据状态来比对。参考答案里填期望的值（逗号分隔）。",
+        "python:output": "学生程序的标准输出与期望输出逐行比对（忽略每行首尾空格和空行）。",
+        "python:contains": "要求输出里包含期望文字即可，适合开放一点的小题。",
+        "python:regex": "用正则表达式匹配整个输出，适合格式有规律但内容可变的题。",
+        "python:tests": "给多组输入/期望输出，学生程序每组都要跑对才通过。",
+        "fill:loose": "忽略大小写、空格、全角半角和常见标点，答对任意一个可接受答案就通过。",
+      };
+      return map[t + ":" + m] || "选择一种判分方式，右侧可以实时试跑检查。";
+    },
+    setupDbOptions() {
+      return (this.databases || []).map(d => ({
+        value: d.name,
+        label: d.name + (d.primary ? "（默认）" : "") + ` · ${d.tables} 张表`,
+      }));
+    },
+    optionKeys() {
+      return String(this.dq.optionsText || "").split("\n")
+        .map(l => (/^\s*([A-Za-z0-9])\s*[.、)]/.exec(l) || [])[1])
+        .filter(Boolean).map(k => k.toUpperCase());
+    },
+    adminAllChecked() {
+      const ids = this.adminList.filter(u => u.role !== "admin").map(u => u.id);
+      return ids.length > 0 && ids.every(id => this.adminChecked.includes(id));
+    },
+    drillCodeType() {
+      const t = this.drillCurrent && this.drillCurrent.type;
+      return t === "sql" || t === "python";
+    },
+    draftCount() { return this.myQuestions.filter(q => !q.status).length; },
+    // 题库广场：题目在前、旧资源条目在后，放进同一个网格里铺开（避免两排各自留空）
+    squareList() {
+      const qs = (this.communityQuestions || []).map(q => Object.assign({ isQuestion: true }, q));
+      const items = (this.community || []).map(i => Object.assign({ isQuestion: false }, i));
+      return qs.concat(items);
+    },
     tablesHint() {
       const m = {};
       (this.dbTables[this.selectedDb] || []).forEach((t) => { m[t.name] = []; });
@@ -254,6 +462,13 @@ const App = {
   },
 
   watch: {
+    busy(v) {
+      this.$nextTick(() => {
+        const el = document.getElementById("busy");
+        if (!el) return;
+        if (v) this._popShow(el); else this._popHide(el);
+      });
+    },
     view() {
       this.$nextTick(() => {
         if (this.$refs.cmSqlRef) this.$refs.cmSqlRef.refresh();
@@ -296,6 +511,7 @@ const App = {
         e.preventDefault();
         if (this.view === "sql") this.runSql();
         else if (this.view === "py") this.runPy();
+        else if (this.view === "drills" && this.drillCurrent) this.submitDrill();
       }
     });
     // 分享链接：/s/码 或 #/s/码（进站即记录，登录后自动弹出）
@@ -339,10 +555,33 @@ const App = {
       return { db: "database", py: "code", csv: "file-text", xlsx: "file-spreadsheet", table: "table" }[kind] || "table";
     },
 
+    // popover 元素进 top layer，弹窗打开时也不会被遮挡
+    _popShow(el) {
+      if (!el) return;
+      try {
+        if (el.matches(":popover-open")) return;
+        if (el.showPopover) el.showPopover();
+      } catch (e) {}
+    },
+    _popHide(el) {
+      if (!el) return;
+      try {
+        if (el.matches(":popover-open")) el.hidePopover();
+      } catch (e) {}
+    },
     toast(msg, ms) {
       this.toastMsg = msg;
       clearTimeout(this.toastTimer);
-      this.toastTimer = setTimeout(() => (this.toastMsg = ""), ms || 2600);
+      this.$nextTick(() => {
+        const el = document.getElementById("toast");
+        if (el) { this._popShow(el); el.classList.add("show"); }
+      });
+      this.toastTimer = setTimeout(() => {
+        this.toastMsg = "";
+        const el = document.getElementById("toast");
+        if (el) el.classList.remove("show");
+        this._popHide(el);
+      }, ms || 2600);
     },
 
     async api(path, opts = {}) {
@@ -400,7 +639,16 @@ const App = {
     scrollConsole(refName) {
       this.$nextTick(() => {
         const el = this.$refs[refName];
-        if (el) el.scrollTop = el.scrollHeight;
+        if (!el) return;
+        // 滚到最新一条的「开头」而不是最底部：这样能看到「N 行」和表头，
+        // 结果很长时也不会一进去就只看到表格最末几行。
+        el.scrollTop = el.scrollHeight;
+        const blocks = el.querySelectorAll(".cblock");
+        const last = blocks[blocks.length - 1];
+        if (last) {
+          const top = last.offsetTop - el.offsetTop - 8;
+          el.scrollTop = Math.max(0, top);
+        }
       });
     },
 
@@ -447,6 +695,9 @@ const App = {
       this.logged = true;
       this.initPyFiles();
       this.checkPendingShare();
+      // 上传的临时 py 文件按需求"每次刷新即删"：进应用时先清一次
+      this.api("/api/pyfiles/clear-uploaded", { method: "POST" })
+        .then(() => this.refreshPyList()).catch(() => {});
     },
 
     async logout() {
@@ -461,6 +712,520 @@ const App = {
       this.view = v;
       this.drawer = "";
       if (v === "community" && !this.community.length) this.loadCommunity();
+      if (v === "drills") this.loadDrills();
+    },
+
+    /* ---------- 练习（做题 / 判分） ---------- */
+    async loadDrills(autopick) {
+      try {
+        const path = this.drillCourse === "wrong"
+          ? "/api/drills/wrong"
+          : "/api/drills?course=" + encodeURIComponent(this.drillCourse);
+        const [d, pr] = await Promise.all([
+          this.api(path),
+          this.api("/api/drills/progress"),
+        ]);
+        this.drillList = d.drills || [];
+        this.drillProgress = pr.progress || {};
+        if (this.drillCurrent) {
+          const fresh = this.drillList.find(x => x.id === this.drillCurrent.id);
+          if (fresh) { this.drillCurrent = Object.assign({}, this.drillCurrent, fresh); return; }
+        }
+        // 进入练习页自动打开第一题，右边不留空白
+        if (autopick !== false && this.drillList.length) await this.openDrill(this.drillList[0]);
+      } catch (e) { this.toast(e.message); }
+    },
+
+    async switchDrillCourse(c) {
+      this.drillCourse = c;
+      this.drillCurrent = null;
+      this.drillResult = null;
+      await this.loadDrills();
+    },
+
+    async openDrill(d) {
+      this.drillBusy = false;
+      this.drillResult = null;
+      this.drillShowSetup = false;
+      this.drillShowHint = false;
+      this.drillPick = "";
+      this.drillFill = "";
+      this.drillCode = "";
+      this.drillMulti = [];
+      this.drillRunLog = [];
+      this.drillSandbox = { db: "", tables: [], loading: false };
+      try {
+        const det = await this.api(`/api/drills/${d.id}`);
+        this.drillCurrent = det;
+        this.drawer = "";
+        let hint = "";
+        if (det.type === "sql") {
+          // 建/复用本题的沙箱库（初始化 SQL 已在里面跑好），侧栏显示它的表
+          this.drillSandbox.loading = true;
+          try {
+            const sb = await this.api(`/api/drills/${det.id}/sandbox`, { method: "POST", body: { reset: false } });
+            this.drillSandbox = { db: sb.db, tables: sb.tables || [], loading: false };
+            const first = (sb.tables || [])[0];
+            hint = first ? `SELECT * FROM \`${first.name}\` LIMIT 20` : "SELECT 1";
+          } catch (e) {
+            this.drillSandbox = { db: "", tables: [], loading: false };
+            this.toast(e.message);
+            hint = "-- 沙箱数据库创建失败";
+          }
+        } else if (det.type === "python") {
+          hint = det.starterCode || "";
+        }
+        if (det.type === "sql" || det.type === "python") {
+          this.$nextTick(() => {
+            if (this.$refs.cmDrillRef) {
+              this.$refs.cmDrillRef.setValue(hint);
+              this.drillCode = hint;
+              this.$refs.cmDrillRef.refresh();
+            }
+          });
+        }
+      } catch (e) { this.toast(e.message); }
+    },
+
+    // 左侧沙箱库里的表 → 看数据/结构（和主页「点表名预览」一致）
+    async openDrillTable(name) {
+      const db = this.drillSandbox.db;
+      if (!db) return;
+      this.preview = { open: true, tab: "data", name, db, loading: true,
+                       columns: [], rows: null, desc: null, descColumns: [], ddl: "", source: null };
+      this.$refs.previewDlg.showModal();
+      try {
+        const rs = await this.sqlQuery(`SELECT * FROM \`${name}\` LIMIT 200`, db);
+        this.preview.columns = rs.columns || [];
+        this.preview.rows = rs.rows || [];
+        this.preview.loading = false;
+      } catch (e) {
+        this.preview.loading = false;
+        this.toast(e.message);
+      }
+    },
+
+    async resetSandbox() {
+      if (!this.drillCurrent) return;
+      if (!await this.askConfirm("重置本题数据",
+          "把这个题的数据库恢复到初始状态（你改过的数据会丢失），继续？", true)) return;
+      try {
+        const sb = await this.api(`/api/drills/${this.drillCurrent.id}/sandbox`,
+                                  { method: "POST", body: { reset: true } });
+        this.drillSandbox = { db: sb.db, tables: sb.tables || [], loading: false };
+        this.drillRunLog = [];
+        this.toast("已恢复到初始数据");
+      } catch (e) { this.toast(e.message); }
+    },
+
+    clearDrillCode() {
+      if (this.$refs.cmDrillRef) { this.$refs.cmDrillRef.setValue(""); this.$refs.cmDrillRef.focus(); }
+      this.drillCode = "";
+    },
+
+    onDrillCodeChange(v) { this.drillCode = v || ""; },
+
+    pickDrillOption(key) {
+      if (this.drillCurrent && this.drillCurrent.type === "multiple") {
+        const i = this.drillMulti.indexOf(key);
+        if (i >= 0) this.drillMulti.splice(i, 1); else this.drillMulti.push(key);
+      } else {
+        this.drillPick = key;
+      }
+    },
+
+    resetDrillCode() {
+      if (!this.drillCurrent) return;
+      const init = this.drillCurrent.type === "sql"
+        ? "SELECT * FROM 表名 LIMIT 20   -- 在这里写你的查询"
+        : (this.drillCurrent.starterCode || "");
+      if (this.$refs.cmDrillRef) this.$refs.cmDrillRef.setValue(init);
+      this.drillCode = init;
+      this.drillResult = null;
+    },
+
+    /* ---------- 出题中心：统一入口，先选类型 ---------- */
+    openAuthorHub() {
+      if (!this.user || !this.user.canPublish) { this.toast("还没有出题权限（找老师开通）"); return; }
+      this.$refs.hubDlg.showModal();
+    },
+    closeAuthorHub() { this.$refs.hubDlg.close(); },
+    pickAuthor(kind) {
+      this.$refs.hubDlg.close();
+      if (kind === "drill") this.openDrillEditor();
+      else { this.switchView("community"); this.qTab = "drafts"; this.openQuestionEditor(); }
+    },
+    typeLabelOf(t) {
+      const x = this.drillTypes.find(v => v.value === t);
+      return x ? x.label : t;
+    },
+    fillDrillExample() {
+      const t = this.dq.type;
+      const set = (o) => { Object.assign(this.dq, o); this.authorDirty = true; };
+      if (t === "sql") {
+        set({
+          title: "查询工资最高的 5 名员工",
+          stem: "从 emp 表查出工资最高的 5 名员工，返回工号、姓名和工资，按工资从高到低排序。",
+          setupSql: "CREATE TABLE emp (\n  EMPNO INT PRIMARY KEY,\n  ENAME VARCHAR(20),\n  JOB VARCHAR(20),\n  SAL DOUBLE,\n  DEPTNO INT\n);\nINSERT INTO emp VALUES\n  (7369,'SMITH','CLERK',800,20),\n  (7499,'ALLEN','SALESMAN',1600,30),\n  (7566,'JONES','MANAGER',2975,20),\n  (7698,'BLAKE','MANAGER',2850,30),\n  (7782,'CLARK','MANAGER',2450,10),\n  (7839,'KING','PRESIDENT',5000,10),\n  (7876,'ADAMS','CLERK',1100,20),\n  (7902,'FORD','ANALYST',3000,20),\n  (7934,'MILLER','CLERK',1300,10);\n",
+          verifySql: "SELECT EMPNO, ENAME, SAL FROM emp ORDER BY SAL DESC LIMIT 5",
+          trySql: "SELECT EMPNO, ENAME, SAL FROM emp ORDER BY SAL DESC LIMIT 5",
+          hint: "用 ORDER BY ... DESC 排序，再用 LIMIT 限制条数。",
+        });
+        this.toast("已填入完整示例，可直接点右侧「跑一遍」检查");
+      } else if (t === "python") {
+        if (this.dq.judgeMode === "tests") {
+          set({
+            title: "两数求和（多组测试）",
+            stem: "读入两个整数，输出它们的和。",
+            starterCode: "a = int(input())\nb = int(input())\n# 在这里输出 a+b\n",
+            cases: [
+              { input: "1\n2", expected: "3" },
+              { input: "10\n5", expected: "15" },
+            ],
+            tryCode: "a = int(input())\nb = int(input())\nprint(a + b)\n",
+            hint: "input() 读到的是字符串，记得转成 int。",
+          });
+        } else {
+          set({
+            title: "计算平均分",
+            stem: "读入三个分数，输出平均分，保留两位小数。",
+            starterCode: "scores = [88, 95, 92]\n# 计算平均值并打印\n",
+            inputData: "",
+            expectedOutput: "91.67",
+            tryCode: "scores = [88, 95, 92]\nprint(f'{sum(scores)/len(scores):.2f}')\n",
+            hint: "sum() 求和、len() 求个数，f-string 保留两位小数。",
+          });
+        }
+        this.toast("已填入完整示例，可直接点右侧「运行」检查");
+      } else if (t === "fill") {
+        set({
+          title: "主键关键字",
+          stem: "建表时声明主键用 ______ 关键字。",
+          fillAnswers: "PRIMARY KEY\nprimary key",
+          hint: "两个单词，中间一个空格。",
+        });
+        this.toast("已填入示例");
+      } else if (t === "multiple") {
+        set({
+          title: "以下哪些是 SQL 关键字？",
+          stem: "选出所有属于 SQL 的关键字。",
+          optionsText: "A. SELECT\nB. print\nC. WHERE\nD. def\n",
+          multiKeys: ["A", "C"],
+          hint: "print 和 def 是 Python 的。",
+        });
+        this.toast("已填入示例");
+      } else if (t === "boolean") {
+        set({
+          title: "判断题：SELECT 用于查询数据",
+          stem: "在 SQL 中，SELECT 语句用于查询数据。",
+          optionsText: "A. 正确\nB. 错误\n",
+          rightKey: "A",
+          hint: "",
+        });
+        this.toast("已填入示例");
+      } else {
+        set({
+          title: "SQL 查询关键字",
+          stem: "要从表里查出数据，SQL 用哪个关键字开头？",
+          optionsText: "A. SELECT\nB. INSERT\nC. UPDATE\n",
+          rightKey: "A",
+          hint: "查询用 SELECT。",
+        });
+        this.toast("已填入示例");
+      }
+    },
+
+    exitAuthor() {
+      this.view = "drills";
+      this.authorDirty = false;
+      this.loadDrills();
+    },
+    pickDrillType(t) {
+      this.dq.type = t;
+      this.dq.course = t === "sql" ? "sql" : (t === "python" ? "python" : "basic");
+      this.dq.judgeMode = (this.judgeModes[t] || [{ value: "" }])[0].value;
+      this.dq.typeLabel = this.typeLabelOf(t);
+      if (t === "multiple" && !Array.isArray(this.dq.multiKeys)) this.dq.multiKeys = [];
+      if (!Array.isArray(this.dq.cases)) this.dq.cases = [];
+      this.authorDirty = true;
+    },
+    toggleMultiKey(k) {
+      const i = this.dq.multiKeys.indexOf(k);
+      if (i >= 0) this.dq.multiKeys.splice(i, 1); else this.dq.multiKeys.push(k);
+      this.authorDirty = true;
+    },
+
+    /* ---------- 出题 ---------- */
+    openDrillEditor(d) {
+      if (!this.user || !this.user.canPublish) { this.toast("还没有出题权限（找老师开通）"); return; }
+      const modes = this.judgeModes;
+      this.tryResult = null;
+      if (d && d.id) {
+        let cases = [];
+        try { cases = JSON.parse(d.testCases || "[]") || []; } catch (e) { cases = []; }
+        let ans = {};
+        try { ans = typeof d.answer === "object" && d.answer ? d.answer : JSON.parse(d.answerJson || "{}"); }
+        catch (e) { ans = {}; }
+        this.dq = {
+          id: d.id, course: d.course, type: d.type, typeLabel: this.typeLabelOf(d.type),
+          title: d.title || "", stem: d.stem || "", hint: d.hint || "",
+          setupSql: d.setupSql || "", verifySql: d.verifySql || "",
+          starterCode: d.starterCode || "", inputData: d.inputData || "",
+          expectedOutput: d.expectedOutput || "",
+          optionsText: (d.options || []).map(o => o.key + ". " + o.text).join("\n"),
+          rightKey: (ans.key || ""), multiKeys: ans.keys || [],
+          fillAnswers: (ans.values || []).join("\n"),
+          status: d.status,
+          judgeMode: d.judgeMode || ((modes[d.type] || [{}])[0].value || ""),
+          cases,
+          trySql: d.verifySql || "",
+          tryCode: d.starterCode || "",
+        };
+      } else {
+        this.dq = {
+          id: 0, course: "sql", type: "sql", typeLabel: "SQL 题",
+          title: "", stem: "", hint: "", setupSql: "", verifySql: "",
+          starterCode: "", inputData: "", expectedOutput: "",
+          optionsText: "", rightKey: "", multiKeys: [], fillAnswers: "", status: 1,
+          judgeMode: "result", cases: [{ input: "", expected: "" }],
+          trySql: "", tryCode: "",
+        };
+      }
+      this.authorDirty = false;
+      this.view = "author";
+      window.scrollTo(0, 0);
+    },
+    closeDrillEditor() { this.view = "drills"; },
+
+    _drillPayload(publish) {
+      const d = this.dq;
+      const body = {
+        id: d.id, course: d.course, type: d.type, title: d.title, stem: d.stem,
+        hint: d.hint, setupSql: d.setupSql, verifySql: d.verifySql,
+        starterCode: d.starterCode, inputData: d.inputData,
+        expectedOutput: d.expectedOutput, options: [], answer: {}, publish,
+        judgeMode: d.judgeMode,
+        testCases: d.type === "python" && d.judgeMode === "tests"
+          ? JSON.stringify((d.cases || []).filter(c => (c.input || "").trim() !== ""
+                                                     || (c.expected || "").trim() !== ""))
+          : "",
+      };
+      if (["single", "multiple", "boolean"].includes(d.type)) {
+        body.options = String(d.optionsText || "").split("\n")
+          .map(l => l.trim()).filter(Boolean)
+          .map(l => {
+            const m = /^([A-Za-z0-9])\s*[.、)]\s*(.*)$/.exec(l);
+            return m ? { key: m[1].toUpperCase(), text: m[2] } : { key: l.slice(0, 1).toUpperCase(), text: l };
+          });
+        body.answer = d.type === "multiple"
+          ? { keys: (d.multiKeys || []).map(k => String(k).toUpperCase()) }
+          : { key: (d.rightKey || "").trim().toUpperCase() };
+      } else if (d.type === "fill") {
+        body.answer = {
+          values: String(d.fillAnswers || "").split(/[\n；;]/)
+            .map(s => s.trim()).filter(Boolean),
+        };
+      } else if (d.type === "sql" && d.judgeMode === "state") {
+        // 改数据题：期望值可写在「参考答案」里（这里复用 fillAnswers 输入框）
+        const vals = String(d.fillAnswers || "").split(/[\n,，]/)
+          .map(s => s.trim()).filter(Boolean);
+        if (vals.length) body.answer = { values: vals };
+      }
+      return body;
+    },
+
+    async saveDrill(publish) {
+      this.dqBusy = true;
+      try {
+        const r = await this.api("/api/drills", { method: "POST", body: this._drillPayload(publish) });
+        this.dq.id = r.id;
+        this.authorDirty = false;
+        this.toast(publish ? "题目已发布，学生现在能做了" : "已保存草稿");
+        this.drillCourse = this.dq.course === "basic" ? "basic" : this.dq.course;
+        await this.loadDrills();
+        return r;
+      } catch (e) { this.toast(e.message); }
+      finally { this.dqBusy = false; }
+    },
+
+    async importSetupFile(ev) {
+      const f = (ev.target.files || [])[0];
+      ev.target.value = "";
+      if (!f) return;
+      this.dqBusy = true;
+      try {
+        const form = new FormData();
+        form.append("file", f);
+        const r = await this.api("/api/author/setup_from_file", { method: "POST", form });
+        this.dq.setupSql = r.sql || "";
+        this.dq.trySql = (r.tables && r.tables[0]) ? ("SELECT * FROM `" + r.tables[0] + "` LIMIT 20") : "";
+        this.authorDirty = true;
+        this.toast(r.rows ? `已生成 ${r.tables.join("、")}（${r.rows} 行）` : `已导入 ${r.tables.join("、") || "SQL 脚本"}`);
+        if (r.tables && r.tables.length === 1 && !this.dq.verifySql) {
+          this.dq.verifySql = `SELECT * FROM \`${r.tables[0]}\``;
+        }
+      } catch (e) { this.toast(e.message); }
+      finally { this.dqBusy = false; }
+    },
+
+    async importSetupDb() {
+      if (!this.dq.importDb) { this.toast("先选一个数据库"); return; }
+      this.dqBusy = true;
+      try {
+        const r = await this.api("/api/author/setup_from_db", { method: "POST",
+          body: { db: this.dq.importDb } });
+        this.dq.setupSql = r.sql || "";
+        this.dq.trySql = (r.tables && r.tables[0]) ? ("SELECT * FROM `" + r.tables[0] + "` LIMIT 20") : "";
+        this.authorDirty = true;
+        this.toast(`已从 ${r.db} 生成初始化 SQL（${(r.tables || []).length} 张表）`);
+      } catch (e) { this.toast(e.message); }
+      finally { this.dqBusy = false; }
+    },
+
+    async tryRunAuthor() {
+      if (this.dq.type === "sql") {
+        this.dqBusy = true;
+        try {
+          this.tryResult = await this.api("/api/author/try_sql", { method: "POST",
+            body: { setup: this.dq.setupSql, sql: this.dq.trySql || this.dq.verifySql } });
+        } catch (e) { this.toast(e.message); }
+        finally { this.dqBusy = false; }
+      } else if (this.dq.type === "python") {
+        this.dqBusy = true;
+        try {
+          const stdin = this.dq.judgeMode === "tests"
+            ? ((this.dq.cases[0] || {}).input || "")
+            : (this.dq.inputData || "");
+          const r = await this.api("/api/author/try_python", { method: "POST",
+            body: { code: this.dq.tryCode || this.dq.starterCode, stdin } });
+          this.tryResult = r;
+        } catch (e) { this.toast(e.message); }
+        finally { this.dqBusy = false; }
+      }
+    },
+    trySelectAll() {
+      this.dq.trySql = "SELECT * FROM ";
+      this.toast("在右侧补齐表名，或点上方表名自动查询");
+    },
+    tryRunVerify() { this.dq.trySql = this.dq.verifySql || ""; this.tryRunAuthor(); },
+
+    async publishDrill(on) {
+      try {
+        await this.api(`/api/drills/${this.dq.id}/publish`, { method: "POST", body: { publish: on } });
+        this.toast(on ? "已发布" : "已撤回为草稿");
+        await this.loadDrills();
+      } catch (e) { this.toast(e.message); }
+    },
+
+    // 只运行不判分（和主页一样，结果进控制台）
+    async runDrillOnly() {
+      const d = this.drillCurrent;
+      if (!d) return;
+      const code = this.drillCode;
+      if (!code.trim()) { this.toast("先写点内容再运行"); return; }
+      this.drillBusy = true;
+      try {
+        if (d.type === "sql") {
+          try {
+            const run = await this.api("/api/sql", { method: "POST",
+              body: { sql: code, db: this.drillSandbox.db || "" } });
+            this.drillRunLog.push({ code, results: run.results || [] });
+          } catch (e) {
+            this.drillRunLog.push({ code, results: [{ type: "error", index: 1, msg: e.message }] });
+          }
+        } else if (d.type === "python") {
+          const entry = { code, out: "", err: "", dur: "", meta: "" };
+          this.drillRunLog.push(entry);
+          try {
+            const st = await this.api("/api/pyrun/start", { method: "POST",
+              body: { code, filename: "", db: this.selectedDb } });
+            const t0 = Date.now();
+            let cur = {};
+            for (let i = 0; i < 60; i++) {
+              await new Promise(r => setTimeout(r, 500));
+              cur = await this.api(`/api/pyrun/status/${encodeURIComponent(st.job)}`);
+              entry.out = cur.out || "";
+              entry.err = cur.err || "";
+              this.scrollConsole("drillConsoleEl");
+              if (!cur.running) break;
+            }
+            entry.dur = ((Date.now() - t0) / 1000).toFixed(2);
+            if (cur.why === "idle") entry.meta = "等待输入超时，已结束";
+            else if (cur.why === "max") entry.meta = "超过运行上限，已结束";
+            else if (cur.exit && cur.exit !== 0) entry.meta = "退出码 " + cur.exit;
+          } catch (e) { entry.meta = e.message; }
+        }
+        this.scrollConsole("drillConsoleEl");
+      } finally { this.drillBusy = false; }
+    },
+
+    async submitDrill() {
+      const d = this.drillCurrent;
+      if (!d) return;
+      let answer = "";
+      if (d.type === "sql" || d.type === "python") {
+        answer = this.drillCode;
+        if (!answer.trim()) { this.toast("先写点内容再提交"); return; }
+      } else if (d.type === "fill") {
+        answer = this.drillFill;
+        if (!answer.trim()) { this.toast("先填写答案"); return; }
+      } else if (d.type === "multiple") {
+        answer = this.drillMulti.slice();
+        if (!answer.length) { this.toast("先选出至少一个选项"); return; }
+      } else {
+        answer = this.drillPick;
+        if (!answer) { this.toast("先选择一个选项"); return; }
+      }
+      this.drillBusy = true;
+      this.drillResult = null;
+      try {
+        // 1) 先像主页一样真跑一遍，把过程留在控制台（SQL 跑在本题沙箱库，Python 走沙箱）
+        if (d.type === "sql") {
+          try {
+            const run = await this.api("/api/sql", { method: "POST",
+              body: { sql: answer, db: this.drillSandbox.db || "" } });
+            this.drillRunLog.push({ code: answer, results: run.results || [] });
+          } catch (e) {
+            this.drillRunLog.push({ code: answer,
+              results: [{ type: "error", index: 1, msg: e.message }] });
+          }
+        } else if (d.type === "python") {
+          const entry = { code: answer, out: "", err: "", dur: "", meta: "" };
+          this.drillRunLog.push(entry);
+          try {
+            const st = await this.api("/api/pyrun/start", { method: "POST",
+              body: { code: answer, filename: "", db: this.selectedDb } });
+            const t0 = Date.now();
+            let cur = {};
+            for (let i = 0; i < 60; i++) {
+              await new Promise(r => setTimeout(r, 500));
+              cur = await this.api(`/api/pyrun/status/${encodeURIComponent(st.job)}`);
+              entry.out = cur.out || "";
+              entry.err = cur.err || "";
+              this.scrollConsole("drillConsoleEl");
+              if (!cur.running) break;
+            }
+            entry.dur = ((Date.now() - t0) / 1000).toFixed(2);
+            if (cur.why === "idle") entry.meta = "等待输入超时，已结束";
+            else if (cur.why === "max") entry.meta = "超过运行上限，已结束";
+            else if (cur.exit && cur.exit !== 0) entry.meta = "退出码 " + cur.exit;
+          } catch (e) {
+            entry.meta = e.message;
+          }
+        }
+        this.scrollConsole("drillConsoleEl");
+        // 2) 再交给服务端判分
+        const r = await this.api(`/api/drills/${d.id}/submit`, {
+          method: "POST", body: { answer_text: answer },
+        });
+        this.drillResult = r;
+        this.scrollConsole("drillConsoleEl");
+        this.toast(r.passed ? "通过！" : (r.reason || "没通过，再想想"));
+        await this.loadDrills();
+        const fresh = this.drillList.find(x => x.id === d.id);
+        if (fresh) this.drillCurrent = Object.assign({}, this.drillCurrent, fresh);
+      } catch (e) { this.toast(e.message); }
+      finally { this.drillBusy = false; }
     },
 
     /* ---------- 编辑器 ---------- */
@@ -475,6 +1240,8 @@ const App = {
     },
 
     onPyChange() {
+      if (this.pyCurrent) this.pyDirty.add(this.pyCurrent);
+      // 每次输入都自动保存（250ms 微合并，连打字也不会丢最后一次）
       clearTimeout(this.pySaveTimer);
       this.pySaveTimer = setTimeout(async () => {
         const content = this.$refs.cmPyRef ? this.$refs.cmPyRef.getValue() : null;
@@ -482,8 +1249,9 @@ const App = {
         try {
           await this.api(`/api/pyfiles/${encodeURIComponent(this.pyCurrent)}`,
                          { method: "PUT", body: { content } });
+          this.pyDirty.delete(this.pyCurrent);
         } catch (e) {}
-      }, 600);
+      }, 250);
     },
 
     clearSql() { this.$refs.cmSqlRef.setValue(""); this.$refs.cmSqlRef.focus(); },
@@ -492,14 +1260,63 @@ const App = {
       this.$refs.cmPyRef.focus();
     },
 
-    insertExample(ev) {
-      const idx = ev.target.value;
-      ev.target.value = "";
-      if (idx === "") return;
-      const ex = this.examples[+idx];
-      if (!ex) return;
-      this.$refs.cmPyRef.setValue(ex.code);
-      this.toast("已插入示例，点 ▶ 运行 试试");
+    /* ---------- 自制弹窗（替代原生 prompt/confirm，内嵌浏览器兼容） ---------- */
+    focusEl(el) {
+      if (!el) return;
+      try { el.focus({ preventScroll: true }); } catch (e) { try { el.focus(); } catch (e2) {} }
+      // 内嵌浏览器里"点开弹窗立即聚焦"可能被吞，补一次延时聚焦
+      setTimeout(() => { try { el.focus({ preventScroll: true }); } catch (e) {} }, 80);
+    },
+    askText(title, label, def) {
+      return new Promise(resolve => {
+        this.ask = { open: true, title, label, value: def || "", _resolve: resolve };
+        // 原生 dialog → 进浏览器 top layer，后打开的窗自然叠在已有弹窗之上
+        const d = this.$refs.askDlg;
+        if (d && !d.open) { try { d.showModal(); } catch (e) { d.setAttribute("open", ""); } }
+        this.$nextTick(() => {
+          const el = this.$refs.askInputEl;
+          if (el) { this.focusEl(el); try { el.select(); } catch (e) {} }
+        });
+      });
+    },
+    _closeAsk() {
+      const d = this.$refs.askDlg;
+      if (d && d.open) d.close();
+    },
+    askOk() {
+      const r = this.ask._resolve;
+      this.ask.open = false;
+      this._closeAsk();
+      if (r) r(this.ask.value.trim());
+    },
+    askCancel() {
+      const r = this.ask._resolve;
+      this.ask.open = false;
+      this._closeAsk();
+      if (r) r(null);
+    },
+    askConfirm(title, text, danger) {
+      return new Promise(resolve => {
+        this.confirmBox = { open: true, title, text, danger: !!danger, _resolve: resolve };
+        const d = this.$refs.confirmDlg;
+        if (d && !d.open) { try { d.showModal(); } catch (e) { d.setAttribute("open", ""); } }
+      });
+    },
+    _closeConfirm() {
+      const d = this.$refs.confirmDlg;
+      if (d && d.open) d.close();
+    },
+    confirmOk() {
+      const r = this.confirmBox._resolve;
+      this.confirmBox.open = false;
+      this._closeConfirm();
+      if (r) r(true);
+    },
+    confirmCancel() {
+      const r = this.confirmBox._resolve;
+      this.confirmBox.open = false;
+      this._closeConfirm();
+      if (r) r(false);
     },
 
     /* ---------- Python 多文件 ---------- */
@@ -515,6 +1332,7 @@ const App = {
         }
         this.pyFiles = d.files;
         this.pyCurrent = this.pyFiles[0] ? this.pyFiles[0].name : "main.py";
+        this.pyOpenFiles = this.pyCurrent ? [this.pyCurrent] : [];
         const f = await this.api(`/api/pyfiles/${encodeURIComponent(this.pyCurrent)}`);
         if (this.$refs.cmPyRef) this.$refs.cmPyRef.setValue(f.content);
         this.$nextTick(() => { if (this.$refs.cmPyRef) this.$refs.cmPyRef.refresh(); });
@@ -533,23 +1351,84 @@ const App = {
       const name = this.pyCurrent;
       const content = this.$refs.cmPyRef ? this.$refs.cmPyRef.getValue() : null;
       if (content === null || !name) return;
-      try {
-        await this.api(`/api/pyfiles/${encodeURIComponent(name)}`, { method: "PUT", body: { content } });
-      } catch (e) {}
+      await this.api(`/api/pyfiles/${encodeURIComponent(name)}`, { method: "PUT", body: { content } });
+      this.pyDirty.delete(name);
+    },
+
+    // 切走前把当前文件落盘；保存失败才留在原文件（平时每次输入都已自动保存）
+    async ensurePySaved(name) {
+      try { await this.flushPySave(); return true; }
+      catch (e) { this.toast(e.message); return false; }
+    },
+
+    // 编辑器上方的小胶囊提示（如「已切换到 b.py」），1.6 秒自动消失
+    showPyCapsule(text) {
+      this.pyCapsule = text;
+      clearTimeout(this.pyCapsuleTimer);
+      this.$nextTick(() => {
+        const el = document.querySelector(".py-capsule");
+        if (el) { this._popShow(el); el.classList.add("show"); }
+      });
+      this.pyCapsuleTimer = setTimeout(() => {
+        this.pyCapsule = "";
+        const el = document.querySelector(".py-capsule");
+        if (el) { el.classList.remove("show"); this._popHide(el); }
+      }, 1600);
     },
 
     async openPyFile(name) {
       if (name === this.pyCurrent) return;
-      await this.flushPySave();
+      if (!await this.ensurePySaved(this.pyCurrent)) return;
       try {
         const f = await this.api(`/api/pyfiles/${encodeURIComponent(name)}`);
         this.pyCurrent = f.name;
+        if (!this.pyOpenFiles.includes(f.name)) this.pyOpenFiles.push(f.name);
         if (this.$refs.cmPyRef) this.$refs.cmPyRef.setValue(f.content);
+        this.showPyCapsule("已切换到 " + f.name);
       } catch (e) { this.toast(e.message); }
     },
 
+    async closePyTab(name) {
+      const index = this.pyOpenFiles.indexOf(name);
+      if (index < 0) return;
+      if (name === this.pyCurrent) {
+        if (!await this.ensurePySaved(name)) return;
+      }
+      this.pyOpenFiles = this.pyOpenFiles.filter(f => f !== name);
+      if (name !== this.pyCurrent) return;
+      this.pyCurrent = "";
+      if (this.$refs.cmPyRef) this.$refs.cmPyRef.setValue("");
+      if (this.pyOpenFiles.length) {
+        const next = this.pyOpenFiles[Math.min(index, this.pyOpenFiles.length - 1)];
+        await this.openPyFile(next);
+      }
+    },
+
+    async uploadPyFiles(ev) {
+      const files = Array.from(ev.target.files || []);
+      ev.target.value = "";
+      if (!files.length) return;
+      if (files.some(f => !f.name.toLowerCase().endsWith(".py"))) {
+        this.toast("只能上传 .py 文件");
+        return;
+      }
+      this.busy = true;
+      try {
+        await this.flushPySave();
+        const form = new FormData();
+        for (const file of files) form.append("files", file);
+        const result = await this.api("/api/pyfiles/upload", { method: "POST", form });
+        await this.refreshPyList();
+        this.pyOpenFiles = Array.from(new Set([...this.pyOpenFiles, ...result.files.map(f => f.name)]));
+        const last = result.files[result.files.length - 1];
+        if (last) await this.openPyFile(last.name);
+        this.toast(`已上传 ${result.files.length} 个 Python 文件`);
+      } catch (e) { this.toast(e.message); }
+      finally { this.busy = false; }
+    },
+
     async newPyFile() {
-      const name = prompt("新文件名（可省略 .py 后缀）：", "新建文件.py");
+      const name = await this.askText("新建 Python 文件", "文件名（可省略 .py 后缀）", "新建文件.py");
       if (!name) return;
       const final = name.toLowerCase().endsWith(".py") ? name : name + ".py";
       this.busy = true;
@@ -558,28 +1437,42 @@ const App = {
         let exists = true;
         try {
           await this.api(`/api/pyfiles/${encodeURIComponent(final)}`);
-        } catch (e) { exists = false; }
+        } catch (e) {
+          if (e.status !== 404) throw e;
+          exists = false;
+        }
         if (exists) {
           this.toast("文件已存在，已为你打开");
-          return this.openPyFile(final);
+          await this.openPyFile(final);
+          return;
         }
         await this.api(`/api/pyfiles/${encodeURIComponent(final)}`,
                        { method: "PUT", body: { content: "# " + final + "\n" } });
         await this.refreshPyList();
+        if (!this.pyOpenFiles.includes(final)) this.pyOpenFiles.push(final);
         this.pyCurrent = final;
         if (this.$refs.cmPyRef) this.$refs.cmPyRef.setValue("# " + final + "\n");
         this.toast(`已创建 ${final}`);
       } catch (e) { this.toast(e.message); }
-      this.busy = false;
+      finally { this.busy = false; }
     },
 
     async deletePyFile(name) {
-      if (!confirm(`确定删除文件「${name}」？`)) return;
+      // 临时文件（上传的）删除不需要确认，本来刷新就没了
+      const isTemp = (this.pyFiles.find(f => f.name === name) || {}).uploaded;
+      if (!isTemp && !await this.askConfirm("删除文件", `确定删除文件「${name}」？`, true)) return;
       try {
+        if (this.pyCurrent === name && this.pySaveTimer) {
+          clearTimeout(this.pySaveTimer);
+          this.pySaveTimer = null;
+        }
+        this.pyDirty.delete(name);
         await this.api(`/api/pyfiles/${encodeURIComponent(name)}`, { method: "DELETE" });
         await this.refreshPyList();
+        this.pyOpenFiles = this.pyOpenFiles.filter(f => f !== name);
         if (this.pyCurrent === name) {
           this.pyCurrent = this.pyFiles[0] ? this.pyFiles[0].name : "main.py";
+          if (!this.pyOpenFiles.includes(this.pyCurrent)) this.pyOpenFiles.push(this.pyCurrent);
           try {
             const f = await this.api(`/api/pyfiles/${encodeURIComponent(this.pyCurrent)}`);
             if (this.$refs.cmPyRef) this.$refs.cmPyRef.setValue(f.content);
@@ -651,7 +1544,7 @@ const App = {
     },
 
     async createDb() {
-      const name = prompt("新数据库的名称（字母/数字/下划线）：");
+      const name = await this.askText("新建数据库", "名称（字母/数字/下划线）", "");
       if (!name) return;
       this.busy = true;
       try {
@@ -664,7 +1557,7 @@ const App = {
     },
 
     async dropDb(d) {
-      if (!confirm(`确定删除数据库「${d.name}」？里面所有表和数据都会删除，不可恢复！`)) return;
+      if (!await this.askConfirm("删除数据库", `确定删除数据库「${d.name}」？里面所有表和数据都会删除，不可恢复！`, true)) return;
       this.busy = true;
       try {
         const r = await this.api(`/api/databases/${encodeURIComponent(d.name)}`, { method: "DELETE" });
@@ -697,30 +1590,20 @@ const App = {
           body: { db: this.shareForm.db, share_name: this.shareForm.shareName, public: false } });
         this.shareForm.link = location.origin + "/s/" + r.shareCode;
         this.shareForm.done = true;
-        this.toast("私有分享链接已生成，复制发给同学（不会出现在社区）");
+        this.toast("私有分享链接已生成，复制发给同学（不会出现在题库）");
       } catch (e) { this.toast(e.message); }
       this.busy = false;
     },
 
-    /* 发布到社区广场（公开上架） */
-    async publishDb(d) {
-      this.busy = true;
-      try {
-        const r = await this.api("/api/community/publish", { method: "POST",
-          body: { db: d.name, public: true } });
-        this.toast(`「${d.name}」（${r.tables} 张表）已发布到社区，去社区页看看`);
-      } catch (e) { this.toast(e.message); }
-      this.busy = false;
-    },
 
     copyShareLink() {
       const link = this.shareForm.link;
       if (!link) return;
       if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(link).then(() => this.toast("链接已复制"),
-          () => { prompt("手动复制：", link); });
+          () => this.askText("复制链接", "手动复制下面的链接", link));
       } else {
-        prompt("手动复制：", link);
+        this.askText("复制链接", "手动复制下面的链接", link);
       }
     },
 
@@ -801,14 +1684,6 @@ const App = {
       this.runSql();
     },
 
-    async publishFromPreview() {
-      this.busy = true;
-      try {
-        await this.api("/api/community/publish", { method: "POST", body: { table: this.preview.name } });
-        this.toast(`已把「${this.preview.name}」发布到社区`);
-      } catch (e) { this.toast(e.message); }
-      this.busy = false;
-    },
 
     async downloadSource() {
       await this.downloadFile("/api/source/" + encodeURIComponent(this.preview.name) + "/download",
@@ -818,7 +1693,7 @@ const App = {
     async dropFromPreview() {
       const name = this.preview.name;
       const db = this.preview.db;
-      if (!confirm(`确定删除表「${name}」？数据不可恢复！`)) return;
+      if (!await this.askConfirm("删除表", `确定删除表「${name}」？数据不可恢复！`, true)) return;
       this.busy = true;
       try {
         await this.sqlQuery(`DROP TABLE \`${name}\``, db);
@@ -837,6 +1712,50 @@ const App = {
       this.$refs.importDlg.showModal();
     },
     closeImport() { this.$refs.importDlg.close(); },
+
+    /* ---------- 新建数据表（可视化，不写 SQL） ---------- */
+    openCreateTable() {
+      if (!this.selectedDb) { this.toast("先创建或选择一个数据库"); return; }
+      this.ctForm = { name: "", db: this.selectedDb, overwrite: false,
+                      cols: [{ name: "id", type: "INT", pk: true }] };
+      this.$refs.ctDlg.showModal();
+      this.$nextTick(() => this.focusEl(this.$refs.ctDlg.querySelector("input")));
+    },
+    closeCreateTable() { this.$refs.ctDlg.close(); },
+
+    async submitCreateTable() {
+      const f = this.ctForm;
+      const table = f.name;
+      if (!table) { this.toast("先填表名"); return; }
+      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(table)) {
+        this.toast("表名要用字母开头，只能字母/数字/下划线"); return;
+      }
+      const cols = f.cols.filter(c => c.name);
+      if (!cols.length) { this.toast("至少要有一个字段"); return; }
+      for (const c of cols) {
+        if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(c.name)) {
+          this.toast(`字段名「${c.name}」不合法（字母开头，字母/数字/下划线）`); return;
+        }
+      }
+      const pks = cols.filter(c => c.pk);
+      if (pks.length > 1) { this.toast("主键只能选一个字段"); return; }
+      const defs = cols.map(c => `\`${c.name}\` ${c.type}${c.pk ? " NOT NULL PRIMARY KEY" : " NOT NULL"}`);
+      const sql = `CREATE TABLE \`${table}\` (\n  ${defs.join(",\n  ")}\n)`;
+      const full = f.overwrite ? `DROP TABLE IF EXISTS \`${table}\`\n${sql}` : sql;
+      this.busy = true;
+      try {
+        const d = await this.api("/api/sql", { method: "POST", body: { sql: full, db: f.db } });
+        const bad = (d.results || []).find(r => r.type === "error");
+        if (bad) { this.toast(bad.msg); return; }
+        this.closeCreateTable();
+        await this.loadDbTables(f.db, true);
+        this.selectDb({ name: f.db });
+        // 编辑器填上 SELECT，学生点运行就能看到新表
+        if (this.$refs.cmSqlRef) this.$refs.cmSqlRef.setValue(`SELECT * FROM \`${table}\` LIMIT 20`);
+        this.toast(`表 ${table} 已建到 ${f.db}，点「运行」查看`);
+      } catch (e) { this.toast(e.message); }
+      finally { this.busy = false; }
+    },
 
     pickImportFile() { this.$refs.importFileEl.click(); },
 
@@ -913,14 +1832,16 @@ const App = {
     async runPy() {
       const code = (this.$refs.cmPyRef ? this.$refs.cmPyRef.getValue() : "").trim();
       if (!code) { this.toast("先写点 Python 代码再运行"); return; }
-      await this.flushPySave();
       this.busy = true;
       this.pyRunCount += 1;
       const n = this.pyRunCount;
       this.pyConsole = [{ n, running: true, out: "", err: "", start: Date.now() }];
       this.scrollConsole("pyConsoleEl");
       try {
-        const d = await this.api("/api/pyrun/start", { method: "POST", body: { code, db: this.selectedDb } });
+        await this.flushPySave();
+        const d = await this.api("/api/pyrun/start", {
+          method: "POST", body: { code, filename: this.pyCurrent, db: this.selectedDb }
+        });
         this.pyJob = d.job;
         this.pyConsole[0].job = d.job;
         this.busy = false;
@@ -964,53 +1885,143 @@ const App = {
       } catch (e) { this.toast(e.message); }
     },
 
-    /* ---------- 社区 ---------- */
+    /* ---------- 题库 ---------- */
     async loadCommunity() {
       try {
         const d = await this.api("/api/community");
         this.community = d.items;
+        this.communityQuestions = d.questions || [];
       } catch (e) { this.toast(e.message); }
     },
 
-    async uploadCommunity() {
-      const f = this._uploadRaw;
-      if (!f) { this.toast("先选择文件（.sql / .py / .csv / .xlsx）"); return; }
-      const fd = new FormData();
-      fd.append("file", f);
-      fd.append("title", this.uploadTitle);
+    /* ---------- 题目（草稿 → 发布） ---------- */
+    async openDrafts() {
+      this.qTab = "drafts";
+      await this.loadMyQuestions();
+    },
+
+    async loadMyQuestions() {
+      try {
+        const d = await this.api("/api/questions/mine");
+        this.myQuestions = d.questions || [];
+        if (d.databases) this.databases = d.databases;
+      } catch (e) { this.toast(e.message); }
+    },
+
+    // 打开题目编辑器：q 为已有题目（编辑），prefillDb 为预选数据库（工作台「存为草稿」）
+    async openQuestionEditor(q, prefillDb) {
+      this.qForm = { id: 0, title: "", note: "", db: prefillDb || "", pyMap: {} };
+      if (q && q.id) {
+        try {
+          const d = await this.api(`/api/questions/${q.id}`);
+          this.qForm.id = d.id;
+          this.qForm.title = d.title || "";
+          this.qForm.note = d.note || "";
+          this.qForm.db = d.dbName || "";
+          // 只勾选仍存在的文件（题目里记录的旧文件可能已被删除）
+          const exist = new Set(this.pyFiles.map(f => f.name));
+          (d.pyFiles || []).filter(n => exist.has(n)).forEach(n => { this.qForm.pyMap[n] = true; });
+        } catch (e) { this.toast(e.message); return; }
+      } else if (prefillDb) {
+        this.qForm.title = prefillDb;
+      }
+      if (!this.pyFiles.length) { try { await this.refreshPyList(); } catch (e) {} }
+      this.$refs.qDlg.showModal();
+      this.$nextTick(() => this.focusEl(this.$refs.qDlg.querySelector("input")));
+    },
+    closeQuestionEditor() { this.$refs.qDlg.close(); },
+
+    // 题目预览：MySQL 表清单 + Python 文件内容（点文件名展开）
+    async openQuestionPreview(q) {
+      this.qpv = { loading: true, id: q.id, title: q.title, note: q.note || "",
+                   uploader: q.uploader || "", createdAt: q.createdAt || "",
+                   downloads: q.downloads || 0, tables: [], tableData: [], pyPreview: [] };
+      this.qpvFile = null;
+      this.qpvTable = null;
+      this.$refs.qPreviewDlg.showModal();
+      try {
+        const d = await this.api(`/api/questions/${q.id}`);
+        this.qpv = { loading: false, id: d.id, title: d.title, note: d.note || "",
+                     uploader: d.uploader || "", createdAt: d.createdAt || "",
+                     downloads: d.downloads || 0,
+                     tables: d.tables || [], tableData: d.tableData || [],
+                     pyPreview: d.pyPreview || [] };
+      } catch (e) {
+        this.closeQuestionPreview();
+        this.toast(e.message);
+      }
+    },
+    closeQuestionPreview() { this.$refs.qPreviewDlg.close(); this.qpvFile = null; this.qpvTable = null; },
+
+    // 点表名：展开这张表的数据（前 200 行）与结构
+    toggleQpvTable(name) {
+      if (this.qpvTable && this.qpvTable.name === name) { this.qpvTable = null; return; }
+      const t = (this.qpv.tableData || []).find(x => x.name === name);
+      if (!t) { this.toast("这道题保存时没有附带表数据预览（旧题目只有表名）"); return; }
+      this.qpvTable = t;
+      this.qpvTab = "data";
+    },
+
+    async saveQuestion(publish) {
+      const py = Object.keys(this.qForm.pyMap).filter(n => this.qForm.pyMap[n]);
+      this.qBusy = true;
+      try {
+        const r = await this.api("/api/questions/save", {
+          method: "POST",
+          body: { id: this.qForm.id, title: this.qForm.title, note: this.qForm.note,
+                  db: this.qForm.db, py, publish },
+        });
+        this.closeQuestionEditor();
+        this.toast(publish ? "题目已发布到题库广场" : "已存为草稿，可随时回来编辑再发布");
+        this.qForm.id = r.id;
+        await this.loadMyQuestions();
+        if (publish) await this.loadCommunity();
+      } catch (e) { this.toast(e.message); }
+      finally { this.qBusy = false; }
+    },
+
+    async publishQuestion(q, publish) {
+      try {
+        await this.api(`/api/questions/${q.id}/publish`, { method: "POST", body: { publish } });
+        this.toast(publish ? `「${q.title}」已发布到广场` : `「${q.title}」已撤回为草稿`);
+        await this.loadMyQuestions();
+        await this.loadCommunity();
+      } catch (e) { this.toast(e.message); }
+    },
+
+    async deleteQuestion(q) {
+      if (!await this.askConfirm("删除题目", `确定删除题目「${q.title}」？删除后无法恢复。`, true)) return;
+      try {
+        await this.api(`/api/questions/${q.id}`, { method: "DELETE" });
+        this.toast("已删除");
+        await this.loadMyQuestions();
+        await this.loadCommunity();
+      } catch (e) { this.toast(e.message); }
+    },
+
+    // 学生一键导入整套：MySQL 建独立库 + Python 文件加进自己的文件列表
+    async importQuestion(q) {
+      if (!await this.askConfirm("一键导入题目",
+        `导入「${q.title}」？\nMySQL 部分会建成你自己的独立数据库${q.pyCount ? "，Python 文件会加进你的文件列表" : ""}。`)) return;
       this.busy = true;
       try {
-        const d = await this.api("/api/community/upload", { method: "POST", form: fd });
-        this.toast(d.kind === "db"
-          ? "已作为「数据库」分享到社区，别人点开详情就能看到表清单"
-          : `已分享到社区（${KIND_LABEL[d.kind] || d.kind} · ${this.fmtSize(d.size)}）`);
-        this.uploadTitle = "";
-        this.uploadFile = null;
-        this._uploadRaw = null;
-        if (this.$refs.uploadFileEl) this.$refs.uploadFileEl.value = "";
-        this.loadCommunity();
+        const r = await this.api(`/api/questions/${q.id}/import`, { method: "POST", body: { db: "" } });
+        const bits = [];
+        if (r.db) bits.push(`数据库 ${r.db}${r.tables && r.tables.length ? "（" + r.tables.length + " 张表）" : ""}`);
+        if (r.pyFiles && r.pyFiles.length) bits.push(`${r.pyFiles.length} 个 Python 文件`);
+        this.toast(bits.length ? `已导入：${bits.join(" + ")}` : "这个题目是空的，没有可导入的内容");
+        if (r.db) {
+          const dbs = await this.api("/api/databases");
+          this.databases = dbs.databases;
+          this.loadDbTables(r.db, true);
+        }
+        await this.refreshPyList();
       } catch (e) { this.toast(e.message); }
-      this.busy = false;
+      finally { this.busy = false; }
     },
 
-    onUploadPicked(e) {
-      const f = e.target.files[0];
-      if (!f) return;
-      const ext = f.name.split(".").pop().toLowerCase();
-      if (!["sql", "py", "csv", "xlsx"].includes(ext)) {
-        this.toast("仅支持 .sql / .py / .csv / .xlsx");
-        e.target.value = "";
-        return;
-      }
-      const cap = ext === "py" ? 256 * 1024 : 8 * 1024 * 1024;
-      if (f.size > cap) {
-        this.toast(`文件超过 ${cap / 1024}KB 上限`);
-        e.target.value = "";
-        return;
-      }
-      this._uploadRaw = f;
-      this.uploadKind = ext === "sql" ? "db" : ext;
-      this.uploadFile = { name: f.name, size: f.size };
+    async downloadQuestion(q) {
+      await this.downloadFile(`/api/questions/${q.id}/download`, `${q.title}.zip`);
     },
 
     async importItem(it) {
@@ -1030,7 +2041,7 @@ const App = {
           if (d.tables) this.dbTables = Object.assign({}, this.dbTables, { [d.db]: d.tables });
         } catch (e) {
           if (e.message.indexOf("同名") >= 0 && !overwrite) {
-            if (confirm("你的空间里已有同名表，覆盖它吗？")) return doImport(true);
+            if (await this.askConfirm("覆盖导入", "你的空间里已有同名表，覆盖它吗？")) return doImport(true);
           } else this.toast(e.message);
         } finally { this.busy = false; }
       };
@@ -1050,7 +2061,31 @@ const App = {
       });
     },
 
+    // 题库里的数据库：不导入也能先看这张表的数据/结构
+    async previewDbTable(name) {
+      if (this.dbPv.loading) return;
+      this.dbPv = { loading: true, name, cols: [], rows: [], ddl: "", script: false,
+                    rowCount: null, truncated: false };
+      this.dbPvTab = "data";
+      try {
+        const d = await this.api(`/api/community/${this.detail.id}/preview?table=${encodeURIComponent(name)}`);
+        this.dbPv = { loading: false, name: d.name, cols: d.cols || [], rows: d.rows || [],
+                      ddl: d.ddl || "", script: !!d.script,
+                      rowCount: d.rowCount, truncated: !!d.truncated };
+        this.dbPvTab = d.script ? "struct" : "data";
+      } catch (e) {
+        this.closeDbPv();
+        this.toast(e.message);
+      }
+    },
+    closeDbPv() {
+      this.dbPv = { loading: false, name: "", cols: [], rows: [], ddl: "", script: false,
+                    rowCount: null, truncated: false };
+      this.dbPvTab = "data";
+    },
+
     closeDbDetail() {
+      this.closeDbPv();
       if (this.$refs.dbDlg.open) this.$refs.dbDlg.close();
       this.detail = { open: false, loading: false, id: 0, title: "", uploader: "",
                       isScript: false, tables: [], builtin: false, filename: "" };
@@ -1082,7 +2117,7 @@ const App = {
           this.switchView("sql");
         } catch (e) {
           if ((e.message.indexOf("同名") >= 0 || e.message.indexOf("已被占用") >= 0) && !overwrite) {
-            if (confirm("已存在同名数据库/表，覆盖导入吗？")) return doIt(true);
+            if (await this.askConfirm("覆盖导入", "已存在同名数据库/表，覆盖导入吗？")) return doIt(true);
           } else this.toast(e.message);
         } finally { this.busy = false; }
       };
@@ -1100,7 +2135,7 @@ const App = {
           this.toast(`已把表「${name}」导入到 ${this.selectedDb}，去工作台查看`);
         } catch (e) {
           if (e.message.indexOf("同名") >= 0 && !overwrite) {
-            if (confirm(`你的空间里已有同名表「${name}」，覆盖它吗？`)) return doIt(true);
+            if (await this.askConfirm("覆盖导入", `你的空间里已有同名表「${name}」，覆盖它吗？`)) return doIt(true);
           } else this.toast(e.message);
         } finally { this.busy = false; }
       };
@@ -1109,10 +2144,12 @@ const App = {
 
     async openPyItem(it) {
       try {
+        await this.flushPySave();
         const d = await this.api("/api/community/open", { method: "POST", body: { id: it.id } });
         await this.refreshPyList();
         this.switchView("py");
         this.pyCurrent = d.filename;
+        if (!this.pyOpenFiles.includes(d.filename)) this.pyOpenFiles.push(d.filename);
         const f = await this.api(`/api/pyfiles/${encodeURIComponent(d.filename)}`);
         if (this.$refs.cmPyRef) this.$refs.cmPyRef.setValue(f.content);
         this.toast(`已保存为文件 ${d.filename}，点 ▶ 运行 试试`);
@@ -1124,7 +2161,7 @@ const App = {
     },
 
     async deleteItem(it) {
-      if (!confirm(`确定从社区删除「${it.title}」？`)) return;
+      if (!await this.askConfirm("删除题库资源", `确定从题库删除「${it.title}」？`, true)) return;
       try {
         await this.api(`/api/community/${it.id}`, { method: "DELETE" });
         this.toast("已删除");
@@ -1134,42 +2171,192 @@ const App = {
 
     /* ---------- 管理 ---------- */
     async openAdmin() {
+      this.adminTab = "overview";
+      this.adminChecked = [];
       this.$refs.adminDlg.showModal();
-      await this.loadAdmin(this.adminKind);
+      await this.loadOverview();
     },
-
-    switchAdminKind(kind) {
-      if (this.adminKind === kind) return;
-      this.adminKind = kind;
-      this.loadAdmin(kind);
+    closeAdmin() {
+      this.$refs.adminDlg.close();
+      this.adminList = [];
+      this.adminChecked = [];
+      this.adminLogs = [];
+      this.userDetail = null;
     },
-
-    async loadAdmin(kind) {
+    async refreshAdmin() {
+      await this.loadOverview();
+      if (this.adminTab === "user" || this.adminTab === "guest") await this.loadAdminList(this.adminPage);
+      if (this.adminTab === "log") await this.loadAuthLog();
+    },
+    async switchAdminTab(tab) {
+      this.adminTab = tab;
+      if (tab === "user" || tab === "guest") {
+        this.adminQuery = ""; this.adminOnly = ""; this.adminChecked = [];
+        await this.loadAdminList(1);
+      } else if (tab === "log") {
+        await this.loadAuthLog();
+      } else {
+        await this.loadOverview();
+      }
+    },
+    async loadOverview() {
+      try { this.adminOverview = await this.api("/api/admin/overview"); }
+      catch (e) { this.toast(e.message); }
+    },
+    async loadAdminList(page) {
+      this.adminChecked = [];
       try {
-        const d = await this.api("/api/admin/users?kind=" + kind);
-        if (kind === "guest") this.adminGuests = d.users;
-        else this.adminUsers = d.users;
+        const kind = this.adminTab === "guest" ? "guest" : "user";
+        const qs = new URLSearchParams({
+          kind, page: String(page || 1), size: "20",
+          q: this.adminQuery || "", only: this.adminOnly || "",
+        });
+        const d = await this.api("/api/admin/users?" + qs.toString());
+        this.adminList = d.users || [];
+        this.adminTotal = d.total || 0;
+        this.adminPage = d.page || 1;
+        this.adminPages = d.pages || 1;
       } catch (e) { this.toast(e.message); }
     },
-    closeAdmin() { this.$refs.adminDlg.close(); this.adminUsers = []; },
+    toggleUser(id, on) {
+      this.adminChecked = on
+        ? Array.from(new Set([...this.adminChecked, id]))
+        : this.adminChecked.filter(x => x !== id);
+    },
+    toggleAllUsers(on) {
+      const ids = this.adminList.filter(u => u.role !== "admin").map(u => u.id);
+      this.adminChecked = on ? ids : [];
+    },
+    async batchAction(action) {
+      const n = this.adminChecked.length;
+      if (!n) return;
+      const label = { grant: "开通出题权限", revoke: "收回出题权限", disable: "禁用",
+                      enable: "解禁", delete: "删除" }[action] || action;
+      const danger = action === "delete";
+      if (!await this.askConfirm(label, `确定对选中的 ${n} 个账号执行「${label}」？${danger ? "删除后数据不可恢复！" : ""}`, danger)) return;
+      try {
+        const r = await this.api("/api/admin/batch", { method: "POST",
+          body: { ids: this.adminChecked, action } });
+        this.toast(`已处理 ${r.done} 个${r.skipped && r.skipped.length ? "，跳过 " + r.skipped.length + " 个" : ""}`);
+        await this.loadOverview();
+        await this.loadAdminList(this.adminPage);
+      } catch (e) { this.toast(e.message); }
+    },
+    async togglePublishPerm(u) {
+      try {
+        await this.api(`/api/admin/users/${u.id}/update`, { method: "POST",
+          body: { can_publish: !u.canPublish } });
+        this.toast(u.canPublish ? `已收回「${u.username}」的出题权限` : `已给「${u.username}」开通出题权限`);
+        await this.loadOverview();
+        await this.loadAdminList(this.adminPage);
+      } catch (e) { this.toast(e.message); }
+    },
+    async toggleDisabled(u) {
+      const next = !u.disabled;
+      if (next && !await this.askConfirm("禁用账号",
+          `禁用「${u.username}」后，该账号将立即无法登录（已登录的也会被踢下线）。继续？`, true)) return;
+      try {
+        await this.api(`/api/admin/users/${u.id}/update`, { method: "POST",
+          body: { disabled: next } });
+        this.toast(next ? `已禁用「${u.username}」` : `已解禁「${u.username}」`);
+        await this.loadOverview();
+        await this.loadAdminList(this.adminPage);
+      } catch (e) { this.toast(e.message); }
+    },
+    async openUserDetail(u) {
+      this.userDetail = null;
+      this.$refs.userDlg.showModal();
+      try { this.userDetail = await this.api(`/api/admin/users/${u.id}`); }
+      catch (e) { this.closeUserDetail(); this.toast(e.message); }
+    },
+    closeUserDetail() { this.$refs.userDlg.close(); this.userDetail = null; },
+    async kickUser() {
+      if (!this.userDetail) return;
+      if (!await this.askConfirm("强制下线",
+          `让「${this.userDetail.user.username}」在所有设备上退出登录？`, true)) return;
+      try {
+        const r = await this.api(`/api/admin/users/${this.userDetail.user.id}/revoke_sessions`,
+                                 { method: "POST" });
+        this.toast(`已下线 ${r.killed} 个会话`);
+        await this.openUserDetail({ id: this.userDetail.user.id });
+      } catch (e) { this.toast(e.message); }
+    },
+    async loadAuthLog() {
+      try {
+        const d = await this.api(`/api/admin/auth_log?limit=150&only_fail=${this.adminLogOnlyFail ? "true" : "false"}`);
+        this.adminLogs = d.logs || [];
+      } catch (e) { this.toast(e.message); }
+    },
+    openCreateUser() {
+      this.cuForm = { username: "", password: "", canPublish: false };
+      this.$refs.createUserDlg.showModal();
+      this.$nextTick(() => this.focusEl(this.$refs.createUserDlg.querySelector("input")));
+    },
+    closeCreateUser() { this.$refs.createUserDlg.close(); },
+    async createUser() {
+      if (!this.cuForm.username || !this.cuForm.password) { this.toast("账号和初始密码都要填"); return; }
+      this.cuBusy = true;
+      try {
+        const r = await this.api("/api/admin/users", { method: "POST",
+          body: { username: this.cuForm.username, password: this.cuForm.password,
+                  can_publish: this.cuForm.canPublish } });
+        this.closeCreateUser();
+        this.toast(`账号「${r.username}」已创建`);
+        await this.loadOverview();
+        await this.loadAdminList(1);
+      } catch (e) { this.toast(e.message); }
+      finally { this.cuBusy = false; }
+    },
+
+    /* ---------- 个人中心 ---------- */
+    async openProfile() {
+      this.profile = null;
+      this.pwForm = { old: "", new: "", repeat: "" };
+      this.$refs.profileDlg.showModal();
+      try { this.profile = await this.api("/api/me/profile"); }
+      catch (e) { this.closeProfile(); this.toast(e.message); }
+    },
+    closeProfile() { this.$refs.profileDlg.close(); this.profile = null; },
+    async changePassword() {
+      const f = this.pwForm;
+      if (!f.old || !f.new) { this.toast("原密码和新密码都要填"); return; }
+      if (f.new !== f.repeat) { this.toast("两次输入的新密码不一致"); return; }
+      this.pwBusy = true;
+      try {
+        const r = await this.api("/api/me/password", { method: "POST",
+          body: { old_password: f.old, new_password: f.new } });
+        this.toast(r.killed ? `密码已更新，其他 ${r.killed} 个设备已退出登录` : "密码已更新");
+        this.pwForm = { old: "", new: "", repeat: "" };
+      } catch (e) { this.toast(e.message); }
+      finally { this.pwBusy = false; }
+    },
+    async logoutAll() {
+      if (!await this.askConfirm("退出所有设备", "除了当前这台设备，其他设备的登录都会失效。继续？")) return;
+      try {
+        const r = await this.api("/api/me/logout_all", { method: "POST" });
+        this.toast(`已退出其他 ${r.killed} 个设备`);
+      } catch (e) { this.toast(e.message); }
+    },
 
     async resetPw(u) {
-      const pw = prompt(`给「${u.username}」设置新密码（至少4位）：`);
+      const pw = await this.askText(`重置「${u.username}」的密码`, "新密码（8-32 位，含字母和数字）", "");
       if (!pw) return;
       try {
-        await this.api("/api/admin/reset_password", { method: "POST",
-          body: { username: u.username, new_password: pw } });
-        this.toast("密码已重置");
+        await this.api(`/api/admin/users/${u.id}/update`, { method: "POST",
+          body: { password: pw } });
+        this.toast("密码已重置，该用户需要重新登录");
+        await this.loadAdminList(this.adminPage);
       } catch (e) { this.toast(e.message); }
     },
 
     async deleteUser(u) {
       const what = u.kind === "guest" ? "游客" : "用户";
-      if (!confirm(`删除${what}「${u.username}」？其所有数据库和数据将一并删除，不可恢复！`)) return;
+      if (!await this.askConfirm(`删除${what}`, `删除${what}「${u.username}」？其所有数据库和数据将一并删除，不可恢复！`, true)) return;
       try {
         await this.api("/api/admin/delete_user", { method: "POST", body: { id: u.id } });
         this.toast("已删除");
-        this.loadAdmin(this.adminKind);
+        await this.loadOverview();
+        await this.loadAdminList(this.adminPage);
       } catch (e) { this.toast(e.message); }
     },
   },
@@ -1178,4 +2365,6 @@ const App = {
 const app = createApp(App);
 app.component("cm-editor", CmEditor);
 app.component("e-icon", EIcon);
+app.component("x-select", XSelect);
+app.component("x-check", XCheck);
 app.mount("#app");

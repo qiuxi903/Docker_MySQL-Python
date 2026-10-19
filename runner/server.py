@@ -1,6 +1,6 @@
 """Python 交互式执行服务（作业模型）。
 
-POST /start                {code, db:{...}}              → 启动运行作业，返回 {job}
+POST /start                {code, db:{...}, files:{...}} → 启动运行作业，返回 {job}
 POST /job/{id}/input       {text}                        → 向运行中的程序标准输入写入一行
 GET  /job/{id}/out         ?since_out=&since_err=        → 增量获取输出与运行状态
 GET /health                存活检查
@@ -12,6 +12,7 @@ GET /health                存活检查
 - CPU/内存/进程数/文件大小 rlimit 照旧生效
 """
 import os
+import re
 import secrets
 import signal
 import subprocess
@@ -37,6 +38,7 @@ MAX_JOBS_RUNNING = 5
 
 _HERE = Path(__file__).parent
 HELPERS_SRC = (_HERE / "labhelpers.py").read_text(encoding="utf-8")
+_STUDENT_FILENAME_RE = re.compile(r"^[\w\u4e00-\u9fff-]{1,40}\.py$", re.I)
 
 RUN_MAIN = '''import sys, os
 try:  # -I 隔离模式会忽略 PYTHONIOENCODING，这里强制 UTF-8 输出
@@ -46,6 +48,9 @@ except Exception:
     pass
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _HERE)
+_FILES_DIR = os.path.join(_HERE, "student_files")
+if os.path.isdir(_FILES_DIR):
+    sys.path.insert(0, _FILES_DIR)
 from labhelpers import get_conn, query, query_dicts, execute
 
 
@@ -105,6 +110,7 @@ except BaseException:
 class StartReq(BaseModel):
     code: str
     db: dict = {}
+    files: dict[str, str] = {}
 
 
 class InputReq(BaseModel):
@@ -249,7 +255,7 @@ def health():
     return {"ok": True, "jobs": running}
 
 
-def start_job(code: str, db: dict) -> str:
+def start_job(code: str, db: dict, files: dict[str, str] | None = None) -> str:
     with jobs_lock:
         running = sum(1 for j in jobs.values() if not j.done)
         if running >= MAX_JOBS_RUNNING:
@@ -261,6 +267,11 @@ def start_job(code: str, db: dict) -> str:
         (Path(td) / "code.py").write_text(code, encoding="utf-8")
         (Path(td) / "labhelpers.py").write_text(HELPERS_SRC, encoding="utf-8")
         (Path(td) / "run_main.py").write_text(RUN_MAIN, encoding="utf-8")
+        student_dir = Path(td) / "student_files"
+        if files:
+            student_dir.mkdir()
+        for name, content in (files or {}).items():
+            (student_dir / name).write_text(content, encoding="utf-8")
     except Exception as e:
         raise HTTPException(500, f"无法准备运行环境：{e}")
 
@@ -309,7 +320,13 @@ def start_run(req: StartReq, x_runner_token: str = Header(default="")):
         raise HTTPException(401, "forbidden")
     if len(req.code.encode("utf-8")) > 256 * 1024:
         raise HTTPException(400, "代码超过 256KB 上限")
-    job_id = start_job(req.code, req.db)
+    if len(req.files) > 30 or any(
+            not isinstance(content, str)
+            or not _STUDENT_FILENAME_RE.fullmatch(name)
+            or len(content.encode("utf-8")) > 256 * 1024
+            for name, content in req.files.items()):
+        raise HTTPException(400, "Python 文件列表无效或超过限制")
+    job_id = start_job(req.code, req.db, req.files)
     return {"job": job_id}
 
 

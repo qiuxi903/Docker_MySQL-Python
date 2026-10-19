@@ -17,10 +17,17 @@ window.addEventListener('unhandledrejection', function(e){ __bootErrs.push('REJ:
   document.documentElement.dataset.theme = t;
 })();
 </script>
+<!-- 关键：Vue 挂载前隐藏未编译的模板（含 !important，避免被 #app 的 display:flex 覆盖）。
+     内联在这里是为了不依赖外部 CSS 的加载时机，任何浏览器/内嵌 WebView 下都不会闪出 {{ }} 。 -->
+<style>
+#app[v-cloak] { display: none !important; }
+html[data-theme="dark"] body { background: #0d1117; }
+html[data-theme="light"] body { background: #f6f8fa; }
+</style>
 <link rel="stylesheet" href="/vendor/codemirror/codemirror.css">
 <link rel="stylesheet" href="/vendor/codemirror/addon/hint/show-hint.css">
 <link rel="stylesheet" href="/fonts/misans/misans.css">
-<link rel="stylesheet" href="/style.css?v=80">
+<link rel="stylesheet" href="/style.css?v=113">
 </head>
 <body>
 <div id="app" v-cloak>
@@ -67,14 +74,15 @@ window.addEventListener('unhandledrejection', function(e){ __bootErrs.push('REJ:
       <nav class="nav m-hide">
         <button :class="{active: view==='sql'}" @click="switchView('sql')"><e-icon name="database" :size="14"></e-icon> MySQL 工作台</button>
         <button :class="{active: view==='py'}" @click="switchView('py')"><e-icon name="code" :size="14"></e-icon> Python</button>
-        <button :class="{active: view==='community'}" @click="switchView('community')"><e-icon name="globe" :size="14"></e-icon> 社区</button>
+        <button :class="{active: view==='drills'}" @click="switchView('drills')"><e-icon name="target" :size="14"></e-icon> 练习</button>
+        <button :class="{active: view==='community'}" @click="switchView('community')"><e-icon name="globe" :size="14"></e-icon> 题库</button>
       </nav>
       <div class="userbox">
         <button class="icon-btn theme-btn" :title="theme==='dark' ? '切换到亮色' : '切换到暗色'" @click="toggleTheme">
           <e-icon :name="theme==='dark' ? 'sun' : 'moon'" :size="16"></e-icon>
         </button>
         <span class="avatar">{{ user ? user.name.slice(0,1) : '?' }}</span>
-        <span class="who">{{ user ? user.name : '' }}</span>
+        <button class="who-btn" title="个人中心" @click="openProfile">{{ user ? user.name : '' }}</button>
         <button v-if="user && user.role==='admin'" class="btn mini" @click="openAdmin">管理</button>
         <button class="btn mini ghost" @click="logout">退出</button>
       </div>
@@ -115,7 +123,7 @@ window.addEventListener('unhandledrejection', function(e){ __bootErrs.push('REJ:
                 <div class="db-actions">
                   <button class="btn mini ghost" @click="exportDb(d)"><e-icon name="download" :size="12"></e-icon> 导出 .sql</button>
                   <button class="btn mini ghost" @click="openShareDlg(d)"><e-icon name="link" :size="12"></e-icon> 分享链接</button>
-                  <button class="btn mini ghost" @click="publishDb(d)"><e-icon name="share" :size="12"></e-icon> 发布到社区</button>
+                  <button v-if="user && user.kind !== 'guest'" class="btn mini ghost" @click="openQuestionEditor(null, d.name)"><e-icon name="list" :size="12"></e-icon> 存为草稿</button>
                   <button v-if="!d.primary" class="btn mini ghost danger" @click="dropDb(d)"><e-icon name="trash" :size="12"></e-icon> 删除库</button>
                 </div>
               </div>
@@ -123,7 +131,8 @@ window.addEventListener('unhandledrejection', function(e){ __bootErrs.push('REJ:
           </div>
           <div class="side-f">
             <button class="btn soft block" @click="createDb"><e-icon name="database" :size="14"></e-icon> 新建数据库</button>
-            <button class="btn soft block" style="margin-top:8px" @click="openImport"><e-icon name="folder-open" :size="14"></e-icon> 导入文件</button>
+            <button class="btn soft block" @click="openCreateTable"><e-icon name="table" :size="14"></e-icon> 新建数据表</button>
+            <button class="btn soft block" @click="openImport"><e-icon name="folder-open" :size="14"></e-icon> 导入文件</button>
           </div>
         </aside>
 
@@ -163,8 +172,9 @@ window.addEventListener('unhandledrejection', function(e){ __bootErrs.push('REJ:
                   <div v-if="r.type==='rows'" :key="'r'+i+j" class="cres">
                     <div class="cres-head">{{ r.rowCount }} 行<span v-if="r.truncated">（超过500行，仅显示前500行）</span><span class="cms">{{ r.ms }}ms</span></div>
                     <div class="ctbl-wrap"><table class="ctable">
-                      <thead><tr><th v-for="c in r.columns" :key="c">{{ c }}</th></tr></thead>
+                      <thead><tr><th class="rowid">#</th><th v-for="c in r.columns" :key="c">{{ c }}</th></tr></thead>
                       <tbody><tr v-for="(row,k) in r.rows" :key="k">
+                        <td class="rowid">{{ k + 1 }}</td>
                         <td v-for="(v,kk) in row" :key="kk" :class="{null: v===null}">{{ v === null ? 'NULL' : v }}</td>
                       </tr></tbody>
                     </table></div>
@@ -192,13 +202,16 @@ window.addEventListener('unhandledrejection', function(e){ __bootErrs.push('REJ:
             <button v-for="f in pyFiles" :key="f.name" class="tbrow" :class="{sel: pyCurrent===f.name}"
                     @click="openPyFile(f.name)">
               <span class="tb-ico"><e-icon name="code" :size="13"></e-icon></span>
-              <span class="tbname">{{ f.name }}</span>
+              <span class="tbname">{{ f.name }}<span v-if="f.uploaded" class="badge tiny temp-badge">临时</span></span>
               <span class="tbrows">{{ fmtSize(f.size) }}</span>
               <span class="row-x" @click.stop="deletePyFile(f.name)" title="删除"><e-icon name="x" :size="11"></e-icon></span>
             </button>
           </div>
           <div class="side-f">
             <button class="btn soft block" @click="newPyFile"><e-icon name="plus" :size="14"></e-icon> 新建文件</button>
+            <button class="btn soft block" @click="$refs.pyUploadFileEl.click()"><e-icon name="upload" :size="14"></e-icon> 上传 Python 文件</button>
+            <input type="file" ref="pyUploadFileEl" hidden accept=".py,text/x-python,text/plain" multiple @change="uploadPyFiles">
+            <p class="tip" style="margin:2px 0 0">上传的文件是临时的，刷新或退出登录会自动删除。</p>
           </div>
         </aside>
 
@@ -206,14 +219,17 @@ window.addEventListener('unhandledrejection', function(e){ __bootErrs.push('REJ:
           <section class="panel editor-pane">
             <div class="panel-h">
               <button class="btn soft m-only" @click="drawer='py'"><e-icon name="menu" :size="14"></e-icon> 文件</button>
-              <span class="panel-title mono">{{ pyCurrent }}</span>
-              <select class="select slim" @change="insertExample($event)">
-                <option value="">插入示例…</option>
-                <option v-for="(ex,i) in examples" :key="i" :value="i">{{ ex.name }}</option>
-              </select>
+              <span class="panel-title mono">{{ pyCurrent || "Python 编辑器" }}</span>
               <span class="spacer"></span>
               <button class="btn mini ghost" @click="clearPy"><e-icon name="x" :size="13"></e-icon> 清空</button>
               <button class="btn run run-btn" @click="runPy"><e-icon name="play" :size="13"></e-icon> 运行 <span class="kbd">Ctrl+↵</span></button>
+            </div>
+            <div class="py-tabs" role="tablist" aria-label="已打开的 Python 文件">
+              <div v-for="name in pyOpenFiles" :key="name" class="py-tab" :class="{active: pyCurrent===name}">
+                <button class="py-tab-open" role="tab" :aria-selected="pyCurrent===name" @click="openPyFile(name)">{{ name }}</button>
+                <button class="py-tab-close" :aria-label="'关闭 ' + name" @click="closePyTab(name)">×</button>
+              </div>
+              <span v-if="!pyOpenFiles.length" class="py-tabs-empty">没有打开的文件</span>
             </div>
             <div class="panel-b editor-host">
               <cm-editor ref="cmPyRef" mode="text/x-python" :value="pyInit" :run="runPy"
@@ -227,14 +243,15 @@ window.addEventListener('unhandledrejection', function(e){ __bootErrs.push('REJ:
               <span class="dot"></span><span class="dot"></span><span class="dot"></span>
               <span class="panel-title">控制台</span>
               <span class="panel-note on-dark-note m-hide" v-if="pyRunCount">第 {{ pyRunCount }} 次运行 · 每次运行覆盖上次结果</span>
-              <span class="panel-note on-dark-note m-hide" v-else>Python 3 · 限15秒/256MB · 内置 query(sql) / execute(sql) / get_conn()</span>
+              <span class="panel-note on-dark-note m-hide" v-else>Python 3 · 限15秒/256MB · 内置 query(sql) / execute(sql) / get_conn() · 无图形界面</span>
               <span class="spacer"></span>
               <button class="btn mini ghost on-dark" @click="pyConsole=[]; pyRunCount=0"><e-icon name="eraser" :size="13"></e-icon> 清屏</button>
             </div>
             <div class="console" ref="pyConsoleEl">
               <div v-if="!pyConsole.length" class="console-empty">
                 <div class="ce-ico"><e-icon name="terminal" :size="28"></e-icon></div>
-                像 IDE 一样：上面写代码，点「运行」，输出显示在这里。
+                像 IDE 一样：上面写代码，点「运行」，输出显示在这里。<br>
+                <span style="font-size:11.5px;opacity:.75">这里是命令行环境，不能弹窗口（tkinter / PyQt / pygame 等图形库不可用），用 print 输出结果。</span>
               </div>
               <div v-for="(r,i) in pyConsole" :key="i" class="cblock">
                 <div :class="['cout-meta', r.meta ? 'bad' : (r.running ? 'warn' : 'good')]">
@@ -259,70 +276,528 @@ window.addEventListener('unhandledrejection', function(e){ __bootErrs.push('REJ:
         </div>
       </section>
 
-      <!-- ========== 社区 ========== -->
-      <section v-show="view==='community'" class="community-page">
-        <div class="community-inner">
-          <div class="upload-bar">
-            <div class="upload-left">
-              <h2>分享到社区</h2>
-              <p class="tip">SQL 脚本作为「数据库」分享（自动解析表清单）≤8MB · Python 代码 ≤256KB · 表格 ≤8MB · 工作台里可把表发布过来</p>
-              <details class="cheat">
-                <summary>多表脚本怎么写？——看这个模板</summary>
-                <pre>-- 一个 .sql 文件 = 一个库，有几张 CREATE TABLE 就分享几张表
-CREATE TABLE student (
-  id INT PRIMARY KEY,
-  name VARCHAR(20),
-  age INT
-);
-INSERT INTO student VALUES (1,'张三',18),(2,'李四',19);
+      <!-- ========== 练习（做题 / 判分）——布局与主页工作台一致 ========== -->
+      <section v-show="view==='drills'" class="ws drills-ws">
+        <div class="drawer-mask m-only" v-show="drawer==='drills'" @click="drawer=''"></div>
 
-CREATE TABLE course (
-  id INT PRIMARY KEY,
-  title VARCHAR(50)
-);
-INSERT INTO course VALUES (1,'数学');</pre>
-              </details>
-            </div>
-            <div class="upload-right">
-              <button class="btn" @click="$refs.uploadFileEl.click()"><e-icon name="folder-open" :size="14"></e-icon> 选择文件</button>
-              <input type="file" ref="uploadFileEl" hidden accept=".sql,.py,.csv,.xlsx" @change="onUploadPicked">
-              <span v-if="uploadFile" class="file-chip slim">
-                <e-icon :name="kindIcon(uploadKind)" :size="13"></e-icon>
-                <span class="mono">{{ uploadFile.name }}</span>
-                <span class="muted">{{ fmtSize(uploadFile.size) }}</span>
-                <button class="icon-btn" @click="uploadFile=null; $refs.uploadFileEl.value=''"><e-icon name="x" :size="12"></e-icon></button>
-              </span>
-              <input type="text" v-model.trim="uploadTitle" placeholder="标题（可选）" class="up-title">
-              <button class="btn primary" :disabled="busy || !uploadFile" @click="uploadCommunity"><e-icon name="upload" :size="14"></e-icon> 上传分享</button>
-            </div>
+        <!-- 左：题目栏（SQL 题同时显示该题的沙箱数据库表） -->
+        <aside class="side drawer" :class="{open: drawer==='drills'}">
+          <div class="side-h">
+            <span class="panel-title">练习题目</span>
+            <span class="drill-side-count">{{ drillPassedCount }} / {{ drillList.length }}</span>
+            <span class="spacer"></span>
+            <button v-if="user && user.canPublish" class="icon-btn" title="出题" @click="openAuthorHub"><e-icon name="plus" :size="14"></e-icon></button>
+            <button class="icon-btn m-only" title="关闭" @click="drawer=''"><e-icon name="x" :size="15"></e-icon></button>
+          </div>
+          <div class="drill-courses">
+            <button class="dc-tab" :class="{on: drillCourse==='sql'}" @click="switchDrillCourse('sql')">SQL</button>
+            <button class="dc-tab" :class="{on: drillCourse==='python'}" @click="switchDrillCourse('python')">Python</button>
+            <button class="dc-tab" :class="{on: drillCourse==='basic'}" @click="switchDrillCourse('basic')">客观题</button>
+            <button class="dc-tab" :class="{on: drillCourse==='wrong'}" @click="switchDrillCourse('wrong')">错题本</button>
+          </div>
+          <div class="drill-prog-bar"><i :style="{width: (drillPassedCount / Math.max(1, drillList.length) * 100) + '%'}"></i></div>
+
+          <div class="tblist drill-list">
+            <button v-for="(d, di) in drillList" :key="d.id" class="drill-item"
+                    :class="{on: drillCurrent && drillCurrent.id===d.id, done: d.passed}"
+                    @click="openDrill(d)">
+              <span class="drill-num"><e-icon v-if="d.passed" name="check" :size="13"></e-icon><template v-else>{{ String(di+1).padStart(2,'0') }}</template></span>
+              <span class="drill-t">{{ d.title }}</span>
+              <span v-if="drillCourse==='wrong'" class="drill-tag err">做错</span>
+              <span v-else-if="!d.status" class="drill-tag">草稿</span>
+            </button>
+            <div v-if="!drillList.length" class="tbempty">{{ drillCourse==='wrong' ? '还没有错题，很棒！' : '这里还没有练习题，等老师出题吧' }}</div>
+
+            <!-- SQL 题的沙箱库（和主页的数据库树一样，可点表预览） -->
+            <template v-if="drillCurrent && drillCurrent.type==='sql' && drillSandbox.db">
+              <div class="dbnode sel drill-dbnode" style="margin-top:10px">
+                <span class="tb-ico"><e-icon name="database" :size="14"></e-icon></span>
+                <span class="dbnode-t">
+                  <span class="dbnode-name">本题数据库 <span class="badge tiny">沙箱</span></span>
+                  <span class="dbnode-sub">{{ drillSandbox.tables.length }} 张表</span>
+                </span>
+                <button class="icon-btn" title="重置为初始数据" @click.stop="resetSandbox"><e-icon name="refresh" :size="12"></e-icon></button>
+              </div>
+              <div class="db-tables">
+                <div v-if="!drillSandbox.tables.length" class="tbempty">空库</div>
+                <button v-for="t in drillSandbox.tables" :key="t.name" class="tbrow" @click="openDrillTable(t.name)">
+                  <span class="tb-ico"><e-icon name="table" :size="13"></e-icon></span>
+                  <span class="tbname">{{ t.name }}</span>
+                  <span class="tbrows">{{ t.rows === null ? '' : t.rows }}</span>
+                </button>
+              </div>
+            </template>
           </div>
 
+          <div class="side-f" v-if="!drillCurrent">
+            <button class="btn soft block" @click="openAuthorHub"><e-icon name="plus" :size="14"></e-icon> 出题</button>
+          </div>
+        </aside>
+
+        <!-- 右：与主页相同的「编辑器 + 控制台」 -->
+        <div class="wsmain">
+          <template v-if="!drillCurrent">
+            <div class="drill-blank">
+              <e-icon name="target" :size="34"></e-icon>
+              <p>从左边挑一道题开始</p>
+              <p class="tip">SQL 题会在你自己的沙箱数据库里真实执行，Python 题在沙箱里真实运行</p>
+            </div>
+          </template>
+          <template v-else>
+            <section class="panel editor-pane">
+              <div class="panel-h">
+                <button class="btn soft m-only" @click="drawer='drills'"><e-icon name="menu" :size="14"></e-icon> 题目</button>
+                <span class="drill-idx">{{ String(drillList.findIndex(x => drillCurrent && x.id === drillCurrent.id) + 1).padStart(2, '0') }}</span>
+                <span class="drill-badge">{{ drillCurrent.typeLabel }}</span>
+                <span class="panel-title">{{ drillCurrent.title }}</span>
+                <span v-if="drillCurrent.passed" class="drill-passed"><e-icon name="check" :size="12"></e-icon> 已通过</span>
+                <span class="spacer"></span>
+                <button v-if="drillCurrent.setupSql" class="btn mini ghost" @click="drillShowSetup=!drillShowSetup">
+                  <e-icon name="database" :size="12"></e-icon> {{ drillShowSetup ? '隐藏题面' : '题面' }}
+                </button>
+                <button v-if="drillCurrent.hint" class="btn mini ghost" @click="drillShowHint=!drillShowHint">
+                  <e-icon name="shield" :size="12"></e-icon> 提示
+                </button>
+                <button v-if="drillCurrent.mine && user && user.canPublish" class="btn mini ghost" @click="openDrillEditor(drillCurrent)">编辑</button>
+                <button class="btn mini ghost" @click="clearDrillCode"><e-icon name="x" :size="13"></e-icon> 清空</button>
+                <button class="btn" :disabled="drillBusy || !drillCodeType" @click="runDrillOnly">
+                  <e-icon name="play" :size="13"></e-icon> 运行
+                </button>
+                <button class="btn run run-btn" :disabled="drillBusy" @click="submitDrill">
+                  <e-icon name="target" :size="13"></e-icon> 提交判分 <span class="kbd">Ctrl+↵</span>
+                </button>
+              </div>
+
+              <!-- 题面（可展开） -->
+              <div v-show="drillShowSetup || drillShowHint" class="drill-paper">
+                <p class="drill-stem" v-if="drillCurrent.stem">{{ drillCurrent.stem }}</p>
+                <pre v-if="drillShowSetup && drillCurrent.setupSql" class="drill-setup">{{ drillCurrent.setupSql }}</pre>
+                <div v-if="drillShowHint && drillCurrent.hint" class="drill-hint">{{ drillCurrent.hint }}</div>
+              </div>
+
+              <!-- 代码题：编辑器（与主页一致） -->
+              <div v-if="drillCodeType" class="panel-b editor-host">
+                <cm-editor ref="cmDrillRef" :mode="drillCurrent.type==='sql' ? 'text/x-mysql' : 'text/x-python'"
+                           :run="submitDrill" @change="onDrillCodeChange"
+                           placeholder="把答案写在这里，写好后点「提交判分」"></cm-editor>
+              </div>
+              <!-- 客观题：选项区（同一块面板样式） -->
+              <div v-else class="panel-b drill-obj">
+                <div class="drill-obj-box">
+                  <p class="drill-stem" v-if="drillCurrent.stem">{{ drillCurrent.stem }}</p>
+                  <template v-if="drillCurrent.type==='fill'">
+                    <input type="text" class="drill-fill" v-model.trim="drillFill" placeholder="在这里作答" @keyup.enter="submitDrill">
+                  </template>
+                  <template v-else>
+                    <button v-for="o in drillCurrent.options" :key="o.key" class="drill-opt" :class="{on: drillPick===o.key}"
+                            @click="drillPick=o.key">
+                      <span class="drill-opt-key">{{ o.key }}</span>
+                      <span class="drill-opt-text">{{ o.text }}</span>
+                    </button>
+                  </template>
+                </div>
+              </div>
+            </section>
+
+            <!-- 控制台（与主页完全一致） -->
+            <section class="panel console-pane">
+              <div class="panel-h dark">
+                <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+                <span class="panel-title">判分结果</span>
+                <span class="panel-note on-dark-note m-hide" v-if="drillCurrent.type==='sql'">在你的沙箱数据库里真实执行，结果集与标准答案比对</span>
+                <span class="panel-note on-dark-note m-hide" v-else-if="drillCurrent.type==='python'">沙箱里真实运行，比对输出</span>
+                <span class="panel-note on-dark-note m-hide" v-else>答完点「提交判分」自动核对</span>
+                <span class="spacer"></span>
+                <button class="btn mini ghost on-dark" @click="drillResult=null; drillRunLog=[]"><e-icon name="eraser" :size="13"></e-icon> 清屏</button>
+              </div>
+              <div class="console" ref="drillConsoleEl">
+                <div v-if="!drillResult && !drillRunLog.length" class="console-empty">
+                  <div class="ce-ico"><e-icon name="terminal" :size="28"></e-icon></div>
+                  <template v-if="drillCurrent.type==='sql'">
+                    左侧是这个题的数据库，可以在编辑器里先自己写 SQL 试（点「运行」只执行不判分）。<br>
+                    写好后点「提交判分」核对答案。
+                  </template>
+                  <template v-else-if="drillCurrent.type==='python'">
+                    写代码后点「运行」可先自己试跑，点「提交判分」核对结果。
+                  </template>
+                  <template v-else>选好答案后点「提交判分」。</template>
+                </div>
+
+                <!-- 自由运行记录（与主页控制台同款） -->
+                <div v-for="(e, i) in drillRunLog" :key="'run'+i" class="cblock">
+                  <div class="cprompt"><span class="pmark" v-text="drillCurrent.type==='sql' ? 'mysql>' : '>>>'"></span><span class="psql">{{ e.code }}</span></div>
+                  <template v-if="drillCurrent.type==='sql'">
+                    <template v-for="(r, j) in e.results">
+                      <div v-if="r.type==='rows'" :key="'r'+i+j" class="cres">
+                        <div class="cres-head">{{ r.rowCount }} 行<span v-if="r.truncated">（超过500行，仅显示前500行）</span><span class="cms">{{ r.ms }}ms</span></div>
+                        <div class="ctbl-wrap"><table class="ctable">
+                          <thead><tr><th class="rowid">#</th><th v-for="c in r.columns" :key="c">{{ c }}</th></tr></thead>
+                          <tbody><tr v-for="(row,k) in r.rows" :key="k">
+                            <td class="rowid">{{ k + 1 }}</td>
+                            <td v-for="(v,kk) in row" :key="kk" :class="{null: v===null}">{{ v === null ? 'NULL' : v }}</td>
+                          </tr></tbody>
+                        </table></div>
+                      </div>
+                      <div v-else-if="r.type==='ok'" :key="'o'+i+j" class="cok">✔ {{ r.affected ? '影响 ' + r.affected + ' 行' : '执行成功' }} <span class="cms">{{ r.ms }}ms</span></div>
+                      <div v-else :key="'x'+i+j" class="cerr">✖ {{ r.msg }}<span class="cms" v-if="r.errno">[{{ r.errno }}]</span></div>
+                    </template>
+                  </template>
+                  <template v-else>
+                    <div v-if="e.out" class="term-out">{{ e.out }}</div>
+                    <div v-if="e.err" class="term-err">{{ e.err }}</div>
+                    <div v-if="e.meta" class="cout-meta bad">{{ e.meta }}</div>
+                    <div v-else class="cout-meta good">✔ 运行完成 · {{ e.dur }}s</div>
+                  </template>
+                </div>
+
+                <!-- 判分结果 -->
+                <div v-if="drillResult" class="cblock">
+                  <div :class="['cout-meta', drillResult.passed ? 'good' : 'bad']">
+                    <e-icon :name="drillResult.passed ? 'check' : 'x'" :size="13"></e-icon>
+                    {{ drillResult.passed ? '通过' : '未通过' }} · {{ drillResult.reason }}
+                    <span v-if="drillResult.ms"> · {{ drillResult.ms }}ms</span>
+                  </div>
+                  <template v-if="drillResult.kind==='sql' && drillResult.student">
+                    <div class="drill-cmp">
+                      <div class="drill-cmp-t">你的结果</div>
+                      <div class="ctbl-wrap"><table class="ctable">
+                        <thead><tr><th class="rowid">#</th><th v-for="c in drillResult.student.columns" :key="c">{{ c }}</th></tr></thead>
+                        <tbody><tr v-for="(r,i) in drillResult.student.rows" :key="i">
+                          <td class="rowid">{{ i + 1 }}</td>
+                          <td v-for="(v,j) in r" :key="j">{{ v }}</td>
+                        </tr></tbody>
+                      </table></div>
+                    </div>
+                    <div class="drill-cmp" v-if="drillResult.expected">
+                      <div class="drill-cmp-t">正确答案</div>
+                      <div class="ctbl-wrap"><table class="ctable">
+                        <thead><tr><th class="rowid">#</th><th v-for="c in drillResult.expected.columns" :key="c">{{ c }}</th></tr></thead>
+                        <tbody><tr v-for="(r,i) in drillResult.expected.rows" :key="i">
+                          <td class="rowid">{{ i + 1 }}</td>
+                          <td v-for="(v,j) in r" :key="j">{{ v }}</td>
+                        </tr></tbody>
+                      </table></div>
+                    </div>
+                  </template>
+                  <template v-else-if="drillResult.kind==='python'">
+                    <div class="drill-cmp"><div class="drill-cmp-t">你的输出</div><pre class="drill-out">{{ drillResult.got }}</pre></div>
+                    <div class="drill-cmp" v-if="drillResult.expected"><div class="drill-cmp-t">期望输出</div><pre class="drill-out">{{ drillResult.expected }}</pre></div>
+                  </template>
+                  <div v-else-if="drillResult.expected" class="drill-cmp">
+                    <div class="drill-cmp-t">正确答案</div>
+                    <pre class="drill-out">{{ Array.isArray(drillResult.expected) ? drillResult.expected.join(' / ') : drillResult.expected }}</pre>
+                  </div>
+                </div>
+              </div>
+            </section>
+          </template>
+        </div>
+
+        <button v-show="view==='drills' && drawer!=='drills'" class="fab-drawer m-only" @click="drawer='drills'">
+          <e-icon name="target" :size="16"></e-icon> 题目
+          <span class="cnt">{{ drillList.length }}</span>
+        </button>
+      </section>
+
+      <!-- ========== 出题（独立全屏工作台） ========== -->
+      <section v-show="view==='author'" class="author-page">
+        <header class="auth-top">
+          <button class="btn mini ghost" @click="exitAuthor"><e-icon name="chevron-right" :size="13" style="transform:rotate(180deg);display:inline-block"></e-icon> 返回练习</button>
+          <span class="auth-title">{{ dq.id ? '编辑题目' : '出题' }}</span>
+          <span class="drill-badge">{{ dq.typeLabel || typeLabelOf(dq.type) }}</span>
+          <span class="spacer"></span>
+          <span class="auth-state">{{ authorDirty ? '未保存' : (dq.id ? '已保存' : '新建') }}</span>
+          <button class="btn mini soft auth-example" :disabled="dqBusy" @click="fillDrillExample">
+            <e-icon name="refresh" :size="12"></e-icon> 填入示例
+          </button>
+          <button class="btn mini ghost" :disabled="dqBusy" @click="saveDrill(false)">保存草稿</button>
+          <button class="btn mini primary" :disabled="dqBusy" @click="saveDrill(true)">保存并发布</button>
+        </header>
+
+        <div class="auth-body">
+          <!-- 左：配置 -->
+          <div class="auth-form">
+            <div class="auth-sec">
+              <div class="auth-sec-t">题型</div>
+              <div class="auth-types">
+                <button v-for="t in drillTypes" :key="t.value" class="auth-type"
+                        :class="{on: dq.type===t.value}" @click="pickDrillType(t.value)"
+                        :title="t.desc">
+                  <e-icon :name="t.icon" :size="14"></e-icon>{{ t.label }}
+                </button>
+              </div>
+              <p class="tip auth-type-desc">{{ drillTypes.find(t => t.value===dq.type).desc }}</p>
+            </div>
+
+            <div class="auth-sec">
+              <div class="auth-sec-t">题目</div>
+              <input type="text" v-model.trim="dq.title" maxlength="80" class="auth-title-input"
+                     placeholder="题目标题（一句话说清要做什么）">
+              <textarea class="dq-area auth-stem" v-model="dq.stem" rows="2"
+                        placeholder="补充要求、验收标准（可留空）"></textarea>
+
+              <!-- SQL -->
+              <template v-if="dq.type==='sql'">
+                <label class="f">题目数据（初始化 SQL：建表 + 数据）</label>
+                <div class="auth-import">
+                  <span class="ai-label">从别处导入：</span>
+                  <button class="btn mini soft" :disabled="dqBusy" @click="$refs.setupFileEl.click()">
+                    <e-icon name="upload" :size="12"></e-icon> 上传文件
+                  </button>
+                  <input type="file" ref="setupFileEl" hidden accept=".sql,.csv,.xlsx" @change="importSetupFile">
+                  <x-select v-model="dq.importDb" :options="setupDbOptions" style="min-width:150px"></x-select>
+                  <button class="btn mini soft" :disabled="dqBusy || !dq.importDb" @click="importSetupDb">
+                    <e-icon name="database" :size="12"></e-icon> 用这个库
+                  </button>
+                </div>
+                <p class="tip auth-import-tip">支持 .sql 脚本、.csv、.xlsx 表格（自动建表并生成 INSERT）；也可以直接选你已有的数据库（含从题库导入的素材包）。生成后仍可手工修改。</p>
+                <textarea class="dq-area code" v-model="dq.setupSql" rows="9" spellcheck="false"
+                          placeholder="CREATE TABLE emp (...);&#10;INSERT INTO emp VALUES (...);"></textarea>
+                <label class="f">标准答案 SQL（学生交卷时用它算出正确答案）</label>
+                <textarea class="dq-area code" v-model="dq.verifySql" rows="4" spellcheck="false"
+                          placeholder="SELECT name, sal FROM emp ORDER BY sal DESC LIMIT 5"></textarea>
+              </template>
+
+              <!-- Python -->
+              <template v-if="dq.type==='python'">
+                <p class="tip" style="margin:0 0 6px">提示：沙箱是命令行环境，不出图形窗口（学生代码里别用 tkinter / PyQt 等）。</p>
+                <label class="f">起始代码（学生看到的第一段代码）</label>
+                <textarea class="dq-area code" v-model="dq.starterCode" rows="5" spellcheck="false"
+                          placeholder="# 可以先给学生一些框架代码"></textarea>
+                <template v-if="dq.judgeMode==='tests'">
+                  <label class="f">测试用例（每组一行：输入 ⇥ 期望输出；输入里换行用 \n）</label>
+                  <div class="auth-cases">
+                    <div v-for="(c,i) in dq.cases" :key="i" class="auth-case">
+                      <span class="ac-n">{{ i+1 }}</span>
+                      <textarea class="dq-area code" v-model="c.input" rows="2" placeholder="输入（stdin）"></textarea>
+                      <textarea class="dq-area code" v-model="c.expected" rows="2" placeholder="期望输出"></textarea>
+                      <button class="icon-btn" title="删除" @click="dq.cases.splice(i,1)"><e-icon name="x" :size="12"></e-icon></button>
+                    </div>
+                    <button class="btn mini soft" @click="dq.cases.push({input:'', expected:''})"><e-icon name="plus" :size="12"></e-icon> 加一组</button>
+                  </div>
+                </template>
+                <template v-else>
+                  <label class="f">输入数据（stdin，可空）</label>
+                  <textarea class="dq-area code" v-model="dq.inputData" rows="3" placeholder="一行一条输入"></textarea>
+                  <label class="f">期望输出</label>
+                  <textarea class="dq-area code" v-model="dq.expectedOutput" rows="4" placeholder="学生程序应该打印什么"></textarea>
+                </template>
+              </template>
+
+              <!-- 客观题 -->
+              <template v-if="textChoice">
+                <label class="f">选项（每行一个）</label>
+                <textarea class="dq-area" v-model="dq.optionsText" rows="4" spellcheck="false"
+                          placeholder="A. SELECT&#10;B. INSERT&#10;C. UPDATE"></textarea>
+                <template v-if="dq.type==='multiple'">
+                  <label class="f">正确选项（可多选，点选下面的字母）</label>
+                  <div class="auth-keys">
+                    <button v-for="k in optionKeys" :key="k" class="auth-key"
+                            :class="{on: dq.multiKeys.includes(k)}" @click="toggleMultiKey(k)">{{ k }}</button>
+                  </div>
+                </template>
+                <template v-else>
+                  <label class="f">正确选项</label>
+                  <div class="auth-keys">
+                    <button v-for="k in optionKeys" :key="k" class="auth-key"
+                            :class="{on: dq.rightKey===k}" @click="dq.rightKey=k">{{ k }}</button>
+                  </div>
+                </template>
+              </template>
+              <template v-if="dq.type==='fill'">
+                <label class="f">可接受的答案（一行一个，任意一个都对）</label>
+                <textarea class="dq-area" v-model="dq.fillAnswers" rows="3" placeholder="PRIMARY KEY&#10;primary key"></textarea>
+              </template>
+            </div>
+
+            <div class="auth-sec">
+              <div class="auth-sec-t">判分方式</div>
+              <x-select v-model="dq.judgeMode" :options="judgeModeOptions"></x-select>
+              <p class="tip auth-jm-tip">{{ judgeModeHint }}</p>
+            </div>
+
+            <details class="auth-more" :open="!!dq.hint">
+              <summary>更多选项（提示语）</summary>
+              <label class="f">提示（学生可点开看，可不填）</label>
+              <input type="text" v-model.trim="dq.hint" maxlength="200" placeholder="给个思路，但别直接给答案">
+            </details>
+          </div>
+
+          <!-- 右：实时试跑 -->
+          <div class="auth-preview">
+            <div class="auth-pv-h">
+              <span class="panel-title">试跑（只有你能看见）</span>
+              <span class="spacer"></span>
+              <button class="btn mini ghost" :disabled="dqBusy" @click="tryRunAuthor">
+                <e-icon name="play" :size="12"></e-icon> {{ dq.type==='sql' ? '跑一遍' : '运行' }}
+              </button>
+            </div>
+            <div class="auth-pv-body">
+              <template v-if="dq.type==='sql'">
+                <div class="auth-pv-note">用「初始化 SQL」建一个临时库，再执行下面的 SQL。库里有什么、查出什么都会显示在这里。</div>
+                <textarea class="dq-area code" v-model="dq.trySql" rows="4" spellcheck="false"
+                          placeholder="这里写一段学生可能会写的 SQL，看看能不能查出正确答案"></textarea>
+                <div class="auth-pv-tools">
+                  <button class="btn mini" :disabled="dqBusy" @click="trySelectAll">查全表</button>
+                  <button class="btn mini" :disabled="dqBusy" @click="tryRunVerify">跑标准答案</button>
+                </div>
+              </template>
+              <template v-else-if="dq.type==='python'">
+                <div class="auth-pv-note">用下面的代码在沙箱里真实跑一遍（含 stdin）。</div>
+                <textarea class="dq-area code" v-model="dq.tryCode" rows="6" spellcheck="false"
+                          placeholder="这里写一段学生可能会写的代码"></textarea>
+              </template>
+              <div v-else class="auth-pv-note">客观题不需要试跑，检查选项和答案即可。</div>
+
+              <div v-if="tryResult" class="auth-try">
+                <div class="auth-try-h" :class="tryResult.error ? 'bad' : 'ok'">
+                  {{ tryResult.error ? '有错误' : '运行成功' }}
+                </div>
+                <template v-if="dq.type==='sql'">
+                  <div v-if="tryResult.tables && tryResult.tables.length" class="auth-try-tables">
+                    <span class="auth-try-label">库里的表</span>
+                    <button v-for="t in tryResult.tables" :key="t.name" class="q-part mono"
+                            @click="trySql = 'SELECT * FROM `' + t.name + '` LIMIT 20'; tryRunAuthor()">
+                      {{ t.name }} · {{ t.rows }} 行
+                    </button>
+                  </div>
+                  <div v-if="tryResult.error" class="auth-try-err">{{ tryResult.error }}</div>
+                  <div v-for="(r,i) in tryResult.results" :key="i" class="auth-try-res">
+                    <template v-if="r.type==='rows'">
+                      <div class="ctbl-wrap"><table class="ctable">
+                        <thead><tr><th v-for="c in r.columns" :key="c">{{ c }}</th></tr></thead>
+                        <tbody><tr v-for="(row,k) in r.rows" :key="k">
+                          <td v-for="(v,j) in row" :key="j" :class="{null: v===null}">{{ v === null ? 'NULL' : v }}</td>
+                        </tr></tbody>
+                      </table></div>
+                      <div class="auth-try-meta">{{ r.rowCount }} 行 · {{ r.ms }}ms</div>
+                    </template>
+                    <div v-else-if="r.type==='ok'" class="auth-try-ok">✔ {{ r.affected ? '影响 ' + r.affected + ' 行' : '执行成功' }}</div>
+                    <div v-else class="auth-try-err">✖ {{ r.msg }}</div>
+                  </div>
+                </template>
+                <template v-else>
+                  <div v-if="tryResult.out" class="auth-try-out"><pre>{{ tryResult.out }}</pre></div>
+                  <div v-if="tryResult.err" class="auth-try-err"><pre>{{ tryResult.err }}</pre></div>
+                </template>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="auth-foot">
+          <span class="muted auth-foot-state">{{ authorDirty ? '有未保存的改动' : (dq.id ? '已保存' : '') }}</span>
+          <span class="spacer"></span>
+          <button class="btn ghost" @click="exitAuthor">退出</button>
+          <button class="btn soft" :disabled="dqBusy" @click="saveDrill(false)">保存草稿</button>
+          <button class="btn primary" :disabled="dqBusy" @click="saveDrill(true)">保存并发布</button>
+        </div>
+      </section>
+
+      <!-- ========== 题库 ========== -->
+      <section v-show="view==='community'" class="community-page">
+        <div class="community-inner">
+          <div class="q-tabs">
+            <button class="q-tab" :class="{on: qTab==='square'}" @click="qTab='square'">题库广场</button>
+            <button v-if="user && user.kind !== 'guest'" class="q-tab" :class="{on: qTab==='drafts'}" @click="openDrafts">
+              我的草稿<span class="q-count" v-if="draftCount">{{ draftCount }}</span>
+            </button>
+            <span class="spacer"></span>
+            <button v-if="qTab==='drafts' && user && user.kind !== 'guest'" class="btn primary" @click="openQuestionEditor()">
+              <e-icon name="plus" :size="14"></e-icon> 新建题目
+            </button>
+          </div>
+
+          <template v-if="qTab==='square'">
           <div class="res-grid">
-            <div v-if="!community.length" class="tbempty box">社区还是空的——上传第一份资源吧！</div>
-            <div v-for="it in community" :key="it.id" class="res-card">
+            <div v-if="!squareList.length" class="tbempty box">{{ user && user.kind !== 'guest' ? '题库还是空的——去「我的草稿」新建第一个素材包吧！' : '题库还是空的。' }}</div>
+            <div v-for="it in squareList" :key="(it.isQuestion ? 'q' : '') + it.id" class="res-card" :class="{qcard: it.isQuestion}">
               <div class="res-head">
-                <span class="res-icon"><e-icon :name="kindIcon(it.kind)" :size="17"></e-icon></span>
+                <span class="res-icon"><e-icon :name="it.isQuestion ? 'list' : kindIcon(it.kind)" :size="17"></e-icon></span>
                 <div class="res-titles">
                   <div class="res-title">{{ it.title }}</div>
                   <div class="res-sub">
-                    <span class="badge" :class="it.builtin ? '' : 'gray'">{{ it.builtin ? '内置' : KIND_LABEL[it.kind] }}</span>
+                    <span class="badge" :class="it.builtin ? '' : 'gray'">
+                      <template v-if="it.isQuestion">{{ it.builtin ? '内置素材' : '素材包' }}</template>
+                      <template v-else>{{ it.builtin ? '内置' : KIND_LABEL[it.kind] }}</template>
+                    </span>
                     {{ it.uploader }} · {{ it.createdAt.slice(5, 16) }}
                   </div>
                 </div>
               </div>
-              <div class="res-meta">
-                <template v-if="it.kind==='db'">{{ it.rows }} 张表 · {{ (it.tables || []).slice(0, 5).map(t => t.name).join(' · ') }}<template v-if="(it.tables || []).length > 5"> …</template></template>
-                <template v-else>{{ fmtSize(it.size) }} · 下载 {{ it.downloads }} 次</template>
-              </div>
-              <div class="res-actions">
-                <button v-if="it.kind==='db'" class="btn mini primary" @click="openDbDetail(it)">查看详情</button>
-                <button v-if="it.kind==='py'" class="btn mini primary" @click="openPyItem(it)">打开到编辑器</button>
-                <button v-if="it.kind==='py' || it.kind==='csv' || it.kind==='xlsx'" class="btn mini primary" @click="importItem(it)">导入</button>
-                <button class="btn mini soft" @click="downloadItem(it)"><e-icon name="download" :size="13"></e-icon> 下载</button>
-                <button v-if="!it.builtin && user && it.uploader===user.name" class="btn mini ghost danger" @click="deleteItem(it)">删除</button>
-              </div>
+
+              <!-- 题目：两部分构成 + 说明 -->
+              <template v-if="it.isQuestion">
+                <div class="res-meta q-parts">
+                  <span class="q-part" :class="{ off: !it.dbTables }">MySQL：{{ it.dbTables ? it.dbTables + ' 张表' : '无' }}</span>
+                  <span class="q-part" :class="{ off: !it.pyCount }">Python：{{ it.pyCount ? it.pyCount + ' 个文件' : '无' }}</span>
+                  <span v-if="it.downloads" class="muted">· 导入 {{ it.downloads }} 次</span>
+                </div>
+                <div v-if="it.note" class="res-meta">{{ it.note }}</div>
+                <div class="res-actions">
+                  <button class="btn mini" @click="openQuestionPreview(it)"><e-icon name="search" :size="13"></e-icon> 预览</button>
+                  <button class="btn mini primary" @click="importQuestion(it)"><e-icon name="download" :size="13"></e-icon> 一键导入整套</button>
+                  <button class="btn mini soft" @click="downloadQuestion(it)">下载 zip</button>
+                  <button v-if="!it.builtin && user && it.uploader===user.name" class="btn mini ghost danger" @click="deleteQuestion(it)">删除</button>
+                </div>
+              </template>
+
+              <!-- 旧资源条目 -->
+              <template v-else>
+                <div class="res-meta">
+                  <template v-if="it.kind==='db'">{{ it.rows }} 张表 · {{ (it.tables || []).slice(0, 5).map(t => t.name).join(' · ') }}<template v-if="(it.tables || []).length > 5"> …</template></template>
+                  <template v-else>{{ fmtSize(it.size) }} · 下载 {{ it.downloads }} 次</template>
+                </div>
+                <div class="res-actions">
+                  <button v-if="it.kind==='db'" class="btn mini primary" @click="openDbDetail(it)">查看详情</button>
+                  <button v-if="it.kind==='py'" class="btn mini primary" @click="openPyItem(it)">打开到编辑器</button>
+                  <button v-if="it.kind==='py' || it.kind==='csv' || it.kind==='xlsx'" class="btn mini primary" @click="importItem(it)">导入</button>
+                  <button class="btn mini soft" @click="downloadItem(it)"><e-icon name="download" :size="13"></e-icon> 下载</button>
+                  <button v-if="!it.builtin && user && it.uploader===user.name" class="btn mini ghost danger" @click="deleteItem(it)">删除</button>
+                </div>
+              </template>
             </div>
           </div>
+          </template>
+
+          <!-- ========== 我的草稿 ========== -->
+          <template v-else>
+            <div class="upload-bar">
+              <div class="upload-left">
+                <h2>我的草稿</h2>
+                <p class="tip"><b>素材包</b> = MySQL 部分（选一个自己的数据库）+ Python 部分（选若干自己的 .py 文件）。学生导入后自己动手做，<b>不判分</b>。要自动判分的题请到「练习」页出。先存草稿，改好再发布给全班用。
+                  <template v-if="user && !user.canPublish">发布到题库需要老师开通权限，没有权限也可以先建草稿。</template></p>
+              </div>
+              <div class="upload-right" style="justify-content:flex-end">
+                <button class="btn primary" @click="openAuthorHub()"><e-icon name="plus" :size="14"></e-icon> 出题</button>
+              </div>
+            </div>
+            <div class="draft-list">
+              <div v-for="q in myQuestions" :key="q.id" class="draft-row">
+                <span class="res-icon"><e-icon name="list" :size="16"></e-icon></span>
+                <div class="draft-main">
+                  <div class="draft-title">
+                    {{ q.title }}
+                    <span class="badge" :class="q.status ? '' : 'gray'">{{ q.status ? '已发布' : '草稿' }}</span>
+                  </div>
+                  <div class="draft-sub">
+                    MySQL：{{ q.dbTables ? q.dbTables + ' 张表' : '无' }} ·
+                    Python：{{ q.pyCount ? q.pyCount + ' 个文件' : '无' }} ·
+                    更新于 {{ q.updatedAt.slice(5, 16) }}
+                  </div>
+                </div>
+                <div class="draft-actions">
+                  <button class="btn mini" @click="openQuestionPreview(q)">预览</button>
+                  <button class="btn mini" @click="openQuestionEditor(q)">编辑</button>
+                  <button v-if="!q.status && user && user.canPublish" class="btn mini primary" @click="publishQuestion(q, true)">发布</button>
+                  <span v-else-if="!q.status" class="tip q-perm-tip">发布需老师开通权限</span>
+                  <button v-if="q.status" class="btn mini soft" @click="publishQuestion(q, false)">撤回</button>
+                  <button class="btn mini ghost danger" @click="deleteQuestion(q)">删除</button>
+                </div>
+              </div>
+              <div v-if="!myQuestions.length" class="tbempty box">还没有草稿——点右上「出题」开始，或在工作台侧栏对某个库点「存为草稿」。</div>
+            </div>
+          </template>
         </div>
       </section>
     </main>
@@ -346,8 +821,11 @@ INSERT INTO course VALUES (1,'数学');</pre>
       <button :class="{active: view==='py'}" @click="switchView('py')">
         <e-icon name="code" :size="19"></e-icon><span>Python</span>
       </button>
+      <button :class="{active: view==='drills'}" @click="switchView('drills')">
+        <e-icon name="target" :size="19"></e-icon><span>练习</span>
+      </button>
       <button :class="{active: view==='community'}" @click="switchView('community')">
-        <e-icon name="globe" :size="19"></e-icon><span>社区</span>
+        <e-icon name="globe" :size="19"></e-icon><span>题库</span>
       </button>
     </nav>
   </template>
@@ -380,7 +858,7 @@ INSERT INTO course VALUES (1,'数学');</pre>
       <template v-if="importForm.file && !isSqlFile">
         <label class="f">表名</label>
         <input type="text" v-model.trim="importForm.table" placeholder="留空则使用文件名">
-        <label class="chk"><input type="checkbox" v-model="importForm.header"> 首行是表头</label>
+        <x-check v-model="importForm.header" label="首行是表头"></x-check>
       </template>
       <p v-else-if="importForm.file" class="tip" style="margin-top:10px">SQL 脚本会逐条执行，导入到当前数据库。</p>
       <details class="cheat" style="margin-top:12px">
@@ -399,7 +877,7 @@ CREATE TABLE course (
 );
 INSERT INTO course VALUES (1,'数学');</pre>
       </details>
-      <label class="chk" v-if="importForm.file"><input type="checkbox" v-model="importForm.overwrite"> 覆盖同名表</label>
+      <x-check v-if="importForm.file" v-model="importForm.overwrite" label="覆盖同名表"></x-check>
     </div>
     <div class="dlg-foot">
       <span class="tip">导入即写入你自己的数据库，不影响他人</span>
@@ -409,7 +887,175 @@ INSERT INTO course VALUES (1,'数学');</pre>
     </div>
   </dialog>
 
-  <!-- ================= 社区数据库详情弹窗 ================= -->
+  <!-- ================= 新建数据表弹窗 ================= -->
+  <dialog ref="ctDlg">
+    <div class="dlg-head">
+      <span class="dlg-ico"><e-icon name="table" :size="19"></e-icon></span>
+      <div class="dlg-head-t">
+        <div class="dlg-name">新建数据表</div>
+        <div class="dlg-sub">建到当前数据库 <b class="mono">{{ ctForm.db || '（未选择）' }}</b> · 不用写 SQL</div>
+      </div>
+      <span class="spacer"></span>
+      <button class="icon-btn big" @click="closeCreateTable"><e-icon name="x" :size="15"></e-icon></button>
+    </div>
+    <div class="pbody">
+      <label class="f" style="margin-top:0">表名</label>
+      <input type="text" v-model.trim="ctForm.name" placeholder="例如 student" spellcheck="false" autocapitalize="off">
+      <label class="f">字段（每行一个：字段名 类型 说明可省）</label>
+      <div class="ct-cols">
+        <div v-for="(c, i) in ctForm.cols" :key="i" class="ct-col">
+          <input type="text" v-model.trim="c.name" placeholder="字段名" spellcheck="false" autocapitalize="off">
+          <x-select v-model="c.type" :options="colTypes"></x-select>
+          <x-check v-model="c.pk" label="主键" slim></x-check>
+          <button class="icon-btn" title="删除此字段" :disabled="ctForm.cols.length <= 1" @click="ctForm.cols.splice(i, 1)"><e-icon name="x" :size="12"></e-icon></button>
+        </div>
+      </div>
+      <button class="btn mini soft" style="margin-top:8px" @click="ctForm.cols.push({ name: '', type: 'VARCHAR(50)', pk: false })"><e-icon name="plus" :size="13"></e-icon> 加一个字段</button>
+      <x-check v-model="ctForm.overwrite" label="覆盖同名表" style="margin-top:10px"></x-check>
+      <p class="tip" style="margin-top:10px">建好后自动填一条 SELECT 语句到编辑器，点运行就能看到表。</p>
+    </div>
+    <div class="dlg-foot">
+      <span class="spacer"></span>
+      <button class="btn ghost" @click="closeCreateTable">取消</button>
+      <button class="btn primary" :disabled="busy || !ctForm.name" @click="submitCreateTable"><e-icon name="table" :size="13"></e-icon> 建表</button>
+    </div>
+  </dialog>
+
+  <!-- ================= 出题中心（选类型） ================= -->
+  <dialog ref="hubDlg" class="mini-dlg-box">
+    <div class="mini-title" style="margin-bottom:14px">出题：先选要做什么</div>
+    <button class="hub-card" @click="pickAuthor('drill')">
+      <span class="hub-ico"><e-icon name="target" :size="18"></e-icon></span>
+      <span class="hub-main">
+        <span class="hub-t">练习题（自动判分）</span>
+        <span class="hub-d">进「练习」页，学生做完自动判对错、记进度和错题本。
+          SQL 题填「初始化 SQL + 标准答案 SQL」，Python 题填「代码 + 期望输出」，也有单选/判断/填空。</span>
+      </span>
+    </button>
+    <button class="hub-card" @click="pickAuthor('material')">
+      <span class="hub-ico"><e-icon name="database" :size="18"></e-icon></span>
+      <span class="hub-main">
+        <span class="hub-t">素材包（给学生导入自己练）</span>
+        <span class="hub-d">进「题库」页，一个 MySQL 库 + 若干 Python 代码文件。
+          学生一键导入到自己名下，随便改随便跑，<b>不判分</b>。</span>
+      </span>
+    </button>
+    <div class="mini-foot"><span class="spacer"></span><button class="btn soft" @click="closeAuthorHub">取消</button></div>
+  </dialog>
+
+  <!-- ================= 题目编辑器（草稿） ================= -->
+  <dialog ref="qDlg">
+    <div class="dlg-head">
+      <span class="dlg-ico"><e-icon name="list" :size="19"></e-icon></span>
+      <div class="dlg-head-t">
+        <div class="dlg-name">{{ qForm.id ? '编辑素材包' : '新建素材包' }}</div>
+        <div class="dlg-sub">一句题 = MySQL 部分 + Python 部分，先存草稿，编辑好再发布</div>
+      </div>
+      <span class="spacer"></span>
+      <button class="icon-btn big" @click="closeQuestionEditor"><e-icon name="x" :size="15"></e-icon></button>
+    </div>
+    <div class="pbody">
+      <label class="f" style="margin-top:0">素材包名称</label>
+      <input type="text" v-model.trim="qForm.title" maxlength="60" placeholder="例如：查询工资前 5 名" spellcheck="false">
+      <label class="f">素材说明（可选）</label>
+      <input type="text" v-model.trim="qForm.note" maxlength="200" placeholder="给学生的提示、要求或做完要检查什么" spellcheck="false">
+      <label class="f">MySQL 部分（选一个自己的数据库，整库带过去）</label>
+      <x-select v-model="qForm.db" :options="dbOptions"></x-select>
+      <label class="f">Python 部分（可多选，来自「我的 Python 文件」）</label>
+      <div class="q-py-list">
+        <div v-if="!pyFiles.length" class="tip">还没有 Python 文件——先去 Python 页新建或上传。</div>
+        <x-check v-for="f in pyFiles" :key="f.name" :model-value="!!qForm.pyMap[f.name]"
+                 @update:model-value="v => qForm.pyMap[f.name] = v" :label="f.name"></x-check>
+      </div>
+      <p class="tip" style="margin-top:10px">保存后可以在题库页「我的草稿」里随时修改再发布；发布后学生可一键导入整套。</p>
+    </div>
+    <div class="dlg-foot">
+      <span class="spacer"></span>
+      <button class="btn ghost" @click="closeQuestionEditor">取消</button>
+      <button class="btn soft" :disabled="qBusy || !qForm.title" @click="saveQuestion(false)">保存草稿</button>
+      <button v-if="user && user.canPublish" class="btn primary" :disabled="qBusy || !qForm.title" @click="saveQuestion(true)">保存并发布</button>
+      <span v-else class="tip">发布需管理员开通权限，可先保存草稿</span>
+    </div>
+  </dialog>
+
+  <!-- ================= 题目预览弹窗 ================= -->
+  <dialog ref="qPreviewDlg" class="wide-dlg">
+    <div class="dlg-head">
+      <span class="dlg-ico"><e-icon name="list" :size="19"></e-icon></span>
+      <div class="dlg-head-t">
+        <div class="dlg-name">{{ qpv.title || '素材包预览' }}</div>
+        <div class="dlg-sub">
+          <template v-if="qpv.uploader">{{ qpv.uploader }} · </template>{{ (qpv.createdAt || '').slice(5, 16) }}
+          · 导入 {{ qpv.downloads || 0 }} 次
+        </div>
+      </div>
+      <span class="spacer"></span>
+      <button class="icon-btn big" @click="closeQuestionPreview"><e-icon name="x" :size="15"></e-icon></button>
+    </div>
+    <div class="pbody">
+      <div v-if="qpv.loading" class="muted pad">加载中…</div>
+      <template v-else>
+        <p v-if="qpv.note" class="q-pv-note">{{ qpv.note }}</p>
+
+        <div class="q-pv-sec">
+          <div class="q-pv-h">
+            <e-icon name="database" :size="14"></e-icon> MySQL 部分
+            <span class="muted">{{ (qpv.tables || []).length ? qpv.tables.length + ' 张表（点表名看数据）' : '无' }}</span>
+          </div>
+          <template v-if="(qpv.tables || []).length">
+            <div class="q-pv-chips">
+              <button v-for="t in qpv.tables" :key="t" class="q-part mono q-pv-chip"
+                      :class="{ on: qpvTable && qpvTable.name === t }"
+                      @click="toggleQpvTable(t)">{{ t }}</button>
+            </div>
+            <div v-if="qpvTable" class="q-pv-tbl">
+              <div class="ptabs2">
+                <button :class="{active: qpvTab==='data'}" @click="qpvTab='data'"><e-icon name="table" :size="12"></e-icon> 数据（前 200 行）</button>
+                <button :class="{active: qpvTab==='struct'}" @click="qpvTab='struct'"><e-icon name="list" :size="12"></e-icon> 结构</button>
+              </div>
+              <template v-if="qpvTab==='data'">
+                <div v-if="!(qpvTable.rows || []).length" class="muted pad">这张表是空的。</div>
+                <div v-else class="grid-wrap"><table class="dtable">
+                  <thead><tr><th class="rowid">#</th><th v-for="c in qpvTable.cols" :key="c">{{ c }}</th></tr></thead>
+                  <tbody><tr v-for="(r, i) in qpvTable.rows" :key="i">
+                    <td class="rowid">{{ i + 1 }}</td>
+                    <td v-for="(v, j) in r" :key="j" :class="{ 'cell-null': v === null }">{{ v === null ? 'NULL' : v }}</td>
+                  </tr></tbody>
+                </table></div>
+              </template>
+              <pre v-else class="q-pv-code">{{ qpvTable.ddl }}</pre>
+            </div>
+          </template>
+          <p v-else class="tip">这道题没有 MySQL 部分。</p>
+        </div>
+
+        <div class="q-pv-sec">
+          <div class="q-pv-h">
+            <e-icon name="code" :size="14"></e-icon> Python 部分
+            <span class="muted">{{ (qpv.pyPreview || []).length ? qpv.pyPreview.length + ' 个文件' : '无' }}</span>
+          </div>
+          <template v-if="(qpv.pyPreview || []).length">
+            <button v-for="f in qpv.pyPreview" :key="f.name" class="q-pv-file"
+                    :class="{ on: qpvFile && qpvFile.name === f.name }" @click="qpvFile = (qpvFile && qpvFile.name === f.name) ? null : f">
+              <span class="mono">{{ f.name }}</span>
+              <span class="muted">{{ fmtSize(f.size) }}</span>
+              <e-icon :name="qpvFile && qpvFile.name === f.name ? 'chevron-down' : 'chevron-right'" :size="13"></e-icon>
+            </button>
+            <pre v-if="qpvFile" class="q-pv-code">{{ qpvFile.head }}{{ qpvFile.size > qpvFile.head.length ? '\n…（导入或下载后可看完整文件）' : '' }}</pre>
+          </template>
+          <p v-else class="tip">这道题没有 Python 部分。</p>
+        </div>
+      </template>
+    </div>
+    <div class="dlg-foot">
+      <button class="btn primary" :disabled="busy" @click="importQuestion(qpv)"><e-icon name="download" :size="13"></e-icon> 一键导入整套</button>
+      <button class="btn" @click="downloadQuestion(qpv)">下载 zip</button>
+      <span class="spacer"></span>
+      <button class="btn soft" @click="closeQuestionPreview">关闭</button>
+    </div>
+  </dialog>
+
+  <!-- ================= 题库数据库详情弹窗 ================= -->
   <dialog ref="dbDlg" class="wide-dlg">
     <div class="dlg-head">
       <span class="dlg-ico"><e-icon name="database" :size="19"></e-icon></span>
@@ -427,9 +1073,13 @@ INSERT INTO course VALUES (1,'数学');</pre>
     <div class="pbody">
       <div v-if="detail.loading" class="muted pad">加载中…</div>
       <template v-else-if="detail.isScript">
-        <div class="empty-box">这是一个整库 SQL 脚本，包含 {{ (detail.tables || []).length }} 张表：<br>
-          <span class="mono">{{ (detail.tables || []).map(t => t.name).join(' · ') || '（未解析到建表语句）' }}</span><br><br>
+        <div class="empty-box">这是一个整库 SQL 脚本，包含 {{ (detail.tables || []).length }} 张表。<br>
+          点表名可以先看它的建表语句；<br><br>
           导入将执行脚本内全部语句。</div>
+        <div class="q-pv-chips" style="margin-top:12px">
+          <button v-for="t in detail.tables" :key="t.name" class="q-part mono q-pv-chip"
+                  @click="previewDbTable(t.name)">{{ t.name }} · 看结构</button>
+        </div>
       </template>
       <template v-else>
         <div class="grid-wrap"><table class="dtable">
@@ -437,10 +1087,40 @@ INSERT INTO course VALUES (1,'数学');</pre>
           <tbody><tr v-for="t in detail.tables" :key="t.name">
             <td class="mono">{{ t.name }}</td>
             <td style="text-align:right">{{ t.rows === null ? '—' : t.rows }}</td>
-            <td style="text-align:right"><button class="btn mini" @click="importDbTable(t.name)">导入此表</button></td>
+            <td style="text-align:right">
+              <button class="btn mini" @click="previewDbTable(t.name)"><e-icon name="search" :size="12"></e-icon> 预览</button>
+              <button class="btn mini" @click="importDbTable(t.name)">导入此表</button>
+            </td>
           </tr></tbody>
         </table></div>
       </template>
+
+      <!-- 表预览面板（不用导入就能看数据/结构） -->
+      <div v-if="dbPv.loading" class="muted pad">加载中…</div>
+      <div v-else-if="dbPv.name" class="dbpv">
+        <div class="dbpv-h">
+          <span class="mono">{{ dbPv.name }}</span>
+          <span v-if="!dbPv.script" class="muted">{{ dbPv.rowCount }} 行{{ dbPv.truncated ? '（只预览前 200 行）' : '' }}</span>
+          <span v-else class="muted">脚本型资源：只能看结构</span>
+          <span class="spacer"></span>
+          <button class="icon-btn" title="收起" @click="closeDbPv"><e-icon name="x" :size="13"></e-icon></button>
+        </div>
+        <div class="ptabs2">
+          <button v-if="!dbPv.script" :class="{active: dbPvTab==='data'}" @click="dbPvTab='data'"><e-icon name="table" :size="12"></e-icon> 数据</button>
+          <button :class="{active: dbPvTab==='struct'}" @click="dbPvTab='struct'"><e-icon name="list" :size="12"></e-icon> 结构</button>
+        </div>
+        <template v-if="dbPvTab==='data'">
+          <div v-if="!dbPv.rows.length" class="muted pad">这张表没有数据。</div>
+          <div v-else class="grid-wrap"><table class="dtable">
+            <thead><tr><th class="rowid">#</th><th v-for="c in dbPv.cols" :key="c">{{ c }}</th></tr></thead>
+            <tbody><tr v-for="(r, i) in dbPv.rows" :key="i">
+              <td class="rowid">{{ i + 1 }}</td>
+              <td v-for="(v, j) in r" :key="j" :class="{ 'cell-null': v === null }">{{ v === null ? 'NULL' : v }}</td>
+            </tr></tbody>
+          </table></div>
+        </template>
+        <pre v-else class="q-pv-code">{{ dbPv.ddl || '（没有找到建表语句）' }}</pre>
+      </div>
     </div>
     <div class="dlg-foot">
       <button class="btn primary" @click="importWholeDb"><e-icon name="download" :size="13"></e-icon> 导入整个数据库</button>
@@ -463,8 +1143,8 @@ INSERT INTO course VALUES (1,'数学');</pre>
       <label class="f" style="margin-top:0">对方导入后的库名</label>
       <input type="text" v-model.trim="shareForm.shareName" placeholder="默认使用当前库名">
       <div class="tip">
-        这是一条<strong>私有链接</strong>：只有拿到链接的人才能导入，不会出现在社区广场。
-        如果想让所有人浏览，请到「社区」页用「发布到社区」。
+        这是一条<strong>私有链接</strong>：只有拿到链接的人才能导入，不会出现在题库广场。
+        如果想让所有人浏览，请到「题库」页用「发布到题库」。
       </div>
       <template v-if="shareForm.link">
         <label class="f">分享链接（复制发给同学）</label>
@@ -474,7 +1154,7 @@ INSERT INTO course VALUES (1,'数学');</pre>
       </template>
     </div>
     <div class="dlg-actions">
-      <span class="tip">也可以在社区页上传 .sql 文件分享</span>
+      <span class="tip">也可以在题库页上传 .sql 文件分享</span>
       <span class="spacer"></span>
       <button class="btn ghost" @click="closeShareDlg">取消</button>
       <button class="btn primary" :disabled="busy || shareForm.done" @click="generateShareLink">生成分享链接</button>
@@ -530,12 +1210,12 @@ INSERT INTO course VALUES (1,'数学');</pre>
           <pre v-if="preview.source.text !== null && preview.source.text !== undefined" class="src-pre">{{ preview.source.text }}</pre>
           <div v-else class="muted pad">二进制文件（Excel），请下载后查看。</div>
         </div>
-        <div v-else class="empty-box">这张表没有存档的源文件（可能是手写建表或社区导入的）。<br>「结构」页里有它的建表语句。</div>
+        <div v-else class="empty-box">这张表没有存档的源文件（可能是手写建表或题库导入的）。<br>「结构」页里有它的建表语句。</div>
       </template>
     </div>
     <div class="dlg-foot">
       <button class="btn" @click="queryFromPreview"><e-icon name="search" :size="13"></e-icon> 查询前20条 → 编辑器</button>
-      <button class="btn" @click="publishFromPreview"><e-icon name="share" :size="13"></e-icon> 发布到社区</button>
+      <button v-if="user && user.kind !== 'guest'" class="btn" @click="openQuestionEditor(null, preview.db)"><e-icon name="list" :size="13"></e-icon> 存为草稿</button>
       <button class="btn danger-soft" @click="dropFromPreview"><e-icon name="trash" :size="13"></e-icon> 删除表</button>
       <span class="spacer"></span>
       <button class="btn soft" @click="closePreview">关闭</button>
@@ -543,60 +1223,367 @@ INSERT INTO course VALUES (1,'数学');</pre>
   </dialog>
 
   <!-- ================= 管理弹窗 ================= -->
+  <!-- ================= 管理后台（独立菜单） ================= -->
   <dialog ref="adminDlg" class="admin-dlg">
     <div class="dlg-head">
       <span class="dlg-ico"><e-icon name="shield" :size="19"></e-icon></span>
       <div class="dlg-head-t">
-        <div class="dlg-name">管理后台</div>
-        <div class="dlg-sub">共 {{ (adminKind==='guest'?adminGuests:adminUsers).length }} 个{{ adminKind==='guest' ? '游客' : '注册用户' }}</div>
+        <div class="dlg-name">用户管理</div>
+        <div class="dlg-sub">{{ adminOverview ? (adminOverview.users + ' 位注册用户 · ' + adminOverview.guests + ' 位游客 · 今日活跃 ' + adminOverview.activeToday) : '加载中…' }}</div>
       </div>
       <span class="spacer"></span>
       <button class="icon-btn big" @click="closeAdmin"><e-icon name="x" :size="15"></e-icon></button>
     </div>
-    <div class="ptabs2 admin-tabs">
-      <button :class="{active: adminKind==='user'}" @click="switchAdminKind('user')">
-        <e-icon name="user" :size="13"></e-icon> 注册用户 <span class="cnt">{{ adminUsers.length }}</span>
-      </button>
-      <button :class="{active: adminKind==='guest'}" @click="switchAdminKind('guest')">
-        <e-icon name="user-x" :size="13"></e-icon> 游客 <span class="cnt">{{ adminGuests.length }}</span>
-      </button>
+
+    <div class="adm-nav">
+      <button class="adm-tab" :class="{on: adminTab==='overview'}" @click="switchAdminTab('overview')"><e-icon name="list" :size="13"></e-icon> 总览</button>
+      <button class="adm-tab" :class="{on: adminTab==='user'}" @click="switchAdminTab('user')"><e-icon name="user" :size="13"></e-icon> 注册用户</button>
+      <button class="adm-tab" :class="{on: adminTab==='guest'}" @click="switchAdminTab('guest')"><e-icon name="user-x" :size="13"></e-icon> 游客</button>
+      <button class="adm-tab" :class="{on: adminTab==='log'}" @click="switchAdminTab('log')"><e-icon name="clock" :size="13"></e-icon> 操作日志</button>
     </div>
+
     <div class="pbody admin-body">
-      <div v-if="!(adminKind==='guest'?adminGuests:adminUsers).length" class="muted pad">暂无记录</div>
-      <div class="u-list">
-        <div v-for="u in (adminKind==='guest'?adminGuests:adminUsers)" :key="u.id" class="u-card">
-          <div class="u-card-main">
-            <div class="u-name">{{ u.username }}
-              <span v-if="u.role==='admin'" class="badge tiny">管理员</span>
+      <template v-if="adminTab==='overview'">
+        <div class="adm-stats" v-if="adminOverview">
+          <div class="adm-stat"><b>{{ adminOverview.users }}</b><span>注册用户</span></div>
+          <div class="adm-stat"><b>{{ adminOverview.guests }}</b><span>游客</span></div>
+          <div class="adm-stat"><b>{{ adminOverview.activeToday }}</b><span>今日活跃</span></div>
+          <div class="adm-stat"><b>{{ adminOverview.publishers }}</b><span>有出题权限</span></div>
+          <div class="adm-stat"><b>{{ adminOverview.disabled }}</b><span>已禁用</span></div>
+          <div class="adm-stat"><b>{{ adminOverview.databases }}</b><span>数据库</span></div>
+          <div class="adm-stat"><b>{{ adminOverview.drills }}</b><span>练习题</span></div>
+          <div class="adm-stat"><b>{{ adminOverview.submissions }}</b><span>判分提交</span></div>
+        </div>
+        <div class="adm-trend" v-if="adminOverview">
+          <div class="adm-trend-t">近 7 天注册</div>
+          <div class="adm-bars">
+            <div v-for="d in adminOverview.regTrend" :key="d.date" class="adm-bar">
+              <i :style="{height: Math.max(3, d.count * 14) + 'px'}"></i>
+              <span>{{ d.count }}</span>
+              <em>{{ d.date }}</em>
             </div>
-            <div class="u-meta">
-              <span class="u-chip"><e-icon name="database" :size="11"></e-icon>{{ u.db }}</span>
-              <span v-if="u.dbCount>1" class="u-chip">{{ u.dbCount }} 个库</span>
-              <span class="u-chip"><e-icon name="globe" :size="11"></e-icon>{{ u.lastIp }}</span>
-              <span class="u-chip"><e-icon name="clock" :size="11"></e-icon>{{ u.lastSeen }}</span>
-            </div>
-          </div>
-          <div class="u-card-act">
-            <template v-if="u.kind==='user' && u.role!=='admin'">
-              <button class="btn mini" @click="resetPw(u)">重置密码</button>
-              <button class="btn mini danger" @click="deleteUser(u)">删除</button>
-            </template>
-            <button v-else-if="u.kind==='guest'" class="btn mini danger" @click="deleteUser(u)">删除</button>
-            <span v-else class="muted">—</span>
           </div>
         </div>
-      </div>
+      </template>
+
+      <template v-else-if="adminTab==='user' || adminTab==='guest'">
+        <div class="adm-toolbar">
+          <input type="text" class="adm-search" v-model.trim="adminQuery" placeholder="搜索账号 / 库名 / IP"
+                 @keyup.enter="loadAdminList(1)">
+          <x-select v-model="adminOnly" :options="adminOnlyOptions"></x-select>
+          <button class="btn mini" @click="loadAdminList(1)"><e-icon name="search" :size="12"></e-icon> 搜索</button>
+          <span class="spacer"></span>
+          <button v-if="adminTab==='user'" class="btn mini primary" @click="openCreateUser"><e-icon name="plus" :size="12"></e-icon> 新建账号</button>
+        </div>
+
+        <div v-if="adminTab==='user'" class="adm-batch">
+          <x-check :model-value="adminAllChecked" @update:model-value="toggleAllUsers" label="全选本页"></x-check>
+          <span class="muted" v-if="adminChecked.length">已选 {{ adminChecked.length }} 人</span>
+          <span class="spacer"></span>
+          <button class="btn mini" :disabled="!adminChecked.length" @click="batchAction('grant')">开通出题</button>
+          <button class="btn mini" :disabled="!adminChecked.length" @click="batchAction('revoke')">收回权限</button>
+          <button class="btn mini" :disabled="!adminChecked.length" @click="batchAction('disable')">禁用</button>
+          <button class="btn mini" :disabled="!adminChecked.length" @click="batchAction('enable')">解禁</button>
+          <button class="btn mini danger" :disabled="!adminChecked.length" @click="batchAction('delete')">删除</button>
+        </div>
+
+        <div v-if="!adminList.length" class="muted pad">没有符合条件的记录</div>
+        <div class="u-list">
+          <div v-for="u in adminList" :key="u.id" class="u-card" :class="{dim: u.disabled}">
+            <x-check v-if="adminTab==='user' && u.role!=='admin'" class="u-check"
+                     :model-value="adminChecked.includes(u.id)"
+                     @update:model-value="v => toggleUser(u.id, v)"></x-check>
+            <div class="u-card-main">
+              <div class="u-name">
+                {{ u.username }}
+                <span v-if="u.role==='admin'" class="badge tiny">管理员</span>
+                <span v-else-if="u.canPublish" class="badge tiny">可出题</span>
+                <span v-if="u.disabled" class="badge tiny danger">已禁用</span>
+              </div>
+              <div class="u-meta">
+                <span class="u-chip"><e-icon name="database" :size="11"></e-icon>{{ u.db }}</span>
+                <span v-if="u.dbCount>1" class="u-chip">{{ u.dbCount }} 个库</span>
+                <span class="u-chip"><e-icon name="globe" :size="11"></e-icon>{{ u.lastIp }}</span>
+                <span class="u-chip"><e-icon name="clock" :size="11"></e-icon>{{ u.lastSeen }}</span>
+                <span class="u-chip">登录 {{ u.lastLogin }}</span>
+              </div>
+            </div>
+            <div class="u-card-act">
+              <button class="btn mini" @click="openUserDetail(u)">详情</button>
+              <template v-if="u.kind==='user' && u.role!=='admin'">
+                <button class="btn mini" :class="{primary: !u.canPublish}" @click="togglePublishPerm(u)">
+                  {{ u.canPublish ? '收回出题' : '开通出题' }}
+                </button>
+                <button class="btn mini" @click="resetPw(u)">重置密码</button>
+                <button class="btn mini" @click="toggleDisabled(u)">{{ u.disabled ? '解禁' : '禁用' }}</button>
+                <button class="btn mini danger" @click="deleteUser(u)">删除</button>
+              </template>
+              <button v-else-if="u.kind==='guest'" class="btn mini danger" @click="deleteUser(u)">删除</button>
+              <span v-else class="muted">—</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="adm-pager" v-if="adminPages > 1">
+          <button class="btn mini" :disabled="adminPage<=1" @click="loadAdminList(adminPage-1)">上一页</button>
+          <span class="muted">{{ adminPage }} / {{ adminPages }}（共 {{ adminTotal }} 人）</span>
+          <button class="btn mini" :disabled="adminPage>=adminPages" @click="loadAdminList(adminPage+1)">下一页</button>
+        </div>
+      </template>
+
+      <template v-else>
+        <div class="adm-toolbar">
+          <x-check v-model="adminLogOnlyFail" label="只看失败" @update:model-value="loadAuthLog"></x-check>
+          <span class="spacer"></span>
+          <button class="btn mini" @click="loadAuthLog"><e-icon name="refresh" :size="12"></e-icon> 刷新</button>
+        </div>
+        <div class="adm-log">
+          <div v-for="(g, i) in adminLogs" :key="i" class="adm-log-row" :class="{fail: !g.ok}">
+            <span class="adm-log-at">{{ g.at.slice(5, 16) }}</span>
+            <span class="adm-log-act">{{ g.actionLabel }}</span>
+            <span class="adm-log-user">{{ g.username || '—' }}</span>
+            <span class="adm-log-ip">{{ g.ip || '—' }}</span>
+            <span class="adm-log-note">{{ g.note }}</span>
+          </div>
+          <div v-if="!adminLogs.length" class="muted pad">暂无日志</div>
+        </div>
+      </template>
     </div>
+
     <div class="dlg-foot">
-      <button class="btn soft" @click="loadAdmin(adminKind)"><e-icon name="refresh" :size="13"></e-icon> 刷新</button>
+      <button class="btn soft" @click="refreshAdmin"><e-icon name="refresh" :size="13"></e-icon> 刷新</button>
       <span class="spacer"></span>
       <button class="btn ghost" @click="closeAdmin">关闭</button>
     </div>
   </dialog>
 
-  <div id="toast" :class="{show: toastMsg}">{{ toastMsg }}</div>
-  <div id="busy" v-show="busy"><div class="spin"></div></div>
+  <!-- ================= 用户详情 ================= -->
+  <dialog ref="userDlg">
+    <div class="dlg-head">
+      <span class="dlg-ico"><e-icon name="user" :size="19"></e-icon></span>
+      <div class="dlg-head-t">
+        <div class="dlg-name">{{ userDetail ? userDetail.user.username : '用户详情' }}</div>
+        <div class="dlg-sub" v-if="userDetail">{{ userDetail.user.kind==='guest' ? '游客' : '注册用户' }} · {{ userDetail.user.db }}</div>
+      </div>
+      <span class="spacer"></span>
+      <button class="icon-btn big" @click="closeUserDetail"><e-icon name="x" :size="15"></e-icon></button>
+    </div>
+    <div class="pbody">
+      <div v-if="userDetail">
+        <div class="ud-stats">
+          <div class="ud-stat"><b>{{ userDetail.databases.length }}</b><span>数据库</span></div>
+          <div class="ud-stat"><b>{{ userDetail.pyFiles.length }}</b><span>Python 文件</span></div>
+          <div class="ud-stat"><b>{{ userDetail.drills.passed }}</b><span>练习题通过</span></div>
+          <div class="ud-stat"><b>{{ userDetail.drills.submissions }}</b><span>判分次数</span></div>
+          <div class="ud-stat"><b>{{ userDetail.sessions.length }}</b><span>在线会话</span></div>
+        </div>
+        <label class="f">最近登录</label>
+        <p class="ud-line">{{ userDetail.user.lastLogin }} · 注册 {{ userDetail.user.createdAt }}</p>
+        <label class="f">IP</label>
+        <p class="ud-line">注册 {{ userDetail.user.regIp }} · 最近 {{ userDetail.user.lastIp }}</p>
+        <label class="f">数据库（{{ userDetail.databases.length }}）</label>
+        <div class="q-pv-chips">
+          <span v-for="d in userDetail.databases" :key="d.name" class="q-part mono">
+            {{ d.name }}<template v-if="d.primary"> · 默认</template>
+          </span>
+        </div>
+        <label class="f">Python 文件（{{ userDetail.pyFiles.length }}）</label>
+        <div class="q-pv-chips">
+          <span v-for="f in userDetail.pyFiles" :key="f.name" class="q-part mono">{{ f.name }} · {{ fmtSize(f.size) }}</span>
+          <span v-if="!userDetail.pyFiles.length" class="muted">无</span>
+        </div>
+        <label class="f">练习情况</label>
+        <div class="q-pv-chips">
+          <span class="q-part">SQL：{{ (userDetail.drills.byCourse.sql || {}).passed || 0 }} 通过</span>
+          <span class="q-part">Python：{{ (userDetail.drills.byCourse.python || {}).passed || 0 }} 通过</span>
+          <span class="q-part">客观题：{{ (userDetail.drills.byCourse.basic || {}).passed || 0 }} 通过</span>
+        </div>
+        <label class="f">最近操作</label>
+        <div class="adm-log">
+          <div v-for="(g, i) in userDetail.logs" :key="i" class="adm-log-row" :class="{fail: !g.ok}">
+            <span class="adm-log-at">{{ g.at.slice(5, 16) }}</span>
+            <span class="adm-log-act">{{ g.actionLabel }}</span>
+            <span class="adm-log-ip">{{ g.ip || '—' }}</span>
+            <span class="adm-log-note">{{ g.note }}</span>
+          </div>
+        </div>
+      </div>
+      <div v-else class="muted pad">加载中…</div>
+    </div>
+    <div class="dlg-foot">
+      <button class="btn danger-soft" @click="kickUser">强制下线（{{ userDetail ? userDetail.sessions.length : 0 }} 个会话）</button>
+      <span class="spacer"></span>
+      <button class="btn soft" @click="closeUserDetail">关闭</button>
+    </div>
+  </dialog>
+
+  <!-- ================= 个人中心 ================= -->
+  <dialog ref="profileDlg">
+    <div class="dlg-head">
+      <span class="dlg-ico"><e-icon name="user" :size="19"></e-icon></span>
+      <div class="dlg-head-t">
+        <div class="dlg-name">个人中心</div>
+        <div class="dlg-sub">{{ profile ? profile.username : '' }}<template v-if="profile"> · {{ profile.role==='admin' ? '管理员' : (profile.canPublish ? '可以出题' : '学生') }}</template></div>
+      </div>
+      <span class="spacer"></span>
+      <button class="icon-btn big" @click="closeProfile"><e-icon name="x" :size="15"></e-icon></button>
+    </div>
+    <div class="pbody">
+      <template v-if="profile">
+        <div class="ud-stats">
+          <div class="ud-stat"><b>{{ profile.stats.databases }}</b><span>数据库</span></div>
+          <div class="ud-stat"><b>{{ profile.stats.pyFiles }}</b><span>Python 文件</span></div>
+          <div class="ud-stat"><b>{{ profile.stats.drillsPassed }}</b><span>练习题通过</span></div>
+          <div class="ud-stat"><b>{{ profile.stats.submissions }}</b><span>判分次数</span></div>
+        </div>
+        <label class="f">账号信息</label>
+        <p class="ud-line">注册于 {{ profile.createdAt }} · 最近登录 {{ profile.lastLogin }}</p>
+        <p class="ud-line">注册 IP {{ profile.regIp }} · 最近 IP {{ profile.lastIp }}</p>
+        <p class="ud-line" v-if="profile.kind==='guest'"><b>你现在是游客</b>：数据保留 7 天，注册账号后换设备也能继续用。</p>
+
+        <template v-if="profile.kind==='user'">
+          <label class="f">修改密码</label>
+          <input type="password" v-model="pwForm.old" placeholder="原密码" maxlength="32">
+          <input type="password" v-model="pwForm.new" placeholder="新密码（8-32 位，含字母和数字）" maxlength="32" style="margin-top:8px">
+          <input type="password" v-model="pwForm.repeat" placeholder="再输一次新密码" maxlength="32" style="margin-top:8px">
+          <button class="btn primary" style="margin-top:10px" :disabled="pwBusy" @click="changePassword">保存新密码</button>
+          <p class="tip" style="margin-top:6px">改完密码后，其他设备上的登录会被自动退出。</p>
+        </template>
+      </template>
+      <div v-else class="muted pad">加载中…</div>
+    </div>
+    <div class="dlg-foot">
+      <button class="btn danger-soft" @click="logoutAll">退出所有设备</button>
+      <span class="spacer"></span>
+      <button class="btn soft" @click="closeProfile">关闭</button>
+    </div>
+  </dialog>
+
+  <!-- ================= 新建账号（管理员） ================= -->
+  <dialog ref="createUserDlg">
+    <div class="dlg-head">
+      <span class="dlg-ico"><e-icon name="plus" :size="19"></e-icon></span>
+      <div class="dlg-head-t">
+        <div class="dlg-name">新建账号</div>
+        <div class="dlg-sub">管理员直接创建，无需学生自助注册</div>
+      </div>
+      <span class="spacer"></span>
+      <button class="icon-btn big" @click="closeCreateUser"><e-icon name="x" :size="15"></e-icon></button>
+    </div>
+    <div class="pbody">
+      <label class="f" style="margin-top:0">账号</label>
+      <input type="text" v-model.trim="cuForm.username" placeholder="字母开头，3-20 位字母数字">
+      <label class="f">初始密码</label>
+      <input type="text" v-model.trim="cuForm.password" placeholder="8-32 位，含字母和数字">
+      <x-check v-model="cuForm.canPublish" label="同时开通出题权限" style="margin-top:12px"></x-check>
+    </div>
+    <div class="dlg-foot">
+      <span class="spacer"></span>
+      <button class="btn ghost" @click="closeCreateUser">取消</button>
+      <button class="btn primary" :disabled="cuBusy" @click="createUser">创建</button>
+    </div>
+  </dialog>
+
+  <!-- toast / 胶囊 / busy 用 popover：同样进 top layer，弹窗打开时也能看见 -->
+  <div id="toast" popover="manual">{{ toastMsg }}</div>
+  <div class="py-capsule" popover="manual">{{ pyCapsule }}</div>
+  <div id="busy" popover="manual"><div class="spin"></div></div>
+
+  <!-- ================= 出题对话框（可判分题） ================= -->
+  <dialog ref="dqDlg" class="wide-dlg">
+    <div class="dlg-head">
+      <span class="dlg-ico"><e-icon name="target" :size="19"></e-icon></span>
+      <div class="dlg-head-t">
+        <div class="dlg-name">{{ dq.id ? '编辑题目' : '出题' }}</div>
+        <div class="dlg-sub">素材包 = 一个数据库 + 若干 Python 文件；学生导入后自己练，不判分</div>
+      </div>
+      <span class="spacer"></span>
+      <button class="icon-btn big" @click="closeDrillEditor"><e-icon name="x" :size="15"></e-icon></button>
+    </div>
+    <div class="pbody">
+      <label class="f" style="margin-top:0">题型</label>
+      <div class="dq-types">
+        <button class="dq-type" :class="{on: dq.type==='sql'}" @click="dq.type='sql'; dq.course='sql'">SQL 判题</button>
+        <button class="dq-type" :class="{on: dq.type==='python'}" @click="dq.type='python'; dq.course='python'">Python 判题</button>
+        <button class="dq-type" :class="{on: dq.type==='single'}" @click="dq.type='single'; dq.course='basic'">单选</button>
+        <button class="dq-type" :class="{on: dq.type==='boolean'}" @click="dq.type='boolean'; dq.course='basic'">判断</button>
+        <button class="dq-type" :class="{on: dq.type==='fill'}" @click="dq.type='fill'; dq.course='basic'">填空</button>
+      </div>
+      <label class="f">题目标题</label>
+      <input type="text" v-model.trim="dq.title" maxlength="80" placeholder="例如：查询 90 分以上的学生" spellcheck="false">
+      <label class="f">题干（可选）</label>
+      <input type="text" v-model.trim="dq.stem" maxlength="300" placeholder="给学生看的说明和要求" spellcheck="false">
+      <label class="f">提示（可选）</label>
+      <input type="text" v-model.trim="dq.hint" maxlength="200" placeholder="想给学生的小提示" spellcheck="false">
+
+      <template v-if="dq.type==='sql'">
+        <label class="f">初始化 SQL（建表 + 初始数据，学生做题时会先在临时库里建好）</label>
+        <textarea class="dq-area" v-model="dq.setupSql" rows="4" spellcheck="false"
+                  placeholder="CREATE TABLE score (id INT PRIMARY KEY, name VARCHAR(20), score INT);&#10;INSERT INTO score VALUES (1,'张三',90);"></textarea>
+        <label class="f">标准答案 SQL（判分用；不会发给学生）</label>
+        <textarea class="dq-area" v-model="dq.verifySql" rows="3" spellcheck="false"
+                  placeholder="SELECT name, score FROM score WHERE score >= 90 ORDER BY score DESC"></textarea>
+        <p class="tip">判分口径：列名 + 行数据都一致才算通过（不看行序）；每题在学生自己的临时库里跑，跑完即删。</p>
+      </template>
+
+      <template v-else-if="dq.type==='python'">
+        <label class="f">起始代码（给学生预填）</label>
+        <textarea class="dq-area" v-model="dq.starterCode" rows="3" spellcheck="false" placeholder="scores = [88, 95, 92]"></textarea>
+        <label class="f">输入数据（程序里 input() 读到的内容，可留空）</label>
+        <textarea class="dq-area" v-model="dq.inputData" rows="2" spellcheck="false" placeholder="一行一条输入"></textarea>
+        <label class="f">期望输出（判分用；不会发给学生）</label>
+        <textarea class="dq-area" v-model="dq.expectedOutput" rows="3" spellcheck="false" placeholder="程序应该打印的内容"></textarea>
+        <p class="tip">判分口径：输出逐行去掉首尾空格、忽略空行后完全一致。</p>
+      </template>
+
+      <template v-else-if="dq.type==='fill'">
+        <label class="f">可接受的答案（多个用「；」分开，学生答对任意一个即通过）</label>
+        <input type="text" v-model.trim="dq.fillAnswers" placeholder="PRIMARY KEY；primary key">
+        <p class="tip">判分口径：忽略大小写、空格、全角/半角和常见标点。</p>
+      </template>
+
+      <template v-else>
+        <label class="f">选项（每行一个，用 A. B. C. 这样的格式）</label>
+        <textarea class="dq-area" v-model="dq.optionsText" rows="3" spellcheck="false" placeholder="A. SELECT&#10;B. INSERT&#10;C. UPDATE"></textarea>
+        <label class="f">正确选项的标号</label>
+        <input type="text" v-model.trim="dq.rightKey" maxlength="4" placeholder="A" style="max-width:120px">
+      </template>
+    </div>
+    <div class="dlg-foot">
+      <button v-if="dq.id && dq.status" class="btn soft" @click="publishDrill(false)">撤回为草稿</button>
+      <span class="spacer"></span>
+      <button class="btn ghost" @click="closeDrillEditor">取消</button>
+      <button class="btn soft" @click="saveDrill(false)">保存草稿</button>
+      <button class="btn primary" @click="saveDrill(true)">保存并发布</button>
+    </div>
+  </dialog>
+
+  <!-- ================= 自制输入弹窗（原生 dialog，进 top layer，不会被主弹窗遮挡） ================= -->
+  <dialog ref="askDlg" class="mini-dlg" @cancel.prevent="askCancel" @click.self="askCancel">
+    <div class="mini-title">{{ ask.title }}</div>
+    <label class="f" style="margin-top:0">{{ ask.label }}</label>
+    <input ref="askInputEl" type="text" v-model="ask.value" maxlength="60" spellcheck="false" autocapitalize="off"
+           @keyup.enter="askOk">
+    <div class="mini-foot">
+      <button class="btn soft" @click="askCancel">取消</button>
+      <button class="btn primary" @click="askOk">确定</button>
+    </div>
+  </dialog>
+
+  <!-- ================= 自制确认弹窗（原生 dialog） ================= -->
+  <dialog ref="confirmDlg" class="mini-dlg" @cancel.prevent="confirmCancel" @click.self="confirmCancel">
+    <div class="mini-title">{{ confirmBox.title }}</div>
+    <p class="mini-text">{{ confirmBox.text }}</p>
+    <div class="mini-foot">
+      <button class="btn soft" @click="confirmCancel">取消</button>
+      <button :class="confirmBox.danger ? 'btn danger solid' : 'btn primary'" @click="confirmOk">确定</button>
+    </div>
+  </dialog>
 </div>
+
+<!-- 静态启动转圈：在 #app 之外，Vue 挂载前（脚本/CSS 还在加载时）也能显示，
+     挂载后由 #app:not([v-cloak]) ~ 规则自动隐藏，与应用内的启动遮罩无缝衔接 -->
+<div id="boot-static"><div class="spin"></div></div>
 
 <script src="/vendor/vue.global.prod.js"></script>
 <script src="/vendor/codemirror/codemirror.js"></script>
@@ -608,6 +1595,6 @@ INSERT INTO course VALUES (1,'数学');</pre>
 <script src="/vendor/codemirror/addon/display/placeholder.js"></script>
 <script src="/vendor/codemirror/addon/hint/show-hint.js"></script>
 <script src="/vendor/codemirror/addon/hint/sql-hint.js"></script>
-<script src="/app.js?v=83"></script>
+<script src="/app.js?v=115"></script>
 </body>
 </html>

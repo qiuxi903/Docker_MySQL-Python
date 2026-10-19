@@ -79,6 +79,7 @@ def _init_store():
                             "ADD UNIQUE KEY uk_code (share_code)")
             except Exception:
                 pass
+            _init_questions(cur)
     finally:
         conn.close()
 
@@ -269,6 +270,55 @@ def get_detail(item_id: int) -> dict:
         "filename": it["filename"], "size": it["rows_count"],
         "shareName": it["shareName"], "shareCode": it["shareCode"],
     }
+
+
+def _extract_ddl(text: str, table: str) -> str:
+    """从 SQL 脚本里取出某张表的 CREATE TABLE 语句（按括号配对，避免 DECIMAL(10,2) 截断）。"""
+    m = re.search(r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?[`\"']?"
+                  + re.escape(table) + r"[`\"']?\s*\(", text, re.I)
+    if not m:
+        return ""
+    depth = 0
+    for j in range(m.end() - 1, len(text)):
+        if text[j] == "(":
+            depth += 1
+        elif text[j] == ")":
+            depth -= 1
+            if depth == 0:
+                return text[m.start():j + 1]
+    return text[m.start():]
+
+
+def item_table_preview(item_id: int, table: str) -> dict:
+    """题库数据库条目里某张表的预览：结构 + 数据。
+
+    - 结构化条目（内置教学库、发布的库）：直接给列名 + 前 200 行数据 + 建表语句
+    - 脚本型条目（上传的 .sql）：只给建表语句（数据需导入后查看）
+    """
+    conn = root_conn(C.COMMUNITY_DB)
+    try:
+        with conn.cursor() as cur:
+            it = _get_item(cur, item_id)
+    finally:
+        conn.close()
+    if it["kind"] != "db":
+        raise CommunityError("只有数据库条目可以预览表")
+    raw = _unpack(it["data_gz"]) if it["data_gz"] else b""
+    if it["filename"]:                      # 脚本型：只有原始脚本
+        text = raw.decode("utf-8", "replace")
+        return {"name": table, "cols": [], "rows": [], "ddl": _extract_ddl(text, table),
+                "script": True, "rowCount": None, "truncated": False}
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except Exception:
+        raise CommunityError("这个资源的数据读不出来")
+    t = next((x for x in data.get("tables", []) if x["name"] == table), None)
+    if t is None:
+        raise CommunityError("这个表不在此资源里")
+    rows = t.get("rows") or []
+    return {"name": table, "cols": t.get("cols") or [], "rows": rows[:200],
+            "ddl": t.get("ddl") or "", "script": False,
+            "rowCount": len(rows), "truncated": len(rows) > 200}
 
 
 def get_by_code(code: str) -> dict:
@@ -684,3 +734,413 @@ def _inc_download(item_id: int):
 
 def _bump(cur, item_id: int):
     cur.execute("UPDATE items SET downloads = downloads + 1 WHERE id=%s", (item_id,))
+
+
+# ==================== 题目（草稿 → 发布） ====================
+# 一道题 = MySQL 部分（整库 SQL 快照）+ Python 部分（若干个 .py 快照）一组。
+# 流程：先存草稿 → 在草稿里编辑 → 发布到题库广场。
+
+def _init_questions(cur):
+    cur.execute(f"""
+        CREATE TABLE IF NOT EXISTS {q_ident(C.COMMUNITY_DB)}.questions (
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            account_id BIGINT NOT NULL,
+            uploader VARCHAR(64) NOT NULL DEFAULT '',
+            title VARCHAR(128) NOT NULL DEFAULT '',
+            note TEXT,
+            status TINYINT(1) NOT NULL DEFAULT 0,
+            builtin TINYINT(1) NOT NULL DEFAULT 0,
+            db_name VARCHAR(64) NOT NULL DEFAULT '',
+            db_gz LONGTEXT,
+            tables_gz LONGTEXT,
+            db_tables INT NOT NULL DEFAULT 0,
+            py_gz LONGTEXT,
+            py_count INT NOT NULL DEFAULT 0,
+            downloads INT NOT NULL DEFAULT 0,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            published_at DATETIME NULL,
+            KEY idx_owner (account_id),
+            KEY idx_status (status)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    """)
+    try:  # 旧库升级：题目表数据快照（预览用）
+        cur.execute(f"ALTER TABLE {q_ident(C.COMMUNITY_DB)}.questions "
+                    "ADD COLUMN tables_gz LONGTEXT")
+    except Exception:
+        pass
+
+
+QUESTION_PY_MAX = 10          # 一道题最多几个 Python 文件
+QUESTION_TITLE_MAX = 60
+
+
+def _snapshot_db(account: dict, db_name: str) -> tuple[str, int]:
+    """把一个库快照成 SQL 文本，返回 (sql文本, 表数量)。"""
+    from . import sessions as _sessions
+
+    if not db_name:
+        return "", 0
+    if db_name not in _sessions.owned_dbs(account["id"]):
+        raise CommunityError(f"数据库 {db_name} 不在你的名下")
+    if _sessions.db_origin(account["id"], db_name) == "community":
+        raise CommunityError(f"数据库 {db_name} 来自社区导入，不能原样发布成题目；"
+                             f"可以先改成自己的内容再发布")
+    conn = user_conn(db_name, account["mysql_user"], account["mysql_pass"])
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SHOW TABLES")
+            names = [r[0] for r in cur.fetchall()]
+    finally:
+        conn.close()
+    if not names:
+        raise CommunityError(f"数据库 {db_name} 里没有表，没法作为题目的 MySQL 部分")
+    if len(names) > 50:
+        raise CommunityError("库里的表超过 50 张，无法作为题目")
+    sql = export_database(db_name, account["mysql_user"], account["mysql_pass"],
+                          max_rows=C.SHARE_ROWS_MAX)
+    return sql.decode("utf-8", "replace"), len(names)
+
+
+QUESTION_PREVIEW_ROWS = 200
+
+
+def _capture_tables(account: dict, db_name: str, max_rows: int = QUESTION_PREVIEW_ROWS) -> list[dict]:
+    """抓一份结构化表数据（建表语句 + 列名 + 前 N 行），供题目预览展示。"""
+    conn = user_conn(db_name, account["mysql_user"], account["mysql_pass"])
+    out = []
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SHOW TABLES")
+            names = [r[0] for r in cur.fetchall()]
+            for name in names:
+                cur.execute("SHOW CREATE TABLE " + q_ident(name))
+                ddl = cur.fetchone()[1]
+                cur.execute(f"SELECT * FROM {q_ident(name)} LIMIT %s", (max_rows,))
+                cols = [d[0] for d in cur.description]
+                rows = [[conv_value(v) for v in r] for r in cur.fetchall()]
+                out.append({"name": name, "ddl": ddl, "cols": cols, "rows": rows})
+    finally:
+        conn.close()
+    return out
+
+
+def _snapshot_py(account_id: int, names: list[str]) -> tuple[list[dict], str]:
+    """把账号下的 py 文件按名字快照成 [{name, content}]，返回 (列表, JSON)。"""
+    from . import sessions as _sessions
+
+    if not names:
+        return [], ""
+    allfiles = _sessions.pyfiles_contents(account_id)
+    files = []
+    for n in names:
+        if n not in allfiles:
+            raise CommunityError(f"Python 文件「{n}」不存在了，请重新选择")
+        content = allfiles[n] or ""
+        if len(content.encode("utf-8")) > C.CODE_MAX:
+            raise CommunityError(f"文件 {n} 超过 256KB，无法作为题目内容")
+        files.append({"name": n, "content": content})
+    if len(files) > QUESTION_PY_MAX:
+        raise CommunityError(f"一道题最多放 {QUESTION_PY_MAX} 个 Python 文件")
+    return files, json.dumps(files, ensure_ascii=False)
+
+
+def _question_row(cur, qid: int) -> dict | None:
+    cur.execute("""SELECT id, account_id, uploader, title, note, status, builtin,
+                          db_name, db_gz, db_tables, py_gz, py_count, downloads,
+                          created_at, updated_at, published_at
+                   FROM questions WHERE id=%s""", (qid,))
+    r = cur.fetchone()
+    if not r:
+        return None
+    return {"id": r[0], "account_id": r[1], "uploader": r[2], "title": r[3],
+            "note": r[4] or "", "status": r[5], "builtin": r[6],
+            "dbName": r[7], "dbTables": r[8], "pyCount": r[11],
+            "downloads": r[12], "createdAt": str(r[13]), "updatedAt": str(r[14]),
+            "publishedAt": str(r[15]) if r[15] else ""}
+
+
+def _question_card(r) -> dict:
+    (qid, title, note, status, builtin, db_name, db_tables, py_count,
+     downloads, uploader, created_at, published_at, updated_at) = r
+    return {"id": qid, "kind": "question", "title": title or "(未命名题目)",
+            "note": note or "", "status": status, "builtin": builtin,
+            "dbName": db_name, "dbTables": db_tables, "pyCount": py_count,
+            "downloads": downloads, "uploader": uploader,
+            "createdAt": str(published_at or created_at), "updatedAt": str(updated_at)}
+
+
+def question_save(account: dict, *, qid: int | None, title: str, note: str,
+                  db_name: str, py_names: list[str], publish: bool) -> dict:
+    """新建或更新题目（草稿）。db_name / py_names 为空表示不含该部分。"""
+    title = (title or "").strip()[:QUESTION_TITLE_MAX]
+    if not title:
+        raise CommunityError("先给题目起个名字")
+    db_sql, db_tables = _snapshot_db(account, (db_name or "").strip())
+    tables_json = ""
+    if db_sql:
+        tables_json = json.dumps(_capture_tables(account, (db_name or "").strip()),
+                                 ensure_ascii=False)
+    py_files, py_json = _snapshot_py(account["id"], py_names or [])
+    if publish and not db_sql and not py_files:
+        raise CommunityError("题目至少要包含一个数据库（MySQL 部分）或一个 Python 文件")
+
+    conn = root_conn(C.COMMUNITY_DB)
+    try:
+        with conn.cursor() as cur:
+            if qid:
+                cur.execute("""SELECT account_id, builtin FROM questions WHERE id=%s""", (qid,))
+                row = cur.fetchone()
+                if not row:
+                    raise CommunityError("题目不存在")
+                if row[0] != account["id"] and account.get("role") != "admin":
+                    raise CommunityError("只能编辑自己的题目")
+                if row[1]:
+                    raise CommunityError("内置题目不能修改")
+                cur.execute("""UPDATE questions SET title=%s, note=%s, db_name=%s,
+                               db_gz=%s, tables_gz=%s, db_tables=%s, py_gz=%s, py_count=%s,
+                               status=%s, updated_at=CURRENT_TIMESTAMP
+                               WHERE id=%s""",
+                            (title, (note or "").strip(), (db_name or "").strip(),
+                             _pack(db_sql.encode("utf-8")) if db_sql else None,
+                             _pack(tables_json.encode("utf-8")) if tables_json else None,
+                             db_tables,
+                             _pack(py_json.encode("utf-8")) if py_json else None, len(py_files),
+                             1 if publish else 0, qid))
+                if publish:
+                    cur.execute("""UPDATE questions SET published_at=NOW()
+                                   WHERE id=%s AND published_at IS NULL""", (qid,))
+            else:
+                cur.execute("""SELECT COUNT(*) FROM questions WHERE account_id=%s""",
+                            (account["id"],))
+                if cur.fetchone()[0] >= 100:
+                    raise CommunityError("最多创建 100 道题目，可以先删掉一些")
+                cur.execute("""INSERT INTO questions
+                               (account_id, uploader, title, note, status, db_name,
+                                db_gz, tables_gz, db_tables, py_gz, py_count, published_at)
+                               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
+                                       CASE WHEN %s=1 THEN NOW() ELSE NULL END)""",
+                            (account["id"], account["display"], title, (note or "").strip(),
+                             1 if publish else 0, (db_name or "").strip(),
+                             _pack(db_sql.encode("utf-8")) if db_sql else None,
+                             _pack(tables_json.encode("utf-8")) if tables_json else None,
+                             db_tables,
+                             _pack(py_json.encode("utf-8")) if py_json else None,
+                             len(py_files), 1 if publish else 0))
+                qid = cur.lastrowid
+        conn.commit()
+    finally:
+        conn.close()
+    return {"id": qid, "published": bool(publish)}
+
+
+def question_owned(account: dict, qid: int) -> dict:
+    """取题目（草稿只有本人/管理员能看）。"""
+    conn = root_conn(C.COMMUNITY_DB)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""SELECT id, account_id, uploader, title, note, status, builtin,
+                                  db_name, db_tables, py_count, downloads,
+                                  created_at, updated_at, published_at
+                           FROM questions WHERE id=%s""", (qid,))
+            r = cur.fetchone()
+    finally:
+        conn.close()
+    if not r:
+        raise CommunityError("题目不存在")
+    q = {"id": r[0], "account_id": r[1], "uploader": r[2], "title": r[3],
+         "note": r[4] or "", "status": r[5], "builtin": r[6], "dbName": r[7],
+         "dbTables": r[8], "pyCount": r[9], "downloads": r[10],
+         "createdAt": str(r[11]), "updatedAt": str(r[12]),
+         "publishedAt": str(r[13]) if r[13] else "",
+         "mine": r[1] == account["id"], "admin": account.get("role") == "admin"}
+    if not q["status"] and not (q["mine"] or q["admin"]):
+        raise CommunityError("这是别人的草稿，不能查看")
+    return q
+
+
+def question_detail(account: dict, qid: int) -> dict:
+    """题目详情：带上 MySQL 表清单和 Python 文件清单（不含全文）。"""
+    q = question_owned(account, qid)
+    conn = root_conn(C.COMMUNITY_DB)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT db_gz, py_gz, db_name, tables_gz FROM questions WHERE id=%s", (qid,))
+            r = cur.fetchone()
+    finally:
+        conn.close()
+    tables = []
+    if r[0]:
+        sql = _unpack(r[0]).decode("utf-8", "replace")
+        tables = parse_script_tables(sql)
+    table_data = []
+    if r[3]:
+        try:
+            table_data = json.loads(_unpack(r[3]).decode("utf-8"))
+        except Exception:
+            table_data = []
+    py_names = []
+    py_preview = []
+    if r[1]:
+        files = json.loads(_unpack(r[1]).decode("utf-8"))
+        for f in files:
+            name = f.get("name", "")
+            content = f.get("content") or ""
+            py_names.append(name)
+            py_preview.append({"name": name,
+                               "size": len(content.encode("utf-8")),
+                               "head": content[:1500]})
+    q.update({"tables": tables, "tableData": table_data,
+              "dbName": r[2] or q["dbName"], "pyFiles": py_names,
+              "pyPreview": py_preview,
+              "dbSize": len(r[0] and _unpack(r[0]) or b"")})
+    return q
+
+
+def question_list_mine(account_id: int) -> list[dict]:
+    conn = root_conn(C.COMMUNITY_DB)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""SELECT id, title, note, status, builtin, db_name, db_tables,
+                                  py_count, downloads, uploader, created_at, published_at,
+                                  updated_at
+                           FROM questions WHERE account_id=%s
+                           ORDER BY updated_at DESC""", (account_id,))
+            return [_question_card(r) for r in cur.fetchall()]
+    finally:
+        conn.close()
+
+
+def question_list_published() -> list[dict]:
+    conn = root_conn(C.COMMUNITY_DB)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""SELECT id, title, note, status, builtin, db_name, db_tables,
+                                  py_count, downloads, uploader, created_at, published_at,
+                                  updated_at
+                           FROM questions WHERE status=1
+                           ORDER BY (builtin=1) DESC, published_at DESC""")
+            return [_question_card(r) for r in cur.fetchall()]
+    finally:
+        conn.close()
+
+
+def question_publish(account: dict, qid: int, publish: bool) -> dict:
+    conn = root_conn(C.COMMUNITY_DB)
+    try:
+        with conn.cursor() as cur:
+            q = _question_row(cur, qid)
+            if not q:
+                raise CommunityError("题目不存在")
+            if q["account_id"] != account["id"] and account.get("role") != "admin":
+                raise CommunityError("只能发布自己的题目")
+            if q["builtin"]:
+                raise CommunityError("内置题目不能修改")
+            cur.execute("SELECT db_gz, py_gz FROM questions WHERE id=%s", (qid,))
+            r = cur.fetchone()
+            if publish and not r[0] and not r[1]:
+                raise CommunityError("题目至少要包含一个数据库（MySQL 部分）或一个 Python 文件")
+            cur.execute("""UPDATE questions SET status=%s,
+                           published_at=CASE WHEN %s=1 AND published_at IS NULL THEN NOW()
+                                             WHEN %s=0 THEN NULL ELSE published_at END,
+                           updated_at=CURRENT_TIMESTAMP WHERE id=%s""",
+                        (1 if publish else 0, 1 if publish else 0, 1 if publish else 0, qid))
+        conn.commit()
+    finally:
+        conn.close()
+    return {"id": qid, "published": bool(publish)}
+
+
+def question_delete(account: dict, qid: int):
+    conn = root_conn(C.COMMUNITY_DB)
+    try:
+        with conn.cursor() as cur:
+            q = _question_row(cur, qid)
+            if not q:
+                raise CommunityError("题目不存在")
+            if q["account_id"] != account["id"] and account.get("role") != "admin":
+                raise CommunityError("只能删除自己的题目")
+            if q["builtin"]:
+                raise CommunityError("内置题目不能删除")
+            cur.execute("DELETE FROM questions WHERE id=%s", (qid,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def question_import(account: dict, qid: int, new_db_name: str = "") -> dict:
+    """一键导入整套：MySQL 部分建成独立新库，Python 部分加进自己的文件列表。"""
+    from . import sessions as _sessions
+    from .sqlrun import run_sql
+
+    conn = root_conn(C.COMMUNITY_DB)
+    try:
+        with conn.cursor() as cur:
+            q = _question_row(cur, qid)
+            cur.execute("SELECT db_gz, py_gz FROM questions WHERE id=%s", (qid,))
+            r = cur.fetchone()
+    finally:
+        conn.close()
+    if not q:
+        raise CommunityError("题目不存在")
+    if not q["status"] and not (q["account_id"] == account["id"] or account.get("role") == "admin"):
+        raise CommunityError("这是别人的草稿，不能导入")
+
+    result = {"db": "", "tables": [], "pyFiles": []}
+    if r[0]:
+        sql = _unpack(r[0]).decode("utf-8", "replace")
+        base = _sessions.sanitize_db_name(new_db_name or q["dbName"] or f"题目{qid}")
+        new_db = _sessions.create_user_db_unique(account, base or f"q{qid}", origin="community")
+        run_sql(new_db, account["mysql_user"], account["mysql_pass"], sql, owned_dbs=[new_db])
+        result["db"] = new_db
+        result["tables"] = parse_script_tables(sql)
+    if r[1]:
+        files = json.loads(_unpack(r[1]).decode("utf-8"))
+        existing = {f["name"].casefold() for f in _sessions.pyfiles_list(account["id"])}
+        saved = []
+        for f in files:
+            final = _sessions.pyfiles_unique_name(account["id"], f.get("name") or "file.py", existing)
+            _sessions.pyfiles_save(account["id"], final, f.get("content") or "")
+            existing.add(final.casefold())
+            saved.append(final)
+        result["pyFiles"] = saved
+    _inc_question_download(qid)
+    return result
+
+
+def question_zip(qid: int) -> tuple[str, bytes]:
+    """打包成 zip：{库名}.sql + Python 文件，供下载。"""
+    import io
+    import zipfile
+
+    conn = root_conn(C.COMMUNITY_DB)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT title, db_name, db_gz, py_gz FROM questions WHERE id=%s", (qid,))
+            r = cur.fetchone()
+    finally:
+        conn.close()
+    if not r:
+        raise CommunityError("题目不存在")
+    title, db_name, db_gz, py_gz = r
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        if db_gz:
+            z.writestr(f"{db_name or 'database'}.sql", _unpack(db_gz))
+        if py_gz:
+            for f in json.loads(_unpack(py_gz).decode("utf-8")):
+                z.writestr(f.get("name") or "file.py", (f.get("content") or "").encode("utf-8"))
+        if not db_gz and not py_gz:
+            z.writestr("README.txt", "这个题目还是空的（没有 MySQL 部分也没有 Python 部分）。")
+    return (f"{title or 'question'}.zip"), buf.getvalue()
+
+
+def _inc_question_download(qid: int):
+    conn = root_conn(C.COMMUNITY_DB)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE questions SET downloads = downloads + 1 WHERE id=%s", (qid,))
+        conn.commit()
+    finally:
+        conn.close()
+

@@ -34,6 +34,7 @@ class C:
     META_DB = "meta"            # 账号/会话元数据
     COMMUNITY_DB = "community"  # 表社区存储
     GUEST_TTL_DAYS = _int("GUEST_TTL_DAYS", 7)      # 游客数据保留天数
+    GUEST_SESSION_TTL_DAYS = 3                       # 游客登录态固定有效天数
     SESSION_TTL_DAYS = _int("SESSION_TTL_DAYS", 30) # 登录态保留天数
     SQL_TIMEOUT = _float("SQL_TIMEOUT_SEC", 10.0)   # 单次 SQL 执行墙钟上限
     PY_IDLE_SEC = _float("PY_IDLE_SEC", 120.0)   # Python 等待输入/无输出的存活秒数

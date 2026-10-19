@@ -48,10 +48,22 @@ def _init_meta():
                     mysql_pass VARCHAR(64) NOT NULL,
                     reg_ip VARCHAR(64) NULL,
                     last_ip VARCHAR(64) NULL,
+                    can_publish TINYINT(1) NOT NULL DEFAULT 0,
+                    disabled TINYINT(1) NOT NULL DEFAULT 0,
+                    last_login_at DATETIME NULL,
+                    password_changed_at DATETIME NULL,
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             """)
-            for _col, _def in (("reg_ip", "VARCHAR(64) NULL"), ("last_ip", "VARCHAR(64) NULL")):
+            try:  # 旧库升级：发布到题库的权限
+                cur.execute(f"ALTER TABLE {q_ident(C.META_DB)}.accounts "
+                            "ADD COLUMN can_publish TINYINT(1) NOT NULL DEFAULT 0")
+            except Exception:
+                pass
+            for _col, _def in (("disabled", "TINYINT(1) NOT NULL DEFAULT 0"),
+                               ("last_login_at", "DATETIME NULL"),
+                               ("password_changed_at", "DATETIME NULL"),
+                               ("reg_ip", "VARCHAR(64) NULL"), ("last_ip", "VARCHAR(64) NULL")):
                 try:
                     cur.execute(f"ALTER TABLE {q_ident(C.META_DB)}.accounts "
                                 f"ADD COLUMN {_col} {_def}")
@@ -87,10 +99,17 @@ def _init_meta():
                     account_id BIGINT NOT NULL,
                     name VARCHAR(64) NOT NULL,
                     content MEDIUMTEXT,
+                    uploaded TINYINT NOT NULL DEFAULT 0,
                     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                     PRIMARY KEY (account_id, name)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             """)
+            # 老库补列（已存在则忽略）
+            try:
+                cur.execute(f"ALTER TABLE {q_ident(C.META_DB)}.py_files "
+                            "ADD COLUMN uploaded TINYINT NOT NULL DEFAULT 0")
+            except Exception:
+                pass
             cur.execute(f"""
                 CREATE TABLE IF NOT EXISTS {q_ident(C.META_DB)}.sessions (
                     token VARCHAR(64) PRIMARY KEY,
@@ -150,8 +169,10 @@ def list_dbs(account: dict) -> list[dict]:
     conn = root_conn(C.META_DB)
     try:
         with conn.cursor() as cur:
+            # origin='drill' 是练习题的沙箱库，不在「我的数据库」里显示
             cur.execute("""SELECT db_name, primary_db, created_at FROM dbs
-                           WHERE account_id=%s ORDER BY primary_db DESC, created_at ASC""",
+                           WHERE account_id=%s AND origin<>'drill'
+                           ORDER BY primary_db DESC, created_at ASC""",
                         (account["id"],))
             rows = cur.fetchall()
     finally:
@@ -321,17 +342,17 @@ def pyfiles_list(account_id: int) -> list[dict]:
     result = []
     try:
         with conn.cursor() as cur:
-            cur.execute("""SELECT name, content, updated_at FROM py_files
+            cur.execute("""SELECT name, content, updated_at, uploaded FROM py_files
                            WHERE account_id=%s ORDER BY name='main.py' DESC, name ASC""",
                         (account_id,))
             rows = cur.fetchall()
             if not rows:
                 cur.execute("INSERT INTO py_files (account_id, name, content) VALUES (%s,'main.py',%s)",
                             (account_id, PY_MAIN_SEED))
-                rows = [("main.py", PY_MAIN_SEED, "")]
-            for name, content, updated_at in rows:
+                rows = [("main.py", PY_MAIN_SEED, "", 0)]
+            for name, content, updated_at, uploaded in rows:
                 result.append({"name": name, "size": len((content or "").encode("utf-8")),
-                               "updatedAt": str(updated_at)})
+                               "updatedAt": str(updated_at), "uploaded": bool(uploaded)})
     finally:
         conn.close()
     return result
@@ -351,13 +372,36 @@ def pyfiles_get(account_id: int, name: str) -> dict | None:
     return {"name": name, "content": row[0] or "", "updatedAt": str(row[1])}
 
 
-def pyfiles_save(account_id: int, name: str, content: str):
+def pyfiles_contents(account_id: int) -> dict[str, str]:
     conn = root_conn(C.META_DB)
     try:
         with conn.cursor() as cur:
-            cur.execute("""INSERT INTO py_files (account_id, name, content) VALUES (%s,%s,%s)
+            cur.execute("SELECT name, content FROM py_files WHERE account_id=%s", (account_id,))
+            return {name: content or "" for name, content in cur.fetchall()}
+    finally:
+        conn.close()
+
+
+def pyfiles_save(account_id: int, name: str, content: str, uploaded: bool = False):
+    conn = root_conn(C.META_DB)
+    try:
+        with conn.cursor() as cur:
+            # 更新已有文件时不改动 uploaded 标记：编辑上传的临时文件不会把它变成永久文件
+            cur.execute("""INSERT INTO py_files (account_id, name, content, uploaded) VALUES (%s,%s,%s,%s)
                            ON DUPLICATE KEY UPDATE content=VALUES(content),
-                           updated_at=CURRENT_TIMESTAMP""", (account_id, name, content))
+                           updated_at=CURRENT_TIMESTAMP""",
+                        (account_id, name, content, 1 if uploaded else 0))
+    finally:
+        conn.close()
+
+
+def pyfiles_delete_uploaded(account_id: int) -> int:
+    """删除该账号所有「上传的临时 py 文件」，返回删除数量。"""
+    conn = root_conn(C.META_DB)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM py_files WHERE account_id=%s AND uploaded=1", (account_id,))
+            return cur.rowcount
     finally:
         conn.close()
 
@@ -371,18 +415,20 @@ def pyfiles_delete(account_id: int, name: str):
         conn.close()
 
 
-def pyfiles_unique_name(account_id: int, base: str) -> str:
+def pyfiles_unique_name(account_id: int, base: str, existing: set[str] | None = None) -> str:
     name = normalize_pyfile_name(base) or "main.py"
-    if name not in [f["name"] for f in pyfiles_list(account_id)]:
+    if existing is None:
+        existing = {f["name"].casefold() for f in pyfiles_list(account_id)}
+    if name.casefold() not in existing:
         return name
     stem = name[:-3]
     k = 2
-    while k < 100:
-        cand = f"{stem}_{k}.py"
-        if cand not in [f["name"] for f in pyfiles_list(account_id)]:
+    while True:
+        suffix = f"_{k}.py"
+        cand = f"{stem[:40 - len(suffix)]}{suffix}"
+        if cand.casefold() not in existing:
             return cand
         k += 1
-    return name
 
 
 def ensure_admin():
@@ -483,6 +529,11 @@ def register(username: str, password: str, ip: str = "") -> dict:
         conn.close()
     account = get_account(account_id)
     ensure_account_ready(account)
+    try:
+        from . import users as _users
+        _users.log(account_id, username, ip, "register", True)
+    except Exception:
+        pass
     return account
 
 
@@ -491,20 +542,48 @@ def authenticate(username: str, password: str, ip: str = "") -> dict:
     conn = root_conn(C.META_DB)
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT id, pass_hash FROM accounts WHERE username_key=%s AND kind='user'", (key,))
+            cur.execute("SELECT id, pass_hash, disabled FROM accounts"
+                        " WHERE username_key=%s AND kind='user'", (key,))
             row = cur.fetchone()
     finally:
         conn.close()
     if not row or not auth.verify_password(password or "", row[1]):
+        try:
+            from . import users as _users
+            _users.log(row[0] if row else None, username, ip, "login_fail", False,
+                       "账号或密码不对")
+        except Exception:
+            pass
         raise AuthError("账号或密码不对")
+    if row[2]:
+        try:
+            from . import users as _users
+            _users.log(row[0], username, ip, "login_fail", False, "账号已被禁用")
+        except Exception:
+            pass
+        raise AuthError("账号已被禁用，请联系老师")
     if ip:
         try:
             c2 = root_conn(C.META_DB)
             with c2.cursor() as cur2:
-                cur2.execute("UPDATE accounts SET last_ip=%s WHERE id=%s", (ip, row[0]))
+                cur2.execute("UPDATE accounts SET last_ip=%s, last_login_at=NOW() WHERE id=%s",
+                             (ip, row[0]))
             c2.close()
         except Exception:
             pass
+    else:
+        try:
+            c3 = root_conn(C.META_DB)
+            with c3.cursor() as cur3:
+                cur3.execute("UPDATE accounts SET last_login_at=NOW() WHERE id=%s", (row[0],))
+            c3.close()
+        except Exception:
+            pass
+    try:
+        from . import users as _users
+        _users.log(row[0], username, ip, "login_ok", True)
+    except Exception:
+        pass
     account = get_account(row[0])
     ensure_account_ready(account)
     return account
@@ -537,7 +616,8 @@ def get_account(account_id: int) -> dict:
     conn = root_conn(C.META_DB)
     try:
         with conn.cursor() as cur:
-            cur.execute("""SELECT id, username, kind, role, db_name, mysql_user, mysql_pass, created_at
+            cur.execute("""SELECT id, username, kind, role, db_name, mysql_user, mysql_pass,
+                                  created_at, can_publish, disabled
                            FROM accounts WHERE id=%s""", (account_id,))
             r = cur.fetchone()
     finally:
@@ -548,6 +628,7 @@ def get_account(account_id: int) -> dict:
         "id": r[0], "username": r[1], "kind": r[2], "role": r[3],
         "db_name": r[4], "mysql_user": r[5], "mysql_pass": r[6],
         "display": r[1] or "游客", "created_at": str(r[7]),
+        "can_publish": bool(r[8]), "disabled": bool(r[9]),
     }
 
 
@@ -557,12 +638,23 @@ _touch_cache: dict[str, float] = {}
 _touch_lock = threading.Lock()
 
 
+MAX_SESSIONS_PER_ACCOUNT = 10   # 同一账号最多保留的并发登录（超出踢最旧）
+
+
 def create_session(account_id: int) -> str:
     token = secrets.token_urlsafe(24)
     conn = root_conn(C.META_DB)
     try:
         with conn.cursor() as cur:
             cur.execute("INSERT INTO sessions (token, account_id) VALUES (%s,%s)", (token, account_id))
+            # 防止会话无限堆积：只保留最近 N 个（其他设备会被登出）
+            cur.execute("""DELETE FROM sessions WHERE account_id=%s AND token NOT IN (
+                               SELECT token FROM (
+                                   SELECT token FROM sessions WHERE account_id=%s
+                                   ORDER BY last_seen DESC, created_at DESC, token DESC
+                                   LIMIT %s
+                               ) AS keep
+                           )""", (account_id, account_id, MAX_SESSIONS_PER_ACCOUNT))
     finally:
         conn.close()
     return token
@@ -575,9 +667,13 @@ def get_session(token: str) -> dict | None:
     try:
         with conn.cursor() as cur:
             cur.execute("""SELECT s.token, s.account_id,
-                                  a.id, a.username, a.kind, a.role, a.db_name, a.mysql_user, a.mysql_pass
+                                  a.id, a.username, a.kind, a.role, a.db_name, a.mysql_user, a.mysql_pass,
+                                  a.can_publish, a.disabled
                            FROM sessions s JOIN accounts a ON a.id = s.account_id
-                           WHERE s.token=%s""", (token,))
+                           WHERE s.token=%s
+                             AND a.disabled=0
+                             AND (a.kind <> 'guest' OR s.created_at >= NOW() - INTERVAL %s DAY)""",
+                        (token, C.GUEST_SESSION_TTL_DAYS))
             row = cur.fetchone()
     finally:
         conn.close()
@@ -586,6 +682,7 @@ def get_session(token: str) -> dict | None:
     account = {
         "id": row[2], "username": row[3], "kind": row[4], "role": row[5],
         "db_name": row[6], "mysql_user": row[7], "mysql_pass": row[8],
+        "can_publish": bool(row[9]), "disabled": bool(row[10]),
         "display": row[3] or "游客",
     }
     now = time.monotonic()
@@ -605,10 +702,44 @@ def get_session(token: str) -> dict | None:
     return {"token": token, "account": account}
 
 
+def kill_other_sessions(account_id: int, keep_token: str = "") -> int:
+    """把该账号除 keep_token 之外的所有会话删掉，返回删除数量。"""
+    conn = root_conn(C.META_DB)
+    try:
+        with conn.cursor() as cur:
+            if keep_token:
+                cur.execute("DELETE FROM sessions WHERE account_id=%s AND token<>%s",
+                            (account_id, keep_token))
+            else:
+                cur.execute("DELETE FROM sessions WHERE account_id=%s", (account_id,))
+            n = cur.rowcount
+    finally:
+        conn.close()
+    return int(n or 0)
+
+
 def destroy_session(token: str):
     conn = root_conn(C.META_DB)
     try:
         with conn.cursor() as cur:
+            cur.execute("DELETE FROM sessions WHERE token=%s", (token,))
+    finally:
+        conn.close()
+    with _touch_lock:
+        _touch_cache.pop(token, None)
+
+
+def logout_cleanup(token: str):
+    """登出：先清掉该会话账号上传的临时 py 文件，再销毁会话。"""
+    if not token or len(token) > 64:
+        return
+    conn = root_conn(C.META_DB)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT account_id FROM sessions WHERE token=%s", (token,))
+            row = cur.fetchone()
+            if row:
+                cur.execute("DELETE FROM py_files WHERE account_id=%s AND uploaded=1", (row[0],))
             cur.execute("DELETE FROM sessions WHERE token=%s", (token,))
     finally:
         conn.close()
@@ -623,6 +754,11 @@ def cleanup_pass():
     conn = root_conn(C.META_DB)
     try:
         with conn.cursor() as cur:
+            cur.execute("""DELETE s FROM sessions s
+                           JOIN accounts a ON a.id=s.account_id
+                           WHERE a.kind='guest'
+                             AND s.created_at < NOW() - INTERVAL %s DAY""",
+                        (C.GUEST_SESSION_TTL_DAYS,))
             cur.execute(f"DELETE FROM sessions WHERE last_seen < NOW() - INTERVAL %d DAY"
                         % C.SESSION_TTL_DAYS)
             cur.execute(f"""
@@ -685,6 +821,7 @@ def admin_list_users(kind: str = "user") -> list[dict]:
         with conn.cursor() as cur:
             cur.execute(f"""
                 SELECT a.id, a.username, a.kind, a.role, a.db_name, a.created_at,
+                       a.can_publish,
                        MAX(s.last_seen) AS last_seen, COUNT(DISTINCT s.token) AS tokens,
                        a.reg_ip, a.last_ip,
                        (SELECT COUNT(*) FROM {q_ident(C.META_DB)}.dbs d
@@ -698,9 +835,10 @@ def admin_list_users(kind: str = "user") -> list[dict]:
         conn.close()
     return [{
         "id": r[0], "username": r[1] or "游客", "kind": r[2], "role": r[3],
-        "db": r[4], "createdAt": str(r[5]), "lastSeen": str(r[6]) if r[6] else "-",
-        "sessions": int(r[7] or 0), "regIp": r[8] or "-", "lastIp": r[9] or "-",
-        "dbCount": int(r[10] or 0),
+        "db": r[4], "createdAt": str(r[5]), "canPublish": bool(r[6]),
+        "lastSeen": str(r[7]) if r[7] else "-",
+        "sessions": int(r[8] or 0), "regIp": r[9] or "-", "lastIp": r[10] or "-",
+        "dbCount": int(r[11] or 0),
     } for r in rows]
 
 
@@ -716,6 +854,24 @@ def admin_reset_password(username: str, new_password: str):
                 raise AuthError("没有这个账号（游客无法重置密码）")
     finally:
         conn.close()
+
+
+def set_publish_permission(account_id: int, allow: bool):
+    """管理员给/收回「发布到题库」的权限。"""
+    conn = root_conn(C.META_DB)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT role FROM accounts WHERE id=%s", (account_id,))
+            row = cur.fetchone()
+            if not row:
+                raise AuthError("没有这个账号")
+            if row[0] == "admin":
+                raise AuthError("管理员默认就有发布权限，不用单独开通")
+            cur.execute("UPDATE accounts SET can_publish=%s WHERE id=%s",
+                        (1 if allow else 0, account_id))
+    finally:
+        conn.close()
+    return {"id": account_id, "canPublish": bool(allow)}
 
 
 def admin_delete_user(account_id: int):

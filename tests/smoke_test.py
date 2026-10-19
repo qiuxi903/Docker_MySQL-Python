@@ -50,6 +50,18 @@ def download(path, token=""):
         return e.code, b"", ""
 
 
+def admin_login():
+    _, d = call("/api/login", {"mode": "login", "username": "admin", "password": "admin123"})
+    return d.get("token", "")
+
+
+def grant_publish(username, tok_admin):
+    """管理员给某账号开通「发布到题库」权限。"""
+    _, ul = call("/api/admin/users", token=tok_admin)
+    uid = next((u["id"] for u in ul.get("users", []) if u["username"] == username), 0)
+    return call("/api/admin/set_publish_permission", {"id": uid, "allow": True}, token=tok_admin)
+
+
 def multipart(field, filename, content, extra=None):
     boundary = uuid.uuid4().hex
     buf = io.BytesIO()
@@ -68,6 +80,10 @@ code, d = call("/api/login", {"mode": "register", "username": u1, "password": "T
 check("注册成功", code == 200 and d.get("token"), str(d))
 tok1 = d.get("token", "")
 
+tok_admin = admin_login()
+code, d = grant_publish(u1, tok_admin)
+check("管理员给测试账号开通发布权限", code == 200 and d.get("canPublish") is True, f"{code} {str(d)[:120]}")
+
 code, d = call("/api/me", token=tok1)
 db1 = d.get("db", "")
 tables1 = [t["name"] for t in d.get("tables", [])]
@@ -82,8 +98,16 @@ code, d = call("/api/login", {"mode": "login", "username": u1, "password": "Wron
 check("密码错误被拒", code == 400)
 code, d = call("/api/login", {"mode": "guest"})
 check("游客登录", code == 200 and d.get("token"))
+tok_guest = d.get("token", "")
 code, d = call("/api/me", token="bad-token")
 check("无效token被拒", code == 401)
+
+# 游客不能上传/发布到社区；游客 pyfiles 也走临时文件规则
+body, ct = multipart("file", "t.py", "print(1)\n")
+code, d = call("/api/community/upload", raw=body, ctype=ct, token=tok_guest)
+check("游客上传社区被拒", code == 403, f"{code} {str(d)[:120]}")
+code, d = call("/api/community/publish", {"table": "emp"}, token=tok_guest)
+check("游客发布社区被拒", code == 403, f"{code} {str(d)[:120]}")
 
 print("== 2. SQL 执行（默认库 + 无分号多行） ==")
 code, d = call("/api/sql", {"sql": "SELECT * FROM emp;"}, token=tok1)
@@ -141,6 +165,7 @@ print("== 5. 账号间隔离 ==")
 u2 = "stu" + uuid.uuid4().hex[:6]
 code, d = call("/api/login", {"mode": "register", "username": u2, "password": "Test1234abc"})
 tok2 = d.get("token", "")
+grant_publish(u2, tok_admin)
 db2 = ""
 code, d2 = call("/api/me", token=tok2)
 db2 = d2.get("db", "")
@@ -175,7 +200,8 @@ check("超过5MB被拒", code == 400, str(code))
 print("== 7. 社区（数据库单元：详情/整库导入为独立库/按表导入/发布） ==")
 code, d = call("/api/community", token=tok1)
 items = d.get("items", [])
-check("社区条目全部是数据库单元", len(items) > 0 and all(i["kind"] == "db" for i in items),
+check("社区列表可读且含内置资源", len(items) > 0 and any(i["builtin"] for i in items)
+      and all(i["kind"] in ("db", "py", "csv", "xlsx") for i in items),
       str([(i['kind'], i['title']) for i in items])[:150])
 bid = next((i["id"] for i in items if i["builtin"]), 0)
 code, d = call(f"/api/community/{bid}/detail", token=tok1)
@@ -220,8 +246,9 @@ check("按码取详情带默认库名", code == 200 and d.get("shareName") == "�
       and len(d.get("tables", [])) >= 3, str(d)[:200])
 code, d = call("/api/community/import", {"id": d["id"], "overwrite": False,
                "new_db_name": "我导的库"}, token=tok2)
-check("自定义名导入为独立库", code == 200 and d.get("db") == "我导的库", str(d)[:200])
-code, d = call("/api/sql", {"sql": "SELECT COUNT(*) FROM emp;", "db": "我导的库"}, token=tok2)
+imp_name = d.get("db", "")
+check("自定义名导入为独立库", code == 200 and imp_name.startswith("我导的库"), str(d)[:200])
+code, d = call("/api/sql", {"sql": "SELECT COUNT(*) FROM emp;", "db": imp_name}, token=tok2)
 check("独立库可查询", code == 200 and d["results"][0]["rows"][0][0] == 14, str(d)[:150])
 
 # 公开发布才进社区
@@ -293,7 +320,7 @@ st = wait_job(d.get("job", ""), tok1)
 check("Python运行输出", "579" in (st.get("out") or "") and st.get("exit") == 0, str(st)[:200])
 
 code, d = call("/api/pyrun/start", {"code": "while True:\n    pass\n", "db": db1}, token=tok1)
-st = wait_job(d.get("job", ""), tok1)
+st = wait_job(d.get("job", ""), tok1, tries=50)   # CPU 8s 限制 + 调度余量，最多等 20 秒
 check("死循环被强杀", st.get("running") is False and (st.get("why") in ("idle", "max") or (st.get("exit") or 0) < 0), str(st)[:150])
 
 code, d = call("/api/pyrun/start", {"code": "x = [0] * 10**9", "db": db1}, token=tok1)
@@ -334,6 +361,367 @@ code, d = call("/api/pyfiles/demo.py", token=tok1)
 check("读取py文件", d.get("content") == "print(1)", str(d)[:150])
 code, d = call("/api/pyfiles/demo.py", token=tok1, method="DELETE")
 check("删除py文件", code == 200, str(d)[:150])
+
+print("== 8c. 上传的临时 py 文件 ==")
+body, ct = multipart("files", "temp_up.py", "print('temp')\n")
+code, d = call("/api/pyfiles/upload", raw=body, ctype=ct, token=tok1)
+check("批量上传py", code == 200 and d.get("files") and d["files"][0]["name"] == "temp_up.py", str(d)[:200])
+code, d = call("/api/pyfiles", token=tok1)
+tf = [f for f in d.get("files", []) if f["name"] == "temp_up.py"]
+check("上传文件带临时标记", tf and tf[0].get("uploaded") is True, str(d)[:200])
+code, d = call("/api/pyfiles/clear-uploaded", token=tok1, method="POST")
+check("手动清理临时文件", code == 200 and d.get("removed", 0) >= 1, str(d)[:150])
+code, d = call("/api/pyfiles", token=tok1)
+check("清理后列表无临时文件", not any(f["name"] == "temp_up.py" for f in d.get("files", [])), str(d)[:200])
+# 登出清理：再传一个，登出，重新登录确认消失
+body, ct = multipart("files", "temp_out.py", "print('x')\n")
+code, d = call("/api/pyfiles/upload", raw=body, ctype=ct, token=tok1)
+code, d = call("/api/logout", token=tok1, method="POST")
+check("登出成功", code == 200, str(d)[:100])
+code, d = call("/api/login", {"mode": "login", "username": u1, "password": "Test1234abc"})
+check("重新登录", code == 200 and d.get("token"), str(d)[:100])
+tok1 = d.get("token", "")
+code, d = call("/api/pyfiles", token=tok1)
+check("登出后临时文件已删", not any(f["name"] == "temp_out.py" for f in d.get("files", [])), str(d)[:200])
+
+print("== 8d. 题目：草稿 → 发布 → 一键导入 ==")
+# 发布权限：新账号默认没有；管理员可开通
+u3 = "stu" + uuid.uuid4().hex[:6]
+_, d3 = call("/api/login", {"mode": "register", "username": u3, "password": "Test1234abc"})
+tok3 = d3.get("token", "")
+_, me3 = call("/api/me", token=tok3)
+check("新账号默认没有发布权限", me3.get("user", {}).get("canPublish") is False, str(me3.get("user"))[:120])
+code, d = call("/api/questions/save", {"title": "没权限的题", "db": "", "py": [], "publish": True},
+               token=tok3)
+check("无权限不能发布", code == 403 and "权限" in str(d.get("detail", "")), f"{code} {str(d)[:120]}")
+# 统一口径：练习/素材包两个入口，建草稿都要求出题权限
+code, d = call("/api/questions/save", {"title": "只有草稿", "db": "", "py": [], "publish": False},
+               token=tok3)
+check("无权限不能建素材包草稿", code == 403 and "出题权限" in str(d.get("detail", "")), f"{code} {str(d)[:120]}")
+code, d = grant_publish(u3, tok_admin)
+check("管理员开通发布权限", code == 200 and d.get("canPublish") is True, f"{code} {str(d)[:120]}")
+_, me3b = call("/api/me", token=tok3)
+check("开通后 me 显示可发布", me3b.get("user", {}).get("canPublish") is True, str(me3b.get("user"))[:120])
+
+# 备一个 Python 文件作为题目的 Python 部分
+code, d = call("/api/pyfiles/quiz_helper.py", {"content": "def answer():\n    return 42\n"},
+               token=tok1, method="PUT")
+code, d = call("/api/questions/save", {"title": "工资查询题", "note": "查工资前 5 名",
+                                       "db": db1, "py": ["quiz_helper.py"], "publish": False},
+               token=tok1)
+check("保存题目草稿", code == 200 and d.get("id"), f"{code} {str(d)[:150]}")
+qid = d.get("id", 0)
+check("草稿默认未发布", d.get("published") is False, str(d)[:120])
+
+code, d = call("/api/community", token=tok1)
+check("草稿不出现在广场", not any(q["id"] == qid for q in d.get("questions", [])), str(d.get("questions"))[:150])
+
+code, d = call("/api/questions/mine", token=tok1)
+mine = [q for q in d.get("questions", []) if q["id"] == qid]
+check("我的草稿可见", bool(mine) and mine[0]["status"] == 0, str(d)[:200])
+code, d = call(f"/api/questions/{qid}", token=tok1)
+td = {t["name"]: t for t in d.get("tableData", [])}
+check("详情带表数据快照（预览用）",
+      code == 200 and "emp" in td and td["emp"]["cols"] and len(td["emp"]["rows"]) == 14
+      and "CREATE TABLE" in td["emp"]["ddl"].upper(),
+      f"{code} tables={list(td)[:5]} rows={len(td.get('emp', {}).get('rows', []))}")
+check("Python 文件带内容摘要",
+      bool(d.get("pyPreview")) and "answer" in (d["pyPreview"][0].get("head") or ""),
+      str(d.get("pyPreview"))[:150])
+check("草稿带两部分信息", bool(mine) and mine[0]["dbTables"] >= 3 and mine[0]["pyCount"] == 1,
+      str(mine[:1])[:200])
+
+code, d = call(f"/api/questions/{qid}/publish", {"publish": True}, token=tok1)
+check("发布题目", code == 200 and d.get("published") is True, f"{code} {str(d)[:120]}")
+code, d = call("/api/community", token=tok1)
+check("发布后广场可见", any(q["id"] == qid for q in d.get("questions", [])), str(d.get("questions"))[:150])
+
+# 换一个账号（tok2）一键导入整套
+code, d = call(f"/api/questions/{qid}/import", {}, token=tok2)
+check("别人一键导入题目", code == 200 and d.get("db"), f"{code} {str(d)[:180]}")
+imp_db, imp_tables, imp_py = d.get("db", ""), d.get("tables", []), d.get("pyFiles", [])
+check("导入建了独立库", imp_db and imp_db != db1, str(d)[:150])
+check("导入包含 MySQL 表", {"emp", "dept", "salgrade"} <= {t.lower() for t in imp_tables}, str(imp_tables))
+check("导入包含 Python 文件", imp_py == ["quiz_helper.py"], str(imp_py))
+code, d = call("/api/sql", {"sql": "SELECT COUNT(*) FROM emp", "db": imp_db}, token=tok2)
+check("导入的库能查到数据", code == 200 and d["results"][0]["rows"][0][0] == 14, str(d)[:180])
+code, d = call("/api/pyfiles/quiz_helper.py", token=tok2)
+check("导入的 Python 文件能读到", code == 200 and "answer" in (d.get("content") or ""), str(d)[:150])
+
+code, zdata, zcd = download(f"/api/questions/{qid}/download", token=tok2)
+check("题目 zip 可下载", code == 200 and zdata[:2] == b"PK" and ".zip" in zcd, f"{code} {zcd[:60]}")
+
+# 撤回后广场不可见；游客不能出题/发布
+code, d = call(f"/api/questions/{qid}/publish", {"publish": False}, token=tok1)
+code, d = call("/api/community", token=tok1)
+check("撤回后广场不可见", not any(q["id"] == qid for q in d.get("questions", [])), str(d.get("questions"))[:150])
+code, d = call("/api/questions/save", {"title": "游客题", "db": "", "py": []}, token=tok_guest)
+check("游客不能出题", code == 403, f"{code} {str(d)[:120]}")
+# 清理：删除自己的题目（顺带测删除路径），保持烟测可重复
+code, d = call(f"/api/questions/{qid}", token=tok1, method="DELETE")
+check("删除题目", code == 200, f"{code} {str(d)[:120]}")
+code, d = call(f"/api/pyfiles/quiz_helper.py", token=tok1, method="DELETE")
+
+print("== 8e. 练习：出题 → 做题 → 判分 ==")
+tok_admin_r = admin_login()
+code, d = call("/api/drills", {"course": "sql", "type": "sql", "title": "查询 90 分以上",
+                               "stem": "查出 90 分及以上的学生，按分数从高到低。",
+                               "setupSql": "CREATE TABLE IF NOT EXISTS sc (id INT PRIMARY KEY, name VARCHAR(20), score INT);"
+                                           "INSERT INTO sc VALUES (1,'jia',90),(2,'yi',95);",
+                               "verifySql": "SELECT name, score FROM sc WHERE score >= 90 ORDER BY score DESC",
+                               "publish": True}, token=tok_admin_r)
+check("SQL 题发布", code == 200 and d.get("id"), f"{code} {str(d)[:120]}")
+sql_did = d.get("id")
+code, det = call(f"/api/drills/{sql_did}", token=tok1)
+check("学生看不到标准答案（防作弊）", not det.get("verifySql"), str(det)[:150])
+check("学生能看到题面", bool(det.get("setupSql")) and bool(det.get("title")), str(det)[:150])
+code, r = call(f"/api/drills/{sql_did}/submit", {"answer_text": "SELECT name FROM sc WHERE score>=90"}, token=tok1)
+check("SQL 错答不通过", r.get("passed") is False, str(r)[:150])
+code, r = call(f"/api/drills/{sql_did}/submit",
+               {"answer_text": "SELECT name, score FROM sc WHERE score >= 90 ORDER BY score DESC"}, token=tok1)
+check("SQL 正答通过", r.get("passed") is True, str(r)[:200])
+code, d = call("/api/drills", {"course": "python", "type": "python", "title": "算平均分",
+                               "stem": "输出三个分数的平均分（两位小数）。",
+                               "expectedOutput": "91.67", "publish": True}, token=tok_admin_r)
+py_did = d.get("id")
+code, r = call(f"/api/drills/{py_did}/submit",
+               {"answer_text": "print(f'{sum([88,95,92])/3:.2f}')"}, token=tok1)
+check("Python 正答通过", r.get("passed") is True, str(r)[:200])
+code, r = call(f"/api/drills/{py_did}/submit", {"answer_text": "print(sum([88,95,92]))"}, token=tok1)
+check("Python 错答不通过", r.get("passed") is False, str(r)[:150])
+code, d = call("/api/drills", {"course": "basic", "type": "single", "title": "查询关键字",
+                               "stem": "SQL 查询用哪个关键字？",
+                               "options": [{"key": "A", "text": "SELECT"}, {"key": "B", "text": "INSERT"}],
+                               "answer": {"key": "A"}, "publish": True}, token=tok_admin_r)
+obj_did = d.get("id")
+check("单选答对", call(f"/api/drills/{obj_did}/submit", {"answer_text": "A"}, token=tok1)[1].get("passed") is True)
+check("单选答错", call(f"/api/drills/{obj_did}/submit", {"answer_text": "B"}, token=tok1)[1].get("passed") is False)
+code, d = call("/api/drills", {"course": "basic", "type": "fill", "title": "主键关键字",
+                               "stem": "建表声明主键用 ______ 关键字。",
+                               "answer": {"values": ["PRIMARY KEY"]}, "publish": True}, token=tok_admin_r)
+fill_did = d.get("id")
+code, r = call(f"/api/drills/{fill_did}/submit", {"answer_text": "  primary   key  "}, token=tok1)
+check("填空宽松匹配", r.get("passed") is True, str(r)[:150])
+code, pr = call("/api/drills/progress", token=tok1)
+check("进度统计", pr.get("progress", {}).get("sql", {}).get("done", 0) >= 1, str(pr)[:150])
+# 专门造一道只答错一次的题，验证错题本收录
+code, d = call("/api/drills", {"course": "sql", "type": "sql", "title": "只答错的题",
+                               "setupSql": "CREATE TABLE IF NOT EXISTS t9 (a INT); INSERT INTO t9 VALUES (1);",
+                               "verifySql": "SELECT a FROM t9", "publish": True}, token=tok_admin_r)
+wrong_did = d.get("id")
+call(f"/api/drills/{wrong_did}/submit", {"answer_text": "SELECT a FROM t9 WHERE a=999"}, token=tok1)
+code, wr = call("/api/drills/wrong", token=tok1)
+check("错题本收录", any(x["id"] == wrong_did for x in wr.get("drills", [])), str([x["title"] for x in wr.get("drills", [])])[:120])
+call(f"/api/drills/{wrong_did}", token=tok_admin_r, method="DELETE")
+code, d = call("/api/drills", {"type": "sql", "title": "游客题", "verifySql": "SELECT 1"}, token=tok_guest)
+check("游客不能出题", code == 400 and "出题权限" in str(d.get("detail", "")), f"{code} {str(d)[:100]}")
+# 未授权的注册用户：练习和素材包都不能出题（两处口径一致）
+u_no = "stu" + uuid.uuid4().hex[:6]
+_, d_no = call("/api/login", {"mode": "register", "username": u_no, "password": "Test1234abc"})
+tok_no = d_no.get("token", "")
+code, r = call("/api/questions/save", {"title": "无权限素材", "db": "", "py": []}, token=tok_no)
+check("无权限不能建素材包", code == 403 and "出题权限" in str(r.get("detail", "")), f"{code} {str(r)[:100]}")
+code, r = call("/api/community/publish", {"db": "", "public": True}, token=tok_no)
+check("无权限不能公开发布", code in (400, 403), f"{code} {str(r)[:80]}")
+_, ul_n = call("/api/admin/users", token=tok_admin_r)
+uid_no = next((x["id"] for x in ul_n.get("users", []) if x["username"] == u_no), 0)
+if uid_no:
+    call("/api/admin/delete_user", {"id": uid_no}, token=tok_admin_r)
+code, d = call("/api/drills", {"type": "sql", "title": "缺答案的题"}, token=tok_admin_r)
+check("缺初始化 SQL 不能出题", code == 400 and "初始化 SQL" in str(d.get("detail", "")), f"{code} {str(d)[:100]}")
+code, d = call("/api/drills", {"type": "sql", "title": "缺答案的题",
+                               "setupSql": "CREATE TABLE z1 (a INT);"}, token=tok_admin_r)
+check("缺标准答案不能出题", code == 400 and "标准答案" in str(d.get("detail", "")), f"{code} {str(d)[:100]}")
+for did in (sql_did, py_did, obj_did, fill_did):
+    call(f"/api/drills/{did}", token=tok_admin_r, method="DELETE")
+
+print("== 8h. 出题数据导入 ==")
+tok_ah = admin_login()
+# CSV → 初始化 SQL
+body, ct = multipart("file", "students.csv", "id,name,score\n1,jia,90\n2,yi,85\n")
+code, r = call("/api/author/setup_from_file", raw=body, ctype=ct, token=tok_ah)
+check("上传 CSV 生成初始化 SQL", code == 200 and r.get("tables") == ["students"]
+      and "INSERT INTO" in (r.get("sql") or ""), str(r)[:160])
+# SQL 脚本
+body, ct = multipart("file", "init.sql", "CREATE TABLE zz (a INT);")
+code, r = call("/api/author/setup_from_file", raw=body, ctype=ct, token=tok_ah)
+check("上传 SQL 脚本", code == 200 and r.get("tables") == ["zz"], str(r)[:140])
+# 用已有数据库
+_, me_a = call("/api/me", token=tok_ah)
+call("/api/sql", {"sql": "CREATE TABLE IF NOT EXISTS gen_t (a INT);"
+                        "DELETE FROM gen_t; INSERT INTO gen_t VALUES (1),(2);"}, token=tok_ah)
+code, r = call("/api/author/setup_from_db", {"db": me_a["db"]}, token=tok_ah)
+check("从数据库生成初始化 SQL", code == 200 and "gen_t" in (r.get("tables") or [])
+      and "INSERT INTO" in (r.get("sql") or ""), str(r)[:160])
+# 不支持的类型 / 无权限
+body, ct = multipart("file", "a.txt", "hello")
+code, r = call("/api/author/setup_from_file", raw=body, ctype=ct, token=tok_ah)
+check("不支持的导入类型被拒", code == 400, f"{code} {str(r)[:100]}")
+u_imp = "stu" + uuid.uuid4().hex[:6]
+_, d_i = call("/api/login", {"mode": "register", "username": u_imp, "password": "Test1234abc"})
+tok_i = d_i.get("token", "")
+body, ct = multipart("file", "a.csv", "a,b\n1,2\n")
+code, r = call("/api/author/setup_from_file", raw=body, ctype=ct, token=tok_i)
+check("无出题权限不能导入", code == 403, f"{code} {str(r)[:100]}")
+call("/api/sql", {"sql": "DROP TABLE IF EXISTS gen_t"}, token=tok_ah)
+
+print("== 8g. 多判分模式 ==")
+tok_ad2 = admin_login()
+S2 = ("CREATE TABLE mm (id INT PRIMARY KEY, name VARCHAR(10), score INT);"
+      "INSERT INTO mm VALUES (1,'a',90),(2,'b',95),(3,'c',80);")
+u_md = "stu" + uuid.uuid4().hex[:6]
+_, d_md = call("/api/login", {"mode": "register", "username": u_md, "password": "Test1234abc"})
+tok_md = d_md.get("token", "")
+
+def mk_drill(**kw):
+    body = {"course": "sql", "type": "sql", "title": "模式测试", "setupSql": S2, "publish": True}
+    body.update(kw)
+    c, r = call("/api/drills", body, token=tok_ad2)
+    return r.get("id"), c, r
+
+# 行序敏感
+did, c, _ = mk_drill(verifySql="SELECT name FROM mm ORDER BY score DESC", judgeMode="result_ordered")
+_, r = call(f"/api/drills/{did}/submit", {"answer_text": "SELECT name FROM mm ORDER BY score DESC"}, token=tok_md)
+p1 = r.get("passed") is True
+_, r = call(f"/api/drills/{did}/submit", {"answer_text": "SELECT name FROM mm ORDER BY score ASC"}, token=tok_md)
+p2 = r.get("passed") is False
+check("判分：行序敏感", p1 and p2)
+call(f"/api/drills/{did}", token=tok_ad2, method="DELETE")
+
+# 只比数据
+did, c, _ = mk_drill(verifySql="SELECT name, score FROM mm WHERE id=1", judgeMode="rows_only")
+_, r = call(f"/api/drills/{did}/submit", {"answer_text": "SELECT score AS s, name AS n FROM mm WHERE id=1"}, token=tok_md)
+check("判分：不检查列名", r.get("passed") is True, str(r)[:140])
+call(f"/api/drills/{did}", token=tok_ad2, method="DELETE")
+
+# 单值
+did, c, _ = mk_drill(verifySql="SELECT MAX(score) FROM mm", judgeMode="cell")
+_, r1 = call(f"/api/drills/{did}/submit", {"answer_text": "SELECT MAX(score) FROM mm"}, token=tok_md)
+_, r2 = call(f"/api/drills/{did}/submit", {"answer_text": "SELECT MIN(score) FROM mm"}, token=tok_md)
+check("判分：只比单值", r1.get("passed") is True and r2.get("passed") is False)
+call(f"/api/drills/{did}", token=tok_ad2, method="DELETE")
+
+# 改数据题
+did, c, _ = mk_drill(verifySql="SELECT score FROM mm WHERE id=1", judgeMode="state",
+                     answer={"values": [100]})
+_, r1 = call(f"/api/drills/{did}/submit", {"answer_text": "UPDATE mm SET score=100 WHERE id=1"}, token=tok_md)
+_, r2 = call(f"/api/drills/{did}/submit", {"answer_text": "UPDATE mm SET score=1 WHERE id=1"}, token=tok_md)
+check("判分：改数据状态", r1.get("passed") is True and r2.get("passed") is False,
+      f"{r1.get('reason')} / {r2.get('reason')}")
+call(f"/api/drills/{did}", token=tok_ad2, method="DELETE")
+
+# Python 包含
+did = call("/api/drills", {"course": "python", "type": "python", "title": "包含",
+                           "expectedOutput": "hello", "judgeMode": "contains",
+                           "publish": True}, token=tok_ad2)[1]["id"]
+_, r = call(f"/api/drills/{did}/submit", {"answer_text": "print('say hello')"}, token=tok_md)
+check("判分：输出包含", r.get("passed") is True, str(r)[:140])
+call(f"/api/drills/{did}", token=tok_ad2, method="DELETE")
+
+# Python 多组测试
+cases = json.dumps([{"input": "1\n2", "expected": "3"}, {"input": "10\n5", "expected": "15"}])
+did = call("/api/drills", {"course": "python", "type": "python", "title": "多组",
+                           "judgeMode": "tests", "testCases": cases,
+                           "publish": True}, token=tok_ad2)[1]["id"]
+_, r = call(f"/api/drills/{did}/submit",
+            {"answer_text": "a=int(input());b=int(input());print(a+b)"}, token=tok_md)
+check("判分：多组测试用例", r.get("passed") is True and len(r.get("cases") or []) == 2,
+      str(r)[:160])
+call(f"/api/drills/{did}", token=tok_ad2, method="DELETE")
+
+# 多选
+did = call("/api/drills", {"course": "basic", "type": "multiple", "title": "多选",
+                           "options": [{"key": "A", "text": "x"}, {"key": "B", "text": "y"},
+                                       {"key": "C", "text": "z"}],
+                           "answer": {"keys": ["A", "C"]}, "publish": True},
+           token=tok_ad2)[1]["id"]
+ok_full = call(f"/api/drills/{did}/submit", {"answer_text": ["A", "C"]}, token=tok_md)[1].get("passed")
+ok_miss = call(f"/api/drills/{did}/submit", {"answer_text": ["A"]}, token=tok_md)[1].get("passed")
+ok_extra = call(f"/api/drills/{did}/submit", {"answer_text": ["A", "B", "C"]}, token=tok_md)[1].get("passed")
+check("判分：多选全对/漏选/多选", ok_full is True and ok_miss is False and ok_extra is False)
+call(f"/api/drills/{did}", token=tok_ad2, method="DELETE")
+
+# 试跑
+code, r = call("/api/author/try_sql", {"setup": S2, "sql": "SELECT * FROM mm"}, token=tok_ad2)
+check("出题试跑 SQL", code == 200 and any(t["name"] == "mm" for t in r.get("tables", []))
+      and r["results"][0].get("rowCount") == 3, str(r)[:160])
+code, r = call("/api/author/try_python", {"code": "print('ok')"}, token=tok_ad2)
+check("出题试跑 Python", code == 200 and "ok" in (r.get("out") or ""), str(r)[:160])
+code, r = call("/api/author/try_sql", {"setup": S2, "sql": "SELECT * FROM mm"}, token=tok_md)
+check("无出题权限不能试跑", code == 403, f"{code} {str(r)[:100]}")
+
+print("== 8f. 用户系统与管理后台 ==")
+tok_ad = admin_login()
+u_us = "stu" + uuid.uuid4().hex[:6]
+_, d_us = call("/api/login", {"mode": "register", "username": u_us, "password": "Test1234abc"})
+tok_us = d_us.get("token", "")
+
+# 个人中心
+code, prof = call("/api/me/profile", token=tok_us)
+check("个人中心返回资料", code == 200 and prof.get("username") == u_us, str(prof)[:150])
+check("个人中心带统计", isinstance(prof.get("stats"), dict) and prof["stats"].get("databases", 0) >= 1,
+      str(prof.get("stats"))[:150])
+
+# 自助改密 + 旧密码失效 + 其他设备下线
+_, d_other = call("/api/login", {"mode": "login", "username": u_us, "password": "Test1234abc"})
+tok_other = d_other.get("token", "")
+code, r = call("/api/me/password", {"old_password": "Test1234abc", "new_password": "NewPass987"},
+               token=tok_us)
+check("自助改密", code == 200, str(r)[:150])
+check("改密后其他会话被下线", call("/api/me", token=tok_other)[0] == 401, "旧会话仍有效")
+code, d_new = call("/api/login", {"mode": "login", "username": u_us, "password": "NewPass987"})
+check("新密码可登录", code == 200, str(d_new)[:100])
+check("旧密码失效", call("/api/login", {"mode": "login", "username": u_us,
+                                       "password": "Test1234abc"})[0] == 400)
+tok_us = d_new.get("token", "")
+code, r = call("/api/me/logout_all", {}, token=tok_us)
+check("退出所有设备", code == 200 and "killed" in r, str(r)[:100])
+check("当前会话保留", call("/api/me", token=tok_us)[0] == 200)
+
+# 管理端：总览 / 搜索 / 详情
+code, ov = call("/api/admin/overview", token=tok_ad)
+check("管理总览", code == 200 and ov.get("users", 0) >= 1 and "regTrend" in ov, str(ov)[:150])
+code, ls = call(f"/api/admin/users?kind=user&q={u_us}", token=tok_ad)
+check("按关键词搜索用户", code == 200 and ls.get("total") == 1, str(ls)[:150])
+uid_us = (ls.get("users") or [{}])[0].get("id")
+code, det = call(f"/api/admin/users/{uid_us}", token=tok_ad)
+check("用户详情（库/文件/日志）", code == 200 and "databases" in det and "logs" in det, str(det)[:150])
+
+# 权限与禁用
+code, r = call(f"/api/admin/users/{uid_us}/update", {"can_publish": True}, token=tok_ad)
+check("管理端开通出题权限", code == 200 and r.get("canPublish") is True, str(r)[:120])
+code, r = call(f"/api/admin/users/{uid_us}/update", {"disabled": True}, token=tok_ad)
+check("管理端禁用账号", code == 200 and r.get("disabled") is True, str(r)[:120])
+check("禁用后无法登录", call("/api/login", {"mode": "login", "username": u_us,
+                                           "password": "NewPass987"})[0] == 400)
+check("禁用后现有会话失效", call("/api/me", token=tok_us)[0] == 401)
+code, r = call(f"/api/admin/users/{uid_us}/update", {"disabled": False}, token=tok_ad)
+check("管理端解禁", code == 200 and r.get("disabled") is False, str(r)[:120])
+
+# 管理员建号 + 强制下线 + 审计日志 + 批量
+u_made = "stu" + uuid.uuid4().hex[:6]
+code, r = call("/api/admin/users", {"username": u_made, "password": "Create12345",
+                                    "can_publish": True}, token=tok_ad)
+check("管理员新建账号", code == 200 and r.get("canPublish") is True, str(r)[:150])
+code, r = call(f"/api/admin/users/{uid_us}/revoke_sessions", {}, token=tok_ad)
+check("强制下线", code == 200, str(r)[:120])
+code, lg = call("/api/admin/auth_log?limit=50", token=tok_ad)
+acts = [x["action"] for x in lg.get("logs", [])]
+check("审计日志有记录", code == 200 and "admin_create" in acts, str(acts[:8]))
+code, r = call("/api/admin/batch", {"ids": [uid_us], "action": "grant"}, token=tok_ad)
+check("批量操作", code == 200 and r.get("done") == 1, str(r)[:120])
+# 普通用户不能进管理端
+check("普通用户被拒", call("/api/admin/overview", token=tok_us)[0] == 401 or
+      call("/api/login", {"mode": "login", "username": u_made,
+                          "password": "Create12345"})[0] == 200)
+# 清理
+_, d_clean = call("/api/login", {"mode": "login", "username": u_made, "password": "Create12345"})
+code, ls2 = call(f"/api/admin/users?kind=user&q={u_made}", token=tok_ad)
+for x in ls2.get("users", []):
+    call("/api/admin/delete_user", {"id": x["id"]}, token=tok_ad)
+code, ls3 = call(f"/api/admin/users?kind=user&q={u_us}", token=tok_ad)
+for x in ls3.get("users", []):
+    call("/api/admin/delete_user", {"id": x["id"]}, token=tok_ad)
 
 print("== 9. 隔离补充 ==")
 code, d = call("/api/sql", {"sql": "DROP TABLE emp;", "db": new_db}, token=tok2)
