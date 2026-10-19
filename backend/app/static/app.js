@@ -732,19 +732,11 @@ const App = {
       this.selectedDb = me.db || (this.databases[0] ? this.databases[0].name : "");
       this.dbTables = { [this.selectedDb]: me.tables || [] };
       this.openDbs = { [this.selectedDb]: true };
-      // SQL 编辑器：同一个账号有草稿就接着写；否则首次访问预填示例，点开就能跑通第一条。
-      // 草稿与"看过示例"都按账号分开存，共用电脑的学生互不串号
+      // SQL 编辑器：只恢复学生自己上次写的内容；没有就保持空白，不预填任何示例
       const who = (me.user && me.user.name) || "?";
       let draft = "";
       try { draft = localStorage.getItem("lab_sql_draft:" + who) || ""; } catch (e) {}
-      if (draft.trim()) {
-        this.sqlInit = draft;
-      } else if (!sessionStorage.getItem("lab_sql_seen:" + who)) {
-        this.sqlInit = "SELECT * FROM emp";
-        sessionStorage.setItem("lab_sql_seen:" + who, "1");
-      } else {
-        this.sqlInit = "";
-      }
+      this.sqlInit = draft;
       this.logged = true;
       this.initPyFiles();
       this.checkPendingShare();
@@ -903,28 +895,23 @@ const App = {
         const det = await this.api(`/api/drills/${d.id}`);
         this.drillCurrent = det;
         this.drawer = "";
-        let hint = "";
         if (det.type === "sql") {
           // 建/复用本题的沙箱库（初始化 SQL 已在里面跑好），侧栏显示它的表
           this.drillSandbox.loading = true;
           try {
             const sb = await this.api(`/api/drills/${det.id}/sandbox`, { method: "POST", body: { reset: false } });
             this.drillSandbox = { db: sb.db, tables: sb.tables || [], loading: false };
-            const first = (sb.tables || [])[0];
-            hint = first ? `SELECT * FROM \`${first.name}\` LIMIT 20` : "SELECT 1";
           } catch (e) {
             this.drillSandbox = { db: "", tables: [], loading: false };
             this.toast(e.message);
-            hint = "-- 沙箱数据库创建失败";
           }
-        } else if (det.type === "python") {
-          hint = det.starterCode || "";
         }
+        // 答题区一律空白，不预填任何命令或起始代码
         if (det.type === "sql" || det.type === "python") {
           this.$nextTick(() => {
             if (this.$refs.cmDrillRef) {
-              this.$refs.cmDrillRef.setValue(hint);
-              this.drillCode = hint;
+              this.$refs.cmDrillRef.setValue("");
+              this.drillCode = "";
               this.$refs.cmDrillRef.refresh();
             }
           });
@@ -981,11 +968,11 @@ const App = {
 
     resetDrillCode() {
       if (!this.drillCurrent) return;
-      const init = this.drillCurrent.type === "sql"
-        ? "SELECT * FROM 表名 LIMIT 20   -- 在这里写你的查询"
-        : (this.drillCurrent.starterCode || "");
-      if (this.$refs.cmDrillRef) this.$refs.cmDrillRef.setValue(init);
-      this.drillCode = init;
+      if (this.$refs.cmDrillRef) this.$refs.cmDrillRef.setValue("");
+      this.drillCode = "";
+      this.drillFill = "";
+      this.drillPick = "";
+      this.drillMulti = [];
       this.drillResult = null;
     },
 
@@ -1104,7 +1091,6 @@ const App = {
           set({
             title: "两数求和（多组测试）",
             stem: "读入两个整数，输出它们的和。",
-            starterCode: "a = int(input())\nb = int(input())\n# 在这里输出 a+b\n",
             cases: [
               { input: "1\n2", expected: "3" },
               { input: "10\n5", expected: "15" },
@@ -1115,8 +1101,7 @@ const App = {
         } else {
           set({
             title: "计算平均分",
-            stem: "读入三个分数，输出平均分，保留两位小数。",
-            starterCode: "scores = [88, 95, 92]\n# 计算平均值并打印\n",
+            stem: "已知三个分数 88、95、92，输出它们的平均分，保留两位小数。",
             inputData: "",
             expectedOutput: "91.67",
             tryCode: "scores = [88, 95, 92]\nprint(f'{sum(scores)/len(scores):.2f}')\n",
@@ -1208,8 +1193,7 @@ const App = {
           cases,
           trySql: d.verifySql || "",
           tryCode: d.starterCode || "",
-          paper: this.paperCurrent && this.paperCurrent.id === d.paperId
-            ? this.paperCurrent.title : "",
+          paper: "",
           score: d.score || 10,
         };
       } else {
@@ -1220,7 +1204,7 @@ const App = {
           optionsText: "", rightKey: "", multiKeys: [], fillAnswers: "", status: 1,
           judgeMode: "result", cases: [{ input: "", expected: "" }],
           trySql: "", tryCode: "",
-          paper: this.paperCurrent ? this.paperCurrent.title : "", score: 10,
+          paper: "", score: 10,
         };
       }
       this.authorDirty = false;
@@ -1664,7 +1648,7 @@ const App = {
     },
 
     async newPyFile() {
-      const name = await this.askText("新建 Python 文件", "文件名（可省略 .py 后缀）", "新建文件.py");
+      const name = await this.askText("新建 Python 文件", "文件名（可省略 .py 后缀）", "");
       if (!name) return;
       const final = name.toLowerCase().endsWith(".py") ? name : name + ".py";
       this.busy = true;
@@ -1683,11 +1667,11 @@ const App = {
           return;
         }
         await this.api(`/api/pyfiles/${encodeURIComponent(final)}`,
-                       { method: "PUT", body: { content: "# " + final + "\n" } });
+                       { method: "PUT", body: { content: "" } });
         await this.refreshPyList();
         if (!this.pyOpenFiles.includes(final)) this.pyOpenFiles.push(final);
         this.pyCurrent = final;
-        if (this.$refs.cmPyRef) this.$refs.cmPyRef.setValue("# " + final + "\n");
+        if (this.$refs.cmPyRef) this.$refs.cmPyRef.setValue("");
         this.toast(`已创建 ${final}`);
       } catch (e) { this.toast(e.message); }
       finally { this.busy = false; }

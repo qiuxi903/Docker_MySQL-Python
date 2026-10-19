@@ -27,7 +27,7 @@ html[data-theme="light"] body { background: #f6f8fa; }
 <link rel="stylesheet" href="/vendor/codemirror/codemirror.css">
 <link rel="stylesheet" href="/vendor/codemirror/addon/hint/show-hint.css">
 <link rel="stylesheet" href="/fonts/misans/misans.css">
-<link rel="stylesheet" href="/style.css?v=120">
+<link rel="stylesheet" href="/style.css?v=123">
 </head>
 <body>
 <div id="app" v-cloak>
@@ -52,10 +52,12 @@ html[data-theme="light"] body { background: #f6f8fa; }
       <label class="f">账号</label>
       <input type="text" v-model.trim="loginForm.username" placeholder="字母开头，只能字母和数字，3-20 位"
              autocapitalize="off" autocorrect="off" spellcheck="false"
+             autocomplete="off" name="lab-username"
              @keyup.enter="doLogin('login')">
       <label class="f">密码</label>
       <input type="password" v-model="loginForm.password"
              placeholder="至少 8 位，须含字母和数字" maxlength="32"
+             autocomplete="new-password" name="lab-password"
              @keyup.enter="doLogin('login')">
       <button class="btn primary big login-main" :disabled="busy" @click="doLogin('login')">登 录</button>
       <div class="row-2">
@@ -149,7 +151,7 @@ html[data-theme="light"] body { background: #f6f8fa; }
             <div class="panel-b editor-host">
               <cm-editor ref="cmSqlRef" mode="text/x-mysql" :value="sqlInit" :run="runSql"
                 :hint-tables="tablesHint" @change="onSqlChange"
-                placeholder="像 mysql 命令行一样直接写 SQL，不需要分号。&#10;例如：SELECT * FROM emp&#10;多条语句就一行一条，或用分号分隔"></cm-editor>
+                placeholder="像 mysql 命令行一样直接写 SQL，不需要分号；多条语句一行一条，或用分号分隔"></cm-editor>
             </div>
           </section>
 
@@ -163,8 +165,7 @@ html[data-theme="light"] body { background: #f6f8fa; }
             <div class="console" ref="sqlConsoleEl">
               <div v-if="!sqlConsole.length" class="console-empty">
                 <div class="ce-ico"><e-icon name="terminal" :size="28"></e-icon></div>
-                像 mysql 命令行一样：上面输入 SQL，点「运行」，结果就出在这里。<br>
-                试试直接运行 <code>SELECT * FROM emp</code>
+                像 mysql 命令行一样：上面输入 SQL，点「运行」，结果就出在这里。
               </div>
               <div v-for="(e,i) in sqlConsole" :key="'e'+i" class="cblock">
                 <div class="cprompt"><span class="pmark">mysql&gt;</span><span class="psql">{{ e.sql }}</span></div>
@@ -806,9 +807,6 @@ html[data-theme="light"] body { background: #f6f8fa; }
               <!-- Python -->
               <template v-if="dq.type==='python'">
                 <p class="tip" style="margin:0 0 6px">提示：沙箱是命令行环境，不出图形窗口（学生代码里别用 tkinter / PyQt 等）。</p>
-                <label class="f">起始代码（学生看到的第一段代码）</label>
-                <textarea class="dq-area code" v-model="dq.starterCode" rows="5" spellcheck="false"
-                          placeholder="# 可以先给学生一些框架代码"></textarea>
                 <template v-if="dq.judgeMode==='tests'">
                   <label class="f">测试用例（每组一行：输入 ⇥ 期望输出；输入里换行用 \n）</label>
                   <div class="auth-cases">
@@ -1780,8 +1778,6 @@ INSERT INTO course VALUES (1,'数学');</pre>
       </template>
 
       <template v-else-if="dq.type==='python'">
-        <label class="f">起始代码（给学生预填）</label>
-        <textarea class="dq-area" v-model="dq.starterCode" rows="3" spellcheck="false" placeholder="scores = [88, 95, 92]"></textarea>
         <label class="f">输入数据（程序里 input() 读到的内容，可留空）</label>
         <textarea class="dq-area" v-model="dq.inputData" rows="2" spellcheck="false" placeholder="一行一条输入"></textarea>
         <label class="f">期望输出（判分用；不会发给学生）</label>
@@ -1848,6 +1844,6 @@ INSERT INTO course VALUES (1,'数学');</pre>
 <script src="/vendor/codemirror/addon/display/placeholder.js"></script>
 <script src="/vendor/codemirror/addon/hint/show-hint.js"></script>
 <script src="/vendor/codemirror/addon/hint/sql-hint.js"></script>
-<script src="/app.js?v=121"></script>
+<script src="/app.js?v=122"></script>
 </body>
 </html>

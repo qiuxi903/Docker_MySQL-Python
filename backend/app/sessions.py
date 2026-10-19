@@ -110,6 +110,13 @@ def _init_meta():
                             "ADD COLUMN uploaded TINYINT NOT NULL DEFAULT 0")
             except Exception:
                 pass
+            # 以前版本给新账号预置过一段示例代码；现在编辑器一律空白，
+            # 只清掉「一字未改的旧示例」，不影响学生自己写过的文件
+            try:
+                cur.execute(f"UPDATE {q_ident(C.META_DB)}.py_files SET content='' "
+                            "WHERE content=%s", (PY_MAIN_SEED_OLD,))
+            except Exception:
+                pass
             cur.execute(f"""
                 CREATE TABLE IF NOT EXISTS {q_ident(C.META_DB)}.sessions (
                     token VARCHAR(64) PRIMARY KEY,
@@ -316,9 +323,10 @@ _PYFILE_RE = re.compile(r"^[\w\u4e00-\u9fff\-]{1,40}\.py$", re.I)
 PYFILE_MAX = 256 * 1024
 PYFILE_MAX_COUNT = 30
 
-# 新账号的 main.py 初次内容：让学生点开 Python 页就能直接跑通，
-# 顺便演示 query()/execute() 操作自己的数据库
-PY_MAIN_SEED = '''\
+# 新账号的 main.py 只建一个空文件：编辑器不预填任何命令，全部由学生自己输入。
+PY_MAIN_SEED = ""
+# 旧版本预置过的示例原文，仅用于升级时把「没改过的示例」清空
+PY_MAIN_SEED_OLD = '''\
 # 欢迎来到 Python 练习区！点右上角「▶ 运行」即可执行。
 # query(sql) 查你自己的 MySQL 数据库，execute(sql) 执行增删改
 
