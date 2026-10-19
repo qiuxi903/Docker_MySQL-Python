@@ -133,8 +133,111 @@ for p in ["/api/login", "/api/me", "/api/tables", "/api/sql", "/api/import",
           "/api/community", "/api/community/upload", "/api/community/publish",
           "/api/community/import", "/api/community/open", "/api/community/{item_id}/download",
           "/api/source/{table}", "/api/source/{table}/download",
-          "/api/pyrun/start", "/api/pyrun/input", "/api/admin/users", "/api/health"]:
+          "/api/pyrun/start", "/api/pyrun/input", "/api/admin/users", "/api/health",
+          "/api/author/qpack/parse", "/api/author/qpack/create"]:
     check(f"路由 {p}", p in paths)
+
+print("== 5b. 题目包：zip 解包与解析 ==")
+import zipfile
+from app import qpack
+from app import drills as _drills
+
+
+def make_zip(entries, folder=""):
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for name, data in entries:
+            zf.writestr(folder + name, data if isinstance(data, bytes) else data.encode())
+    return buf.getvalue()
+
+
+STEM = ("【题  干】\n人力资源库 db_hrm。\n\n"
+        "1. 创建采购表 t_purchase。\n"
+        "2. 向 t_employee 插入员工 10051。\n"
+        "3. 查询薪资 6000 到 8000 的记录。\n")
+ANS = ("-- 1\nCREATE TABLE t_purchase (id INT PRIMARY KEY, name VARCHAR(30));\n\n"
+       "-- 2\nINSERT INTO t_employee VALUES (10051, '林子山');\n\n"
+       "-- 3\nSELECT * FROM t_salary WHERE money BETWEEN 6000 AND 8000;\n")
+DATA = ("DROP TABLE IF EXISTS t_employee;\n"
+        "CREATE TABLE t_employee (id INT PRIMARY KEY, name VARCHAR(30));\n"
+        "INSERT INTO t_employee VALUES (10001, '曹岚');\n"
+        "INSERT INTO t_employee VALUES (10051, '林子山');\n"
+        "DROP TABLE IF EXISTS t_purchase;\n"
+        "CREATE TABLE t_purchase (id INT PRIMARY KEY, name VARCHAR(30));\n")
+
+z1 = make_zip([("22试题描述.txt", STEM.encode("gbk")), ("answer.txt", ANS),
+               ("db_hrm.myd", DATA)], folder="mysql题目例题/")
+files = _drills.unpack_package([{"name": "试卷.zip", "data": z1}])
+check("zip：解出 3 个文件", len(files) == 3, str([f["name"] for f in files]))
+check("zip：去掉目录层级", sorted(f["name"] for f in files) ==
+      ["22试题描述.txt", "answer.txt", "db_hrm.myd"], str([f["name"] for f in files]))
+
+pkg = _drills.parse_package([{"name": "试卷.zip", "data": z1}])
+check("zip：解析出 3 道题且都有答案",
+      pkg["stats"]["total"] == 3 and pkg["stats"]["withAnswer"] == 3, str(pkg["stats"]))
+check("zip：GBK 题干正确", "人力资源" in pkg["title"], pkg["title"][:40])
+check("zip：答案产物被剔除", any("t_purchase" in x for x in pkg["stripped"]),
+      str(pkg["stripped"]))
+check("zip：建表题用整库状态判分",
+      pkg["questions"][0]["kind"] == "sql_ddl" and
+      pkg["questions"][0]["judgeMode"] == "dbstate", str(pkg["questions"][0]))
+check("zip：包内文件清单回传", sorted(pkg["files"]) == ["22试题描述.txt", "answer.txt", "db_hrm.myd"],
+      str(pkg["files"]))
+
+# zip 里混入无关文件应被忽略
+z2 = make_zip([("题干.txt", STEM), ("answer.txt", ANS), ("thumb.png", b"\x89PNG"),
+               (".DS_Store", b"x"), ("~$cache1", b"x")])
+files2 = _drills.unpack_package([{"name": "试卷.zip", "data": z2}])
+check("zip：忽略图片/隐藏/临时文件", sorted(f["name"] for f in files2) ==
+      ["answer.txt", "题干.txt"], str([f["name"] for f in files2]))
+
+# 非 zip 直接传文件仍然兼容
+files3 = _drills.unpack_package([{"name": "a.txt", "data": STEM.encode()},
+                                 {"name": "b.txt", "data": ANS.encode()}])
+check("兼容：直接传多个文件", len(files3) == 2)
+
+# 坏 zip / 空包给出可读错误
+for bad, why in [(b"not a zip at all", "坏 zip"), (make_zip([("a.png", b"x")]), "空包")]:
+    try:
+        _drills.unpack_package([{"name": "x.zip", "data": bad}])
+        ok = False
+    except _drills.DrillError as e:
+        ok = bool(str(e))
+    check(f"zip：{why} 有友好报错", ok)
+
+# GBK 文件名的 zip（Windows 压缩工具常见）：zip 头里是原始 GBK 字节且不带 UTF-8 标志
+def make_gbk_name_zip(gbk_name, data):
+    """先用等长 ASCII 名打包，再把文件名字节替换成 GBK（本地头 + 中央目录各一份）。"""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("aaaa.txt", data)
+    raw = buf.getvalue()
+    assert len(gbk_name) == len("aaaa.txt")
+    return raw.replace(b"aaaa.txt", gbk_name)
+
+
+z3 = make_gbk_name_zip("题干.txt".encode("gbk"), STEM)
+files3g = _drills.unpack_package([{"name": "试卷.zip", "data": z3}])
+check("zip：GBK 文件名不乱码", "题干.txt" in [f["name"] for f in files3g],
+      str([f["name"] for f in files3g]))
+
+# zip 里放 CSV 作为数据源
+z4 = make_zip([("题干.txt", "1、查询所有数据\n2、统计行数\n3、删除 id=2\n"), ("answer.txt", ANS),
+               ("data.csv", "id,name\n1,a\n2,b\n")])
+pkg4 = _drills.parse_package([{"name": "p.zip", "data": z4}])
+check("zip：CSV 数据自动转成建表语句",
+      pkg4["tables"] == ["data"] and "CREATE TABLE `data`" in pkg4["dataSql"], str(pkg4["tables"]))
+
+# 解压炸弹：声称超大
+big = io.BytesIO()
+with zipfile.ZipFile(big, "w", zipfile.ZIP_DEFLATED) as zf:
+    zf.writestr("big.sql", b"SELECT 1;" * (9 * 1024 * 1024 // 9))
+try:
+    _drills.unpack_package([{"name": "big.zip", "data": big.getvalue()}])
+    ok = False
+except _drills.DrillError as e:
+    ok = "8MB" in str(e) or "32MB" in str(e)
+check("zip：超大文件被拒", ok)
 
 print("== 6. Python 沙箱执行引擎（交互式作业） ==")
 from runner import server as runner_server

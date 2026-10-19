@@ -723,10 +723,16 @@ INSERT INTO `t_salary` VALUES (10001, 10001, 7000.00, '2023-12-15');
 INSERT INTO `t_salary` VALUES (10002, 10001, 9000.00, '2023-11-15');
 """
 
-# GBK 编码的题干也要能读
-body, ct = multipart_files([("22试题描述.txt", QP_STEM.encode("gbk")),
-                            ("answer.txt", QP_ANSWERS),
-                            ("db_hrm.myd", QP_DATA)])
+# GBK 编码的题干也要能读；zip 里套一层文件夹（老师直接把整个文件夹压缩）
+import zipfile
+
+zip_buf = io.BytesIO()
+with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+    zf.writestr("mysql题目例题/22试题描述.txt", QP_STEM.encode("gbk"))
+    zf.writestr("mysql题目例题/answer.txt", QP_ANSWERS)
+    zf.writestr("mysql题目例题/db_hrm.myd", QP_DATA)
+    zf.writestr("mysql题目例题/说明.png", b"\x89PNG")     # 无关文件应被忽略
+body, ct = multipart_files([("mysql题目例题.zip", zip_buf.getvalue())])
 code, pkg = call("/api/author/qpack/parse", raw=body, ctype=ct, token=tok_ad2)
 check("题目包：解析成功", code == 200 and pkg.get("stats", {}).get("total") == 3, str(pkg)[:200])
 check("题目包：GBK 题干正确解码",
@@ -736,11 +742,20 @@ check("题目包：3 道题都配上答案", pkg.get("stats", {}).get("withAnswe
 check("题目包：识别出数据表", sorted(pkg.get("tables") or []) ==
       ["t_department", "t_employee", "t_salary"], str(pkg.get("tables")))
 check("题目包：自动剔除答案产物", bool(pkg.get("stripped")), str(pkg.get("stripped")))
+check("题目包：忽略压缩包里的无关文件",
+      sorted(pkg.get("files") or []) == ["22试题描述.txt", "answer.txt", "db_hrm.myd"],
+      str(pkg.get("files")))
 check("题目包：建表题用整库状态判分",
       pkg["questions"][0].get("kind") == "sql_ddl" and
       pkg["questions"][0].get("judgeMode") == "dbstate", str(pkg["questions"][0]))
 check("题目包：查询题用结果集判分",
       pkg["questions"][2].get("judgeMode") == "result", str(pkg["questions"][2]))
+
+# 损坏的 zip 给出可读错误
+bad_body, bad_ct = multipart_files([("坏包.zip", b"this is not a zip")])
+code, r = call("/api/author/qpack/parse", raw=bad_body, ctype=bad_ct, token=tok_ad2)
+check("题目包：坏 zip 被拒且提示清楚",
+      code == 400 and "zip" in str(r.get("detail", "")).lower(), f"{code} {str(r)[:120]}")
 
 # 无出题权限不能解析/创建
 code, r = call("/api/author/qpack/parse", raw=body, ctype=ct, token=tok_md)

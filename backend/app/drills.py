@@ -644,14 +644,46 @@ def try_python(account: dict, code: str, stdin_text: str = "") -> dict:
 
 # ---------------- 题目包导入（一份试卷 + 参考答案 → 多道练习题） ----------------
 
-QPACK_MAX_FILES = 12
+QPACK_MAX_FILES = 40
 QPACK_FILE_MAX = 8 * 1024 * 1024
+QPACK_ZIP_MAX = 40 * 1024 * 1024      # 上传的 zip 本体上限
+
+
+def unpack_package(files: list[dict]) -> list[dict]:
+    """把一个或多个上传文件展开成待解析的材料列表。
+
+    现在前端只上传一个 .zip；这里同时兼容直接多选文件的旧方式，
+    以及误把 zip 改名成别的扩展名的情况（按文件头识别 PK）。
+    """
+    from . import qpack
+
+    if not files:
+        raise DrillError("没有收到文件")
+
+    out = []
+    for f in files:
+        name = (f.get("name") or "").strip()
+        raw = f.get("data") or b""
+        if len(raw) > QPACK_ZIP_MAX:
+            raise DrillError(f"文件 {name} 超过 40MB")
+        is_zip = raw[:2] == b"PK" or name.lower().endswith(".zip")
+        if not is_zip:
+            out.append({"name": name, "data": raw})
+            continue
+        try:
+            out.extend(qpack.expand_zip(raw))
+        except ValueError as e:
+            raise DrillError(str(e))
+
+    if len(out) > QPACK_MAX_FILES:
+        raise DrillError(f"题目包里的文件太多（{len(out)} 个，最多 {QPACK_MAX_FILES} 个）")
+    return out
 
 
 def parse_package(files: list[dict]) -> dict:
     """解析上传的题目包，返回预览：试卷信息 + 每道小题（含答案、建议判分方式）。
 
-    files: [{name, data(bytes)}]
+    files: [{name, data(bytes)}] —— 可以是一个 zip，也可以直接是多个文件。
     分类规则（按扩展名 + 内容特征）：
       .sql / .myd / .txt 里含 CREATE TABLE → 数据脚本（所有小题共用）
       .txt/.md 里含「题 干」或「1、2、」编号 → 题干
@@ -659,10 +691,7 @@ def parse_package(files: list[dict]) -> dict:
     """
     from . import qpack
 
-    if not files:
-        raise DrillError("没有收到文件")
-    if len(files) > QPACK_MAX_FILES:
-        raise DrillError(f"一次最多 {QPACK_MAX_FILES} 个文件")
+    files = unpack_package(files)
 
     data_sqls = []
     stem_texts = []
@@ -682,12 +711,20 @@ def parse_package(files: list[dict]) -> dict:
         if re.search(r"^\s*-{2,}\s*(?:第\s*)?\d+\s*(?:题)?\s*$", text, re.M):
             ans_texts.append(text)
             continue
-        # 2) 数据脚本：扩展名 .sql/.myd，或纯建表语句
+        # 2) 表格数据：先转成 CREATE TABLE + INSERT，和 SQL 导出同等对待
+        if low.endswith((".csv", ".xlsx")):
+            try:
+                conv = setup_from_file(name, raw)
+                data_sqls.append(conv["sql"])
+            except DrillError as e:
+                raise DrillError(f"数据文件 {name} 解析失败：{e}")
+            continue
+        # 3) 数据脚本：扩展名 .sql/.myd，或纯建表语句
         if low.endswith((".sql", ".myd")) or (
                 low.endswith(".txt") and "CREATE TABLE" in text.upper() and "题" not in text[:200]):
             data_sqls.append(text)
             continue
-        # 3) 题干：含「题 干」标记，或连续编号小题且不含 SQL 语句
+        # 4) 题干：含「题 干」标记，或连续编号小题且不含 SQL 语句
         has_stem_mark = bool(re.search(r"[『【]?\s*题\s*干\s*[』】]?", text))
         numbered = len(re.findall(r"^\s*(?:\d+\s*[、.．)]|[(（]\d+[)）])", text, re.M))
         has_sql = bool(re.search(r"\b(SELECT|INSERT|UPDATE|DELETE|CREATE)\b", text, re.I))

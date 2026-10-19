@@ -1055,6 +1055,12 @@ body, header, .panel, .side, .console-pane, .community-page, .admin-dlg, dialog 
   display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
 }
 .qpack-sum-stats { display: flex; gap: 6px; flex-wrap: wrap; }
+.qpack-files {
+  display: flex; gap: 6px; flex-wrap: wrap; align-items: center;
+  margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--line);
+}
+.qpack-files .q-part { font-size: 11.5px; }
+.qpack-files .qpack-label { margin-right: 2px; }
 .qpack-chip {
   font-size: 12px; padding: 3px 10px; border-radius: 999px;
   background: var(--btn-bg); border: 1px solid var(--line); color: var(--muted);

@@ -1,13 +1,23 @@
 """题目包导入：把「一份试卷 + 参考答案」拆成多道可判分的练习题。
 
-支持的上传材料（任选，可混合）：
+支持的上传材料（打包成一个 zip 上传）：
   - 题干文件：.txt / .md —— 含「题  干」和 1、2、3… 编号小题
   - 参考答案：.txt / .md —— 以 -- 1 / ---8 / 1、 等分隔，按题号对应
   - 数据脚本：.sql / .myd（Navicat 导出的其实就是 SQL 文本）—— 作为所有小题共用的初始化数据
 
 解析规则尽量宽容：中文全角/半角标点、题号后缀、空行都容忍。
 """
+import io
+import os
 import re
+import zipfile
+
+# zip 解包限制（防超大包 / 解压炸弹）
+ZIP_FILE_MAX = 8 * 1024 * 1024          # 单个文件解压后
+ZIP_TOTAL_MAX = 32 * 1024 * 1024        # 全部文件合计
+ZIP_MAX_ENTRIES = 40
+
+PACK_EXTS = (".txt", ".md", ".sql", ".myd", ".csv", ".xlsx")
 
 # 题干里出现这些词，说明这一行是「要求/注意」，不是题目正文
 NOTE_RE = re.compile(r"^(注意|说明|提示)\s*[:：]?")
@@ -39,6 +49,66 @@ def decode_text(data: bytes) -> str:
         except UnicodeDecodeError:
             continue
     return data.decode("utf-8", "replace")
+
+
+def _zip_entry_name(info: zipfile.ZipInfo) -> str:
+    """还原 zip 里的文件名。
+
+    Windows 自带压缩、好压等工具打的 zip 常用 GBK 存中文名且不设 UTF-8 标志，
+    zipfile 会按 cp437 解成乱码 —— 这里用原始字节重新按 UTF-8 / GBK 试一遍。
+    """
+    name = info.filename
+    if info.flag_bits & 0x800:
+        return name
+    try:
+        raw = name.encode("cp437")
+    except UnicodeEncodeError:
+        return name
+    for enc in ("utf-8", "gbk", "gb18030"):
+        try:
+            cand = raw.decode(enc)
+        except UnicodeDecodeError:
+            continue
+        if cand != name:
+            return cand
+    return name
+
+
+def expand_zip(data: bytes) -> list[dict]:
+    """解开题目包 zip，返回 [{name, data}]（只保留题干/答案/数据类文件）。
+
+    忽略目录项、隐藏文件、__MACOSX、Office 临时文件；zip 里套一层文件夹也没关系。
+    """
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(data))
+    except (zipfile.BadZipFile, ValueError):
+        raise ValueError("不是有效的 zip 文件，请重新压缩后上传")
+
+    out, total = [], 0
+    with zf:
+        for info in zf.infolist():
+            if len(out) >= ZIP_MAX_ENTRIES:
+                break
+            if info.is_dir():
+                continue
+            path = _zip_entry_name(info).replace("\\", "/")
+            if "__MACOSX" in path:
+                continue
+            name = path.rsplit("/", 1)[-1].strip()
+            if not name or name.startswith(".") or name.startswith("~$"):
+                continue
+            if os.path.splitext(name)[1].lower() not in PACK_EXTS:
+                continue
+            if info.file_size > ZIP_FILE_MAX:
+                raise ValueError(f"压缩包里的 {name} 超过 8MB")
+            total += info.file_size
+            if total > ZIP_TOTAL_MAX:
+                raise ValueError("压缩包解压后超过 32MB，请精简数据文件")
+            out.append({"name": name, "data": zf.read(info)})
+
+    if not out:
+        raise ValueError("压缩包里没有找到题干/答案/数据文件（支持 .txt .md .sql .myd .csv .xlsx）")
+    return out
 
 
 def _tidy(text: str) -> str:

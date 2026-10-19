@@ -27,7 +27,7 @@ html[data-theme="light"] body { background: #f6f8fa; }
 <link rel="stylesheet" href="/vendor/codemirror/codemirror.css">
 <link rel="stylesheet" href="/vendor/codemirror/addon/hint/show-hint.css">
 <link rel="stylesheet" href="/fonts/misans/misans.css">
-<link rel="stylesheet" href="/style.css?v=115">
+<link rel="stylesheet" href="/style.css?v=116">
 </head>
 <body>
 <div id="app" v-cloak>
@@ -524,15 +524,16 @@ html[data-theme="light"] body { background: #f6f8fa; }
                @dragover.prevent="qpackDrag = true" @dragleave.prevent="qpackDrag = false"
                @drop.prevent="onQpackDrop">
             <e-icon name="upload" :size="34"></e-icon>
-            <div class="qpack-drop-t">把题目包拖进来，或点击选择</div>
+            <div class="qpack-drop-t">把题目包 zip 拖进来，或点击选择</div>
             <div class="qpack-drop-d">
-              可以一次选多个文件：<b>题干</b>（.txt / .md）+ <b>参考答案</b>（.txt / .md）+ <b>数据</b>（.sql / .myd）
+              一个 <b>.zip</b> 里放：<b>题干</b>（.txt / .md）+ <b>参考答案</b>（.txt / .md）+ <b>数据</b>（.sql / .myd）
             </div>
             <div class="qpack-drop-tip">
-              支持 GBK / UTF-8 编码；题干按 <code>1、2、3…</code> 编号拆题，答案按 <code>-- 1</code> / <code>---8</code> 对应。
+              支持 GBK / UTF-8 编码；题干按 <code>1、2、3…</code> 编号拆题，答案按 <code>-- 1</code> / <code>---8</code> 对应。<br>
+              zip 里套一层文件夹也可以，Windows「发送到 → 压缩文件夹」直接打包即可；单个 zip 上限 40MB。
             </div>
-            <input type="file" ref="qpackFileEl" hidden multiple
-                   accept=".txt,.md,.sql,.myd,.csv" @change="onQpackPicked">
+            <input type="file" ref="qpackFileEl" hidden accept=".zip"
+                   @change="onQpackPicked">
           </div>
 
           <!-- 解析结果 -->
@@ -541,6 +542,10 @@ html[data-theme="light"] body { background: #f6f8fa; }
               <div class="qpack-sum-main">
                 <div class="qpack-sum-title">{{ qpack.title }}</div>
                 <div class="qpack-sum-sub" v-if="qpack.description">{{ qpack.description }}</div>
+                <div class="qpack-files" v-if="qpack.files && qpack.files.length">
+                  <span class="qpack-label">压缩包内文件</span>
+                  <span v-for="f in qpack.files" :key="f" class="q-part mono">{{ f }}</span>
+                </div>
               </div>
               <div class="qpack-sum-stats">
                 <span class="qpack-chip"><b>{{ qpack.stats.total }}</b> 小题</span>
@@ -1704,6 +1709,6 @@ INSERT INTO course VALUES (1,'数学');</pre>
 <script src="/vendor/codemirror/addon/display/placeholder.js"></script>
 <script src="/vendor/codemirror/addon/hint/show-hint.js"></script>
 <script src="/vendor/codemirror/addon/hint/sql-hint.js"></script>
-<script src="/app.js?v=118"></script>
+<script src="/app.js?v=119"></script>
 </body>
 </html>

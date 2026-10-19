@@ -890,10 +890,24 @@ const App = {
       if (files.length) await this.uploadQpack(files);
     },
     async uploadQpack(files) {
+      const zips = files.filter((f) => /\.zip$/i.test(f.name));
+      if (!zips.length) {
+        this.toast("请先把题干、答案、数据脚本打成一个 .zip 再上传");
+        return;
+      }
+      if (zips.length > 1) {
+        this.toast("一次只能导入一份试卷，请只上传一个 zip");
+        return;
+      }
+      const z = zips[0];
+      if (z.size > 40 * 1024 * 1024) {
+        this.toast("压缩包超过 40MB，请精简数据库导出后再试");
+        return;
+      }
       this.qpackBusy = true;
       try {
         const form = new FormData();
-        for (const f of files) form.append("files", f);
+        form.append("files", z);
         const d = await this.api("/api/author/qpack/parse", { method: "POST", form });
         this.qpack = d;
         if (!d.stats.withAnswer) {

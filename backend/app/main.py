@@ -1106,7 +1106,10 @@ def api_author_try_python(b: TryPyBody, request: Request):
 
 @app.post("/api/author/qpack/parse")
 async def api_qpack_parse(request: Request, files: list[UploadFile] = File(...)):
-    """解析题目包（题干 + 参考答案 + 数据脚本），返回预览，不落库。"""
+    """解析题目包 zip（内含题干 + 参考答案 + 数据脚本），返回预览，不落库。
+
+    也兼容直接上传多个文件（parse_package 内部会展开 zip）。
+    """
     a = acct(sess(request))
     if a["role"] != "admin" and not a.get("can_publish"):
         raise HTTPException(403, "还没有出题权限")
@@ -1114,9 +1117,9 @@ async def api_qpack_parse(request: Request, files: list[UploadFile] = File(...))
         raise HTTPException(400, f"一次最多 {drills.QPACK_MAX_FILES} 个文件")
     payload = []
     for f in files:
-        raw = await f.read(drills.QPACK_FILE_MAX + 1)
-        if len(raw) > drills.QPACK_FILE_MAX:
-            raise HTTPException(400, f"文件 {f.filename} 超过 8MB")
+        raw = await f.read(drills.QPACK_ZIP_MAX + 1)
+        if len(raw) > drills.QPACK_ZIP_MAX:
+            raise HTTPException(400, f"文件 {f.filename} 超过 40MB")
         payload.append({"name": f.filename or "", "data": raw})
     try:
         return drills.parse_package(payload)
