@@ -364,11 +364,14 @@ tr.added td { background: rgba(46,160,67,.06); }
   background: var(--panel-2); border-top: 1px solid var(--line);
 }
 .nc-status-item { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+/* 数据网格的加载遮罩（只覆盖网格区域） */
 .nc-loading {
   position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
   gap: 8px; background: color-mix(in srgb, var(--panel) 72%, transparent);
   color: var(--muted); font-size: 12px;
 }
+/* 面板整体读取结构中的状态：只改光标，绝不影响布局 */
+.nc.nc-busy { cursor: progress; }
 
 /* ---- 弹窗 ---- */
 .nc-mask {

@@ -28,7 +28,7 @@ html[data-theme="light"] body { background: #f6f8fa; }
 <link rel="stylesheet" href="/vendor/codemirror/addon/hint/show-hint.css">
 <link rel="stylesheet" href="/fonts/misans/misans.css">
 <link rel="stylesheet" href="/style.css?v=138">
-  <link rel="stylesheet" href="/navicat.css?v=6">
+  <link rel="stylesheet" href="/navicat.css?v=7">
 </head>
 <body>
 <div id="app" v-cloak>
@@ -1912,7 +1912,7 @@ INSERT INTO course VALUES (1,'数学');</pre>
 <script src="/vendor/codemirror/addon/hint/show-hint.js"></script>
 <script src="/vendor/codemirror/addon/hint/sql-hint.js"></script>
 <script type="text/x-template" id="navicat-tpl">
-<div class="nc" :class="{ 'nc-loading': loading }">
+<div class="nc" :class="{ 'nc-busy': loading }">
   <!-- 菜单栏 -->
   <div class="nc-menubar">
     <button v-for="m in ['文件','编辑','查看','收藏夹','工具','窗口','帮助']" :key="m"
