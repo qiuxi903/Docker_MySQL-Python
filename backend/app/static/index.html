@@ -27,7 +27,7 @@ html[data-theme="light"] body { background: #f6f8fa; }
 <link rel="stylesheet" href="/vendor/codemirror/codemirror.css">
 <link rel="stylesheet" href="/vendor/codemirror/addon/hint/show-hint.css">
 <link rel="stylesheet" href="/fonts/misans/misans.css">
-<link rel="stylesheet" href="/style.css?v=126">
+<link rel="stylesheet" href="/style.css?v=133">
 </head>
 <body>
 <div id="app" v-cloak>
@@ -151,7 +151,7 @@ html[data-theme="light"] body { background: #f6f8fa; }
             <div class="panel-b editor-host">
               <cm-editor ref="cmSqlRef" mode="text/x-mysql" :value="sqlInit" :run="runSql"
                 :hint-tables="tablesHint" @change="onSqlChange"
-                placeholder="像 mysql 命令行一样直接写 SQL，不需要分号；多条语句一行一条，或用分号分隔"></cm-editor>
+                placeholder="在这里写 SQL，不需要分号；多条语句一行一条"></cm-editor>
             </div>
           </section>
 
@@ -234,7 +234,7 @@ html[data-theme="light"] body { background: #f6f8fa; }
             </div>
             <div class="panel-b editor-host">
               <cm-editor ref="cmPyRef" mode="text/x-python" :value="pyInit" :run="runPy"
-                placeholder="在这里写 Python 代码，就像在 IDE 里一样（自动保存）"
+                placeholder="在这里写 Python 代码（自动保存）"
                 @change="onPyChange"></cm-editor>
             </div>
           </section>
@@ -483,13 +483,13 @@ html[data-theme="light"] body { background: #f6f8fa; }
                   <span v-if="drillCurrent.passed" class="drill-passed"><e-icon name="check" :size="12"></e-icon> 已通过</span>
                   <span class="spacer"></span>
                   <button v-if="drillCurrent.setupSql" class="btn mini ghost" @click="drillShowSetup=!drillShowSetup">
-                    <e-icon name="database" :size="12"></e-icon> {{ drillShowSetup ? '隐藏数据' : '题目数据' }}
+                    <e-icon name="database" :size="12"></e-icon> <span class="m-hide">{{ drillShowSetup ? '隐藏数据' : '题目数据' }}</span>
                   </button>
                   <button v-if="drillCurrent.hint" class="btn mini ghost" @click="drillShowHint=!drillShowHint">
                     <e-icon name="shield" :size="12"></e-icon> 提示
                   </button>
-                  <button v-if="drillCurrent.mine && user && user.canPublish" class="btn mini ghost" @click="openDrillEditor(drillCurrent)">编辑</button>
-                  <button class="btn mini ghost" @click="clearDrillCode"><e-icon name="x" :size="13"></e-icon> 清空</button>
+                  <button v-if="drillCurrent.mine && user && user.canPublish" class="btn mini ghost" title="编辑本题" @click="openDrillEditor(drillCurrent)"><e-icon name="file-text" :size="12"></e-icon> <span class="m-hide">编辑</span></button>
+                  <button class="btn mini ghost" title="清空作答" @click="clearDrillCode"><e-icon name="x" :size="13"></e-icon> <span class="m-hide">清空</span></button>
                   <button class="btn" :disabled="drillBusy || !drillCodeType ||
                           (drillCurrent.type==='sql' && !drillSandbox.db)" @click="runDrillOnly">
                     <e-icon name="play" :size="13"></e-icon> 运行
@@ -1862,6 +1862,6 @@ INSERT INTO course VALUES (1,'数学');</pre>
 <script src="/vendor/codemirror/addon/display/placeholder.js"></script>
 <script src="/vendor/codemirror/addon/hint/show-hint.js"></script>
 <script src="/vendor/codemirror/addon/hint/sql-hint.js"></script>
-<script src="/app.js?v=124"></script>
+<script src="/app.js?v=126"></script>
 </body>
 </html>

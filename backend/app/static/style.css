@@ -370,7 +370,8 @@ main { flex: 1; min-height: 0; position: relative; }
 .editor-host .CodeMirror { height: 100%; }
 .py-tabs {
   display: flex; flex: 0 0 34px; align-items: stretch; gap: 2px; overflow-x: auto;
-  background: var(--panel-2); border-bottom: 1px solid var(--line); scrollbar-width: thin;
+  padding: 0 8px; background: var(--panel-2);
+  border-bottom: 1px solid var(--line); scrollbar-width: thin;
 }
 [data-theme="dark"] .py-tabs { background: var(--panel); }
 .py-tab { display: flex; align-items: center; flex: 0 0 auto; max-width: 200px; border-right: 1px solid var(--line); }
@@ -403,6 +404,13 @@ main { flex: 1; min-height: 0; position: relative; }
 .CodeMirror {
   font-family: var(--mono); font-size: 13.5px; line-height: 1.65;
   background: var(--panel); color: var(--text);
+}
+/* 代码不要贴着边框：四周留出呼吸空间；占位说明允许换行，窄屏不被截断 */
+.CodeMirror-lines { padding: 12px 0; }
+.CodeMirror pre.CodeMirror-line,
+.CodeMirror pre.CodeMirror-line-like { padding: 0 16px; }
+.CodeMirror .CodeMirror-placeholder {
+  white-space: pre-wrap !important; overflow-wrap: anywhere; line-height: 1.7;
 }
 .CodeMirror-gutters { background: var(--panel-2); border-right: 1px solid var(--line); }
 [data-theme="dark"] .CodeMirror-gutters { background: var(--con-head); border-right-color: var(--con-line); }
@@ -1029,6 +1037,23 @@ li.CodeMirror-hint-active { background: var(--accent); color: #fff; }
   .adm-search { max-width: 100%; flex: 1 1 100%; }
 }
 
+/* ============ 小徽章：文字不贴上下边框 ============ */
+.badge.tiny, .tbrows, .drill-tag, .drill-pts {
+  display: inline-flex; align-items: center; justify-content: center;
+  height: 20px; padding: 0 7px; line-height: 1; box-sizing: border-box;
+}
+.drill-idx, .drill-side-score, .drill-pts-badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  height: 22px; line-height: 1; box-sizing: border-box;
+}
+.drill-idx { padding: 0 7px; }
+.drill-side-score, .drill-pts-badge { padding: 0 9px; }
+.paper-total {
+  display: inline-block; line-height: 1.45; padding: 4px 12px;
+  box-sizing: border-box;
+}
+.btn.mini { padding: 4px 10px; }
+
 /* ============ 全站动效 ============ */
 :root {
   --ease-out: cubic-bezier(.22, .61, .36, 1);
@@ -1150,6 +1175,43 @@ body, header, .panel, .side, .console-pane, .community-page, .admin-dlg, dialog 
 
 /* 18) 表格行：悬停高亮 */
 .ctable tbody tr, .dtable tbody tr { transition: background var(--dur-fast); }
+
+/* 18b) 练习页：清单 → 试卷 → 做题 的入场与卡片级联 */
+.paper-list-page, .paper-detail-page, .drills-ws {
+  animation: viewIn var(--dur-slow) var(--ease-out);
+}
+.paper-card, .paper-q {
+  animation: riseIn var(--dur-slow) var(--ease-out) backwards;
+}
+.paper-grid > .paper-card:nth-child(2),
+.paper-q-list > .paper-q:nth-child(2) { animation-delay: .03s; }
+.paper-grid > .paper-card:nth-child(3),
+.paper-q-list > .paper-q:nth-child(3) { animation-delay: .06s; }
+.paper-grid > .paper-card:nth-child(4),
+.paper-q-list > .paper-q:nth-child(4) { animation-delay: .09s; }
+.paper-grid > .paper-card:nth-child(5),
+.paper-q-list > .paper-q:nth-child(5) { animation-delay: .12s; }
+.paper-grid > .paper-card:nth-child(6),
+.paper-q-list > .paper-q:nth-child(6) { animation-delay: .15s; }
+.paper-grid > .paper-card:nth-child(7),
+.paper-q-list > .paper-q:nth-child(7) { animation-delay: .18s; }
+.paper-grid > .paper-card:nth-child(8),
+.paper-q-list > .paper-q:nth-child(8) { animation-delay: .21s; }
+.paper-grid > .paper-card:nth-child(n+9),
+.paper-q-list > .paper-q:nth-child(n+9) { animation-delay: .24s; }
+
+.pc-bar i, .drill-prog-bar i {
+  transform-origin: left center;
+  animation: barGrow var(--dur-slow) var(--ease-out) backwards;
+}
+@keyframes barGrow { from { transform: scaleX(0); } }
+
+.drill-score-line { animation: riseIn var(--dur-slow) var(--ease-spring) backwards; }
+
+/* 卡片悬停：图标轻弹、箭头右移 */
+.pc-ico, .pq-go svg { transition: transform var(--dur-fast) var(--ease-out); }
+.paper-card:hover .pc-ico { transform: scale(1.07); }
+.paper-q:hover .pq-go svg { transform: translateX(2px); }
 
 /* 19) 尊重系统「减少动态效果」设置 */
 @media (prefers-reduced-motion: reduce) {
@@ -1754,6 +1816,10 @@ dialog > .u-table { width: calc(100% - 44px); }
   .drills-ws .panel-h .drill-idx,
   .drills-ws .panel-h .drill-badge { flex: 0 0 auto; font-size: 10.5px; }
   .drills-ws .panel-h .drill-passed { display: none; }
+  /* 手机工具栏：按钮压紧一点，尽量两行放得下 */
+  .drills-ws .panel-h .btn.mini { padding: 3px 8px; font-size: 11.5px; gap: 4px; }
+  .drills-ws .panel-h .btn.mini.ghost { padding: 3px 6px; }
+  .drills-ws .editor-pane .panel-h .panel-title { max-width: 30vw; }
   .drills-ws .editor-pane { flex: 0 0 auto; }
   .drills-ws .editor-host .CodeMirror { height: 46vh; }
   .drills-ws .console { max-height: 42vh; }
@@ -1920,7 +1986,7 @@ pre, .cheat pre, .ddl-pre, .src-pre, .cstdout, .cstderr, .term-out, .term-err {
   .editor-pane { order: 2; flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
   .editor-host { flex: 1; min-height: 200px; }
   /* >=16px：否则 iOS Safari 聚焦输入框时会自动放大整页（缩放不一致的根因） */
-  .editor-host .CodeMirror { height: 100%; min-height: 200px; font-size: 16px; overflow-x: auto; }
+  .editor-host .CodeMirror { height: 100%; min-height: 200px; font-size: 16px; overflow: hidden; }
   .editor-host .CodeMirror-lines { line-height: 1.7; }
   .editor-host .CodeMirror-scroll { overflow-x: auto; }
   .pyws .editor-host .CodeMirror { min-height: 240px; }
@@ -1979,7 +2045,7 @@ pre, .cheat pre, .ddl-pre, .src-pre, .cstdout, .cstderr, .term-out, .term-err {
   }
 
   /* 编辑器横向滚动，不裁字 */
-  .editor-host .CodeMirror { overflow-x: auto; }
+  .editor-host .CodeMirror { overflow: hidden; }
   .editor-host .CodeMirror-scroll { overflow-x: auto; }
   /* Toast 上移，别挡住底部 tab */
   #toast { bottom: calc(64px + env(safe-area-inset-bottom)); }

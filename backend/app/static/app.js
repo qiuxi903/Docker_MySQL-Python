@@ -190,6 +190,8 @@ const CmEditor = {
       autoCloseBrackets: true,
       styleActiveLine: true,
       indentUnit: 4,
+      // 手机上长代码自动换行，避免横向滚动条和文字被截断
+      lineWrapping: window.innerWidth < 920,
       placeholder: this.placeholder,
       extraKeys: extra,
     });
