@@ -714,6 +714,8 @@ li.CodeMirror-hint-active { background: var(--accent); color: #fff; }
   position: absolute; top: 10px; right: 10px; opacity: 0;
   transition: opacity var(--dur-fast);
 }
+/* 自己的卡片右上角有删除按钮，标题行给它让出位置，避免和「已完成」徽章叠在一起 */
+.paper-card.own .pc-head { padding-right: 30px; }
 .paper-card:hover .pc-del { opacity: 1; }
 .paper-empty { grid-column: 1 / -1; }
 
