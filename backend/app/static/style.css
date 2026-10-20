@@ -1850,6 +1850,16 @@ dialog > .u-table { width: calc(100% - 44px); }
   .auth-row { gap: 10px; }
   .auth-row-f.narrow { flex: 0 0 88px; min-width: 88px; }
 
+  /* 手机端：面板之间留白并做成圆角卡片，避免顶栏和深色控制台直接贴在一起 */
+  #app > main { padding: 8px 8px 58px; }
+  .ws .panel, .drills-ws .panel {
+    border: 1px solid var(--line); border-radius: 12px; overflow: hidden;
+  }
+  .console-pane { border-color: var(--con-line); }
+  .ws .panel + .panel, .wsmain > .panel + .panel { margin-top: 8px; }
+  .panel-h { border-top-left-radius: 12px; border-top-right-radius: 12px; }
+  .panel-h.dark { border-top-left-radius: 12px; border-top-right-radius: 12px; }
+
   /* ---- 以下为原有的移动端整体布局规则（必须留在媒体查询内） ---- */
   #app { height: auto; min-height: 100vh; }
   #app > header { padding: 0 12px; gap: 10px; flex-wrap: wrap; height: auto; }
@@ -1986,7 +1996,10 @@ pre, .cheat pre, .ddl-pre, .src-pre, .cstdout, .cstderr, .term-out, .term-err {
   .editor-pane { order: 2; flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
   .editor-host { flex: 1; min-height: 200px; }
   /* >=16px：否则 iOS Safari 聚焦输入框时会自动放大整页（缩放不一致的根因） */
-  .editor-host .CodeMirror { height: 100%; min-height: 200px; font-size: 16px; overflow: hidden; }
+  .editor-host .CodeMirror { height: 100%; min-height: 220px; font-size: 16px; overflow: hidden; }
+  /* 让编辑器卡片把剩下的高度撑满，底部不留大片空白 */
+  .wsmain { min-height: calc(100vh - 150px); min-height: calc(100dvh - 150px); }
+  .wsmain > .editor-pane { flex: 1 1 auto; }
   .editor-host .CodeMirror-lines { line-height: 1.7; }
   .editor-host .CodeMirror-scroll { overflow-x: auto; }
   .pyws .editor-host .CodeMirror { min-height: 240px; }
