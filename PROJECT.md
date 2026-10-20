@@ -214,6 +214,9 @@ Docker_MySQL-Python/
 CodeMirror 编辑器 + 下方结果网格（结果 / 消息两个页签）+ 状态栏 Ln/Col。
 **查询创建工具**是可视化构造器：SELECT / FROM / WHERE / GROUP BY / HAVING / ORDER BY / LIMIT 七个页签，
 每页点「＋ 添加字段」逐行填，实时预览生成的 SQL，一键放到查询页。
+其中 **FROM 页签是可视化表连接**：左边点表名把表加进画布，表框可以拖动、可以起别名，
+从一个字段按住拖到另一个表的字段就建立连接（自动生成 `JOIN … ON`），
+连线上的标签点一下切换 INNER / LEFT / RIGHT，× 删除连接；SELECT / WHERE / ORDER BY 的字段输入框带已加入表的字段候选。
 
 **视图**：新建 / 设计（填 SELECT 定义，执行 `CREATE OR REPLACE VIEW`）、打开视图看数据、删除。
 **函数 / 存储过程**：新建过程、新建函数、设计、运行（填参数后 `CALL` 或 `SELECT 函数(...)`）、删除；
