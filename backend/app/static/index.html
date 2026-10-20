@@ -27,7 +27,7 @@ html[data-theme="light"] body { background: #f6f8fa; }
 <link rel="stylesheet" href="/vendor/codemirror/codemirror.css">
 <link rel="stylesheet" href="/vendor/codemirror/addon/hint/show-hint.css">
 <link rel="stylesheet" href="/fonts/misans/misans.css">
-<link rel="stylesheet" href="/style.css?v=125">
+<link rel="stylesheet" href="/style.css?v=126">
 </head>
 <body>
 <div id="app" v-cloak>
@@ -371,18 +371,20 @@ html[data-theme="light"] body { background: #f6f8fa; }
             <div class="paper-q-list">
               <button v-for="q in paperCurrent.questions" :key="q.id" class="paper-q"
                       :class="{done: q.passed}" @click="startDrill(q)">
-                <span class="pq-no">{{ String(q.no).padStart(2,'0') }}</span>
-                <span class="pq-main">
-                  <span class="pq-title">{{ qTitle(q.stem || q.title) }}</span>
-                  <span class="pq-sub">{{ q.typeLabel }} · {{ q.judgeLabel }}</span>
+                <span class="pq-head">
+                  <span class="pq-no">{{ String(q.no).padStart(2,'0') }}</span>
+                  <span class="pq-state">
+                    <span v-if="q.passed" class="badge tiny ok">已通过</span>
+                    <span v-else-if="q.attempts" class="badge tiny err">做过未通过</span>
+                    <span v-else class="badge tiny">未做</span>
+                  </span>
                 </span>
-                <span class="pq-score"><b>{{ q.gotScore }}</b> / {{ q.score }} 分</span>
-                <span class="pq-state">
-                  <span v-if="q.passed" class="badge tiny ok">已通过</span>
-                  <span v-else-if="q.attempts" class="badge tiny err">做过未通过</span>
-                  <span v-else class="badge tiny">未做</span>
+                <span class="pq-title">{{ qTitle(q.stem || q.title) }}</span>
+                <span class="pq-foot">
+                  <span class="pq-sub" :title="q.judgeLabel">{{ q.typeLabel }}</span>
+                  <span class="pq-score"><b>{{ q.gotScore }}</b>/{{ q.score }} 分</span>
+                  <span class="pq-go">去做 <e-icon name="chevron-right" :size="12"></e-icon></span>
                 </span>
-                <span class="pq-go">去做 <e-icon name="chevron-right" :size="12"></e-icon></span>
               </button>
             </div>
             <div v-if="!paperCurrent.questions.length" class="tbempty">这套题还没有已发布的题目</div>
