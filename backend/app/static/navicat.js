@@ -47,6 +47,9 @@ const NavicatPanel = {
       // 弹窗
       dlg: "",
       build: this.blankBuilder(),
+      dragTable: null,
+      dragJoin: null,
+      dragPos: null,
       runForm: { routine: null, args: "", result: null, msg: "" },
       importForm: { file: null, table: "", header: true, overwrite: false, busy: false },
       typeList: ["INT", "BIGINT", "TINYINT", "SMALLINT", "VARCHAR", "CHAR", "TEXT",
@@ -786,7 +789,9 @@ const NavicatPanel = {
     /* ---------------- 查询创建工具 ---------------- */
     blankBuilder() {
       return {
-        tab: "SELECT",
+        tab: "FROM",
+        tables: [],
+        joins: [],
         select: [{ expr: "", alias: "" }],
         from: "",
         where: [{ col: "", op: "=", val: "" }],
@@ -809,13 +814,129 @@ const NavicatPanel = {
     removeBuildRow(which, i) {
       if (this.build[which].length > 1) this.build[which].splice(i, 1);
     },
+    /* ---- 可视化表连接 ---- */
+    addBuildTable(t) {
+      if (this.build.tables.some(x => x.name === t.name)) return;
+      const n = this.build.tables.length;
+      this.build.tables.push({
+        id: "t" + Date.now() + "_" + n,
+        name: t.name, alias: "",
+        x: 16 + (n % 2) * 200, y: 14 + Math.floor(n / 2) * 168,
+        columns: (t.columns || []).map(c => ({ name: c.name, key: c.key || "" })),
+      });
+    },
+    removeBuildTable(t) {
+      this.build.tables = this.build.tables.filter(x => x !== t);
+      this.build.joins = this.build.joins.filter(j => j.a.tid !== t.id && j.b.tid !== t.id);
+    },
+    tableById(id) { return this.build.tables.find(t => t.id === id) || null; },
+    colRef(t, col) { return (t.alias || t.name) + "." + col; },
+    colAnchor(t, colName, side) {
+      const i = Math.max(0, t.columns.findIndex(c => c.name === colName));
+      return { x: side === "r" ? t.x + 158 : t.x, y: t.y + 27 + i * 20 + 10 };
+    },
+    // 连线两端各自挑离对方更近的那条边，避免线绕到表框后面
+    joinEnds(j) {
+      const a = this.tableById(j.a.tid), b = this.tableById(j.b.tid);
+      if (!a || !b) return null;
+      const right = (b.x + 79) > (a.x + 79);
+      return {
+        p1: this.colAnchor(a, j.a.col, right ? "r" : "l"),
+        p2: this.colAnchor(b, j.b.col, right ? "l" : "r"),
+      };
+    },
+    joinPath(j) {
+      const e = this.joinEnds(j);
+      if (!e) return "";
+      const dx = Math.max(28, Math.abs(e.p2.x - e.p1.x) / 2);
+      return `M ${e.p1.x} ${e.p1.y} C ${e.p1.x + dx} ${e.p1.y}, ` +
+             `${e.p2.x - dx} ${e.p2.y}, ${e.p2.x} ${e.p2.y}`;
+    },
+    joinMid(j) {
+      const e = this.joinEnds(j);
+      if (!e) return { x: 0, y: 0 };
+      return { x: Math.round((e.p1.x + e.p2.x) / 2), y: Math.round((e.p1.y + e.p2.y) / 2) };
+    },
+    cycleJoin(j) {
+      const order = ["INNER", "LEFT", "RIGHT"];
+      j.type = order[(order.indexOf(j.type) + 1) % order.length];
+    },
+    removeJoin(j) { this.build.joins = this.build.joins.filter(x => x !== j); },
+    startMoveTable(ev, t) {
+      const r = this.$refs.canvas.getBoundingClientRect();
+      this.dragTable = { t, dx: ev.clientX - r.left - t.x, dy: ev.clientY - r.top - t.y };
+      ev.preventDefault();
+    },
+    startJoin(ev, t, c) {
+      const r = this.$refs.canvas.getBoundingClientRect();
+      this.dragJoin = { t, c };
+      this.dragPos = { x: ev.clientX - r.left, y: ev.clientY - r.top };
+      ev.preventDefault();
+    },
+    onCanvasMove(ev) {
+      const r = this.$refs.canvas.getBoundingClientRect();
+      const x = ev.clientX - r.left, y = ev.clientY - r.top;
+      if (this.dragTable) {
+        this.dragTable.t.x = Math.max(0, Math.round(x - this.dragTable.dx));
+        this.dragTable.t.y = Math.max(0, Math.round(y - this.dragTable.dy));
+      } else if (this.dragJoin) {
+        this.dragPos = { x, y };
+      }
+    },
+    endJoin(ev, t, c) {
+      const from = this.dragJoin;
+      this.dragJoin = null;
+      this.dragPos = null;
+      if (!from || from.t.id === t.id) return;
+      const dup = this.build.joins.some(j =>
+        (j.a.tid === from.t.id && j.a.col === from.c.name &&
+         j.b.tid === t.id && j.b.col === c.name) ||
+        (j.b.tid === from.t.id && j.b.col === from.c.name &&
+         j.a.tid === t.id && j.a.col === c.name));
+      if (dup) return;
+      this.build.joins.push({
+        id: "j" + Date.now(),
+        type: "INNER",
+        a: { tid: from.t.id, col: from.c.name },
+        b: { tid: t.id, col: c.name },
+      });
+    },
+    onCanvasUp() { this.dragTable = null; this.dragJoin = null; this.dragPos = null; },
+    dragLinePath() {
+      if (!this.dragJoin || !this.dragPos) return "";
+      const t = this.dragJoin.t;
+      const side = this.dragPos.x >= t.x + 79 ? "r" : "l";
+      const p1 = this.colAnchor(t, this.dragJoin.c.name, side);
+      return `M ${p1.x} ${p1.y} L ${this.dragPos.x} ${this.dragPos.y}`;
+    },
+    availableColumns() {
+      const out = [];
+      for (const t of this.build.tables) {
+        for (const c of t.columns) out.push(this.colRef(t, c.name));
+      }
+      return out;
+    },
+
     builderSql() {
       const b = this.build;
       const sel = b.select.map(s => (s.expr || "").trim()
         ? (s.alias ? `${s.expr.trim()} AS ${this.ident(s.alias.trim())}` : s.expr.trim()) : "")
         .filter(Boolean);
       let sql = "SELECT " + (sel.length ? sel.join(", ") : "*");
-      if (b.from.trim()) sql += "\nFROM " + b.from.trim();
+      if (b.tables.length) {
+        const first = b.tables[0];
+        let from = this.ident(first.name) + (first.alias ? " " + first.alias : "");
+        for (const j of b.joins) {
+          const ta = this.tableById(j.a.tid), tb = this.tableById(j.b.tid);
+          if (!ta || !tb) continue;
+          from += `\n${j.type} JOIN ${this.ident(tb.name)}` +
+                  (tb.alias ? " " + tb.alias : "") +
+                  ` ON ${this.colRef(ta, j.a.col)} = ${this.colRef(tb, j.b.col)}`;
+        }
+        sql += "\nFROM " + from;
+      } else if (b.from.trim()) {
+        sql += "\nFROM " + b.from.trim();
+      }
       const wh = b.where.filter(w => w.col.trim() && w.val !== "")
         .map(w => `${w.col.trim()} ${w.op} ${/^\d+(\.\d+)?$/.test(String(w.val).trim()) ? w.val : this.lit(w.val)}`);
       if (wh.length) sql += "\nWHERE " + wh.join(" AND ");

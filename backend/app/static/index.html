@@ -28,7 +28,7 @@ html[data-theme="light"] body { background: #f6f8fa; }
 <link rel="stylesheet" href="/vendor/codemirror/addon/hint/show-hint.css">
 <link rel="stylesheet" href="/fonts/misans/misans.css">
 <link rel="stylesheet" href="/style.css?v=138">
-  <link rel="stylesheet" href="/navicat.css?v=2">
+  <link rel="stylesheet" href="/navicat.css?v=4">
 </head>
 <body>
 <div id="app" v-cloak>
@@ -2440,18 +2440,65 @@ INSERT INTO course VALUES (1,'数学');</pre>
       <div class="nc-build-body">
         <template v-if="build.tab === 'SELECT'">
           <div v-for="(s, i) in build.select" :key="i" class="nc-build-row">
-            <input v-model="s.expr" placeholder="字段或表达式，如 e.name">
+            <input v-model="s.expr" list="nc-col-list" placeholder="字段或表达式，如 e.name">
             <input v-model="s.alias" placeholder="别名（可选）">
             <button class="nc-mini danger" @click="removeBuildRow('select', i)">×</button>
           </div>
           <button class="nc-add-col" @click="addBuildRow('select')">＋ 添加字段</button>
         </template>
         <template v-else-if="build.tab === 'FROM'">
-          <input class="nc-wide-input" v-model="build.from" placeholder="表名，如 t_employee e">
+          <div class="nc-build-from">
+            <div class="nc-bt-list">
+              <div class="nc-bt-h">可用表</div>
+              <button v-for="t in schema.tables" :key="t.name" class="nc-bt-item"
+                      :disabled="build.tables.some(x => x.name === t.name)"
+                      @click="addBuildTable(t)">
+                <e-icon name="table" :size="12"></e-icon> {{ t.name }}
+              </button>
+              <div v-if="!schema.tables.length" class="nc-muted">这个库还没有表</div>
+            </div>
+            <div class="nc-canvas" ref="canvas"
+                 @pointermove="onCanvasMove" @pointerup="onCanvasUp" @pointerleave="onCanvasUp">
+              <svg class="nc-lines">
+                <path v-for="j in build.joins" :key="j.id" :d="joinPath(j)" class="nc-line"></path>
+                <path v-if="dragJoin" :d="dragLinePath()" class="nc-line temp"></path>
+              </svg>
+              <div v-for="j in build.joins" :key="'m' + j.id" class="nc-join-tag"
+                   :style="{ left: joinMid(j).x + 'px', top: joinMid(j).y + 'px' }">
+                <button class="nc-join-type" title="点击切换 INNER / LEFT / RIGHT"
+                        @click="cycleJoin(j)">{{ j.type }}</button>
+                <button class="nc-join-x" title="删除连接" @click="removeJoin(j)">×</button>
+              </div>
+              <div v-for="t in build.tables" :key="t.id" class="nc-tbox"
+                   :style="{ left: t.x + 'px', top: t.y + 'px' }">
+                <div class="nc-tbox-h" @pointerdown="startMoveTable($event, t)">
+                  <e-icon name="table" :size="12"></e-icon>
+                  <span class="nc-tbox-n">{{ t.name }}</span>
+                  <input class="nc-tbox-alias" v-model.trim="t.alias" placeholder="别名"
+                         @pointerdown.stop>
+                  <button class="nc-tbox-x" title="移除这张表"
+                          @click.stop="removeBuildTable(t)">×</button>
+                </div>
+                <div class="nc-tbox-cols">
+                  <div v-for="c in t.columns" :key="c.name" class="nc-tcol"
+                       :class="{ pk: c.key === 'PRI' }"
+                       @pointerdown.stop="startJoin($event, t, c)"
+                       @pointerup.stop="endJoin($event, t, c)">
+                    <span class="nc-tcol-k">{{ c.key === 'PRI' ? 'PK' : '' }}</span>{{ c.name }}
+                  </div>
+                </div>
+              </div>
+              <div v-if="!build.tables.length" class="nc-canvas-empty">
+                点左边的表名加进来，再从一个字段拖到另一个字段就连上了
+              </div>
+            </div>
+          </div>
+          <input class="nc-wide-input" style="margin-top:8px" v-model="build.from"
+                 placeholder="也可以直接手写 FROM（上面的表都移除后才生效）">
         </template>
         <template v-else-if="build.tab === 'WHERE'">
           <div v-for="(w, i) in build.where" :key="i" class="nc-build-row">
-            <input v-model="w.col" placeholder="字段">
+            <input v-model="w.col" list="nc-col-list" placeholder="字段">
             <select v-model="w.op">
               <option>=</option><option>&gt;</option><option>&lt;</option>
               <option>&gt;=</option><option>&lt;=</option><option>&lt;&gt;</option>
@@ -2470,7 +2517,7 @@ INSERT INTO course VALUES (1,'数学');</pre>
         </template>
         <template v-else-if="build.tab === 'ORDER BY'">
           <div v-for="(o, i) in build.order" :key="i" class="nc-build-row">
-            <input v-model="o.col" placeholder="字段">
+            <input v-model="o.col" list="nc-col-list" placeholder="字段">
             <select v-model="o.dir"><option>ASC</option><option>DESC</option></select>
             <button class="nc-mini danger" @click="removeBuildRow('order', i)">×</button>
           </div>
@@ -2483,6 +2530,9 @@ INSERT INTO course VALUES (1,'数学');</pre>
           </div>
         </template>
       </div>
+      <datalist id="nc-col-list">
+        <option v-for="c in availableColumns()" :key="c" :value="c"></option>
+      </datalist>
       <pre class="nc-preview">{{ builderSql() }}</pre>
       <div class="nc-dlg-f">
         <button class="nc-btn" @click="dlg = ''">取消</button>
