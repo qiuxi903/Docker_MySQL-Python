@@ -1,0 +1,469 @@
+/* ============ Navicat 仿真界面（做题时使用） ============ */
+.nc {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--panel);
+  color: var(--text);
+  font-size: 12.5px;
+  position: relative;
+}
+
+/* ---- 菜单栏 ---- */
+.nc-menubar {
+  flex: 0 0 auto; height: 28px; display: flex; align-items: center; gap: 1px;
+  padding: 0 6px; background: var(--panel-2);
+  border-bottom: 1px solid var(--line); position: relative; z-index: 6;
+}
+.nc-menu {
+  border: 0; background: transparent; color: var(--text); font: inherit;
+  padding: 3px 9px; border-radius: 4px; cursor: pointer;
+}
+.nc-menu:hover { background: var(--btn-hover); }
+.nc-brand { font-size: 11px; color: var(--muted); padding-right: 6px; }
+.nc-menu-pop {
+  position: absolute; top: 27px; left: 6px; z-index: 20;
+  min-width: 190px; padding: 5px;
+  background: var(--panel); border: 1px solid var(--line-strong);
+  border-radius: 6px; box-shadow: 0 10px 30px rgba(0,0,0,.18);
+}
+.nc-menu-pop button {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  border: 0; background: transparent; color: var(--text); font: inherit;
+  padding: 7px 9px; border-radius: 4px; cursor: pointer; text-align: left;
+}
+.nc-menu-pop button:hover { background: var(--accent-weak); color: var(--accent); }
+
+/* ---- 工具栏 ---- */
+.nc-toolbar {
+  flex: 0 0 auto; display: flex; align-items: stretch; gap: 2px;
+  padding: 4px 6px; background: var(--panel);
+  border-bottom: 1px solid var(--line); overflow-x: auto;
+}
+.nc-tool {
+  flex: 0 0 auto; display: flex; flex-direction: column; align-items: center; gap: 3px;
+  min-width: 58px; padding: 4px 7px; border: 1px solid transparent; border-radius: 5px;
+  background: transparent; color: var(--text); font: inherit; font-size: 11.5px;
+  cursor: pointer;
+}
+.nc-tool:hover { background: var(--btn-hover); border-color: var(--line); }
+.nc-tool.on { background: var(--accent-weak); border-color: var(--accent); color: var(--accent); }
+.nc-tool-ico {
+  width: 30px; height: 26px; border-radius: 4px; color: #fff;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.nc-tool-t { white-space: nowrap; }
+
+/* ---- 主体 ---- */
+.nc-body { flex: 1; min-height: 0; display: flex; }
+
+/* ---- 左侧连接树 ---- */
+.nc-side {
+  flex: 0 0 210px; width: 210px; min-height: 0; display: flex; flex-direction: column;
+  background: var(--panel); border-right: 1px solid var(--line);
+}
+.nc-side-h {
+  flex: 0 0 auto; height: 30px; display: flex; align-items: center; gap: 6px;
+  padding: 0 10px; font-weight: 600; color: var(--muted);
+  border-bottom: 1px solid var(--line); background: var(--panel-2);
+}
+.nc-tree { flex: 1; min-height: 0; overflow: auto; padding: 6px 4px; }
+.nc-node {
+  display: flex; align-items: center; gap: 6px; padding: 4px 7px;
+  border-radius: 4px; cursor: pointer; white-space: nowrap;
+}
+.nc-node:hover { background: var(--btn-hover); }
+.nc-node.conn { font-weight: 600; }
+.nc-node.db { margin-left: 6px; }
+.nc-node.child { margin-left: 22px; padding-left: 6px; }
+.nc-node.child.on { background: var(--accent-weak); color: var(--accent); font-weight: 600; }
+.nc-node-ico { display: inline-flex; color: var(--accent); }
+.nc-node-t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.nc-count {
+  flex: 0 0 auto; min-width: 18px; text-align: center;
+  font: 600 10.5px/16px var(--mono); color: var(--muted);
+  background: var(--btn-bg); border-radius: 999px; padding: 0 5px;
+}
+.nc-conn-dot {
+  width: 14px; height: 14px; border-radius: 4px; background: #3aa0e8;
+  display: inline-block; flex: 0 0 auto;
+}
+.nc-db-ico { display: inline-flex; color: #3aa0e8; }
+.nc-side-f { flex: 0 0 auto; padding: 6px; border-top: 1px solid var(--line); }
+.nc-search {
+  display: flex; align-items: center; gap: 6px;
+  border: 1px solid var(--line-strong); border-radius: 5px;
+  padding: 0 8px; background: var(--panel); color: var(--muted);
+}
+.nc-search input {
+  flex: 1; min-width: 0; border: 0; outline: 0; background: transparent;
+  color: var(--text); font: inherit; height: 26px;
+}
+
+/* ---- 主区域 ---- */
+.nc-main { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.nc-tabs {
+  flex: 0 0 auto; height: 31px; display: flex; align-items: stretch; gap: 2px;
+  padding: 0 6px; background: var(--panel-2); border-bottom: 1px solid var(--line);
+  overflow-x: auto;
+}
+.nc-tab {
+  flex: 0 0 auto; display: inline-flex; align-items: center; gap: 5px;
+  border: 1px solid transparent; border-bottom: 0; border-radius: 5px 5px 0 0;
+  background: transparent; color: var(--muted); font: inherit; font-size: 12px;
+  padding: 0 10px; cursor: pointer; white-space: nowrap; margin-top: 3px;
+}
+.nc-tab:hover { background: var(--btn-hover); color: var(--text); }
+.nc-tab.on {
+  background: var(--panel); color: var(--text); border-color: var(--line);
+  border-top: 2px solid var(--accent);
+}
+.nc-tab-t { max-width: 160px; overflow: hidden; text-overflow: ellipsis; }
+.nc-tab-x {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 15px; height: 15px; border-radius: 3px; font-size: 13px; line-height: 1;
+}
+.nc-tab-x:hover { background: var(--err-weak); color: var(--err); }
+.nc-tab-add {
+  flex: 0 0 auto; width: 28px; border: 0; background: transparent;
+  color: var(--muted); font-size: 16px; cursor: pointer; border-radius: 4px;
+}
+.nc-tab-add:hover { background: var(--btn-hover); color: var(--accent); }
+
+.nc-page { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+
+/* ---- 对象工具条 ---- */
+.nc-obj-bar {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 5px; flex-wrap: wrap;
+  padding: 5px 8px; border-bottom: 1px solid var(--line); background: var(--panel);
+}
+.nc-btn {
+  display: inline-flex; align-items: center; gap: 5px;
+  border: 1px solid var(--line-strong); background: var(--btn-bg); color: var(--text);
+  font: inherit; font-size: 12px; padding: 4px 9px; border-radius: 5px; cursor: pointer;
+  white-space: nowrap;
+}
+.nc-btn:hover { background: var(--btn-hover); border-color: var(--accent); }
+.nc-btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.nc-btn.primary:hover { background: var(--accent-hover); }
+.nc-btn:disabled { opacity: .45; cursor: not-allowed; }
+.nc-btn.icon { padding: 4px 7px; }
+.nc-table-name {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-weight: 600; color: var(--text);
+}
+.nc-muted { color: var(--muted); font-size: 11.5px; }
+.nc-vsep { width: 1px; height: 18px; background: var(--line); margin: 0 4px; }
+
+/* ---- 数据网格 ---- */
+.nc-grid-wrap { flex: 1; min-height: 0; overflow: auto; position: relative; background: var(--panel); }
+.nc-grid {
+  border-collapse: separate; border-spacing: 0;
+  font-size: 12px; color: var(--text); min-width: 100%;
+}
+.nc-grid th {
+  position: sticky; top: 0; z-index: 2;
+  text-align: left; font-weight: 600; white-space: nowrap;
+  padding: 5px 8px; background: var(--panel-2);
+  border-bottom: 1px solid var(--line); border-right: 1px solid var(--line);
+}
+.nc-grid td {
+  padding: 4px 8px; border-bottom: 1px solid var(--line);
+  border-right: 1px solid var(--line); white-space: nowrap;
+}
+.nc-grid td:last-child, .nc-grid th:last-child { border-right: 0; }
+.nc-grid th.num, .nc-grid td.num { text-align: right; }
+.nc-grid th.center, .nc-grid td.center { text-align: center; }
+.nc-grid tbody tr:hover td { background: var(--row-hover); }
+.nc-grid tbody tr.sel td { background: var(--accent-weak); color: var(--accent); }
+.nc-grid .rowid {
+  width: 1%; min-width: 40px; text-align: right; color: var(--muted);
+  background: var(--panel-2); font-family: var(--mono); font-size: 10.5px;
+  user-select: none;
+}
+.nc-grid td.null { color: var(--muted); font-style: italic; }
+.nc-name { font-weight: 500; }
+.nc-obj-ico {
+  display: inline-flex; vertical-align: -2px; margin-right: 6px; color: #3aa0e8;
+}
+.nc-comment {
+  max-width: 340px; overflow: hidden; text-overflow: ellipsis;
+  color: var(--muted);
+}
+.nc-pk {
+  margin-left: 5px; font: 600 9px/14px var(--mono);
+  color: #bf8700; border: 1px solid #bf8700; border-radius: 3px; padding: 0 3px;
+  vertical-align: 1px;
+}
+.nc-empty { padding: 34px 16px; text-align: center; color: var(--muted); line-height: 1.8; }
+.nc-empty-cell { text-align: center; color: var(--muted); padding: 30px !important; }
+
+/* ---- 可编辑单元格 ---- */
+.nc-data-table td { padding: 0; }
+.nc-cell {
+  width: 100%; min-width: 90px; height: 26px;
+  border: 0; outline: 0; background: transparent; color: inherit;
+  font: inherit; padding: 0 8px; box-sizing: border-box;
+}
+.nc-cell:focus { background: var(--panel); box-shadow: inset 0 0 0 1px var(--accent); }
+td.edited { background: rgba(191,135,0,.08); }
+td.edited .nc-cell { background: transparent; }
+tr.del td { opacity: .5; text-decoration: line-through; }
+tr.added td { background: rgba(46,160,67,.06); }
+.nc-rowdel {
+  border: 0; background: transparent; color: var(--muted);
+  cursor: pointer; padding: 0 3px; font-size: 13px; line-height: 1;
+}
+.nc-rowdel:hover { color: var(--err); }
+
+/* ---- 筛选栏 ---- */
+.nc-filterbar {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  padding: 4px 8px; background: var(--panel-2); border-bottom: 1px solid var(--line);
+  font-size: 11.5px; color: var(--muted);
+}
+.nc-filterbar input, .nc-filterbar select {
+  height: 25px; border: 1px solid var(--line-strong); border-radius: 4px;
+  background: var(--panel); color: var(--text); font: inherit; padding: 0 7px;
+}
+.nc-filterbar input { width: 200px; }
+.nc-fl { white-space: nowrap; }
+
+/* ---- 查询页 ---- */
+.nc-query-bar {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 5px; flex-wrap: wrap;
+  padding: 4px 8px; border-bottom: 1px solid var(--line); background: var(--panel-2);
+}
+.nc-dbselect {
+  font: 600 12px var(--mono); padding: 4px 10px;
+  border: 1px solid var(--line-strong); border-radius: 4px; background: var(--panel);
+}
+.nc-conn { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; }
+.nc-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.nc-dot.ok { background: #3fb950; }
+.nc-run {
+  display: inline-flex; align-items: center; gap: 5px;
+  border: 1px solid #2ea043; background: #2ea043; color: #fff;
+  font: inherit; font-size: 12px; font-weight: 600;
+  padding: 4px 13px; border-radius: 5px; cursor: pointer;
+}
+.nc-run:hover { background: #3fb950; }
+.nc-run:disabled { opacity: .6; cursor: default; }
+.nc-editor { flex: 1 1 46%; min-height: 120px; border-bottom: 1px solid var(--line); }
+.nc-editor .CodeMirror { height: 100%; }
+.nc-editor .CodeMirror-lines { padding: 8px 0; }
+.nc-editor .CodeMirror pre.CodeMirror-line,
+.nc-editor .CodeMirror pre.CodeMirror-line-like { padding: 0 12px; }
+.nc-result {
+  flex: 1 1 54%; min-height: 100px; display: flex; flex-direction: column;
+  background: var(--panel);
+}
+.nc-result-h {
+  flex: 0 0 auto; height: 28px; display: flex; align-items: center; gap: 2px;
+  padding: 0 8px; border-bottom: 1px solid var(--line); background: var(--panel-2);
+}
+.nc-result-h button {
+  border: 0; background: transparent; color: var(--muted); font: inherit; font-size: 12px;
+  padding: 3px 10px; border-radius: 4px; cursor: pointer;
+}
+.nc-result-h button.on { background: var(--panel); color: var(--accent); font-weight: 600; }
+.nc-msg {
+  margin: 0; flex: 1; overflow: auto; padding: 10px 12px;
+  font: 12px/1.7 var(--mono); color: var(--muted); white-space: pre-wrap;
+}
+.nc-query-status {
+  flex: 0 0 auto; height: 22px; display: flex; align-items: center; gap: 8px;
+  padding: 0 10px; font-size: 11px; color: var(--muted);
+  background: var(--panel-2); border-top: 1px solid var(--line);
+}
+
+/* ---- 设计表 ---- */
+.nc-design-top {
+  flex: 0 0 auto; display: flex; gap: 14px; align-items: center; flex-wrap: wrap;
+  padding: 8px 10px; border-bottom: 1px solid var(--line);
+}
+.nc-design-top label { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+.nc-design-top label.wide { flex: 1; min-width: 200px; }
+.nc-design-top label.wide input { flex: 1; }
+.nc-design-top input, .nc-design-top select {
+  height: 26px; border: 1px solid var(--line-strong); border-radius: 4px;
+  background: var(--panel); color: var(--text); font: inherit; padding: 0 8px;
+}
+.nc-subtabs {
+  flex: 0 0 auto; display: flex; gap: 2px; padding: 0 8px;
+  border-bottom: 1px solid var(--line); background: var(--panel-2);
+}
+.nc-subtabs button {
+  border: 0; border-bottom: 2px solid transparent; background: transparent;
+  color: var(--muted); font: inherit; font-size: 12px; padding: 6px 13px; cursor: pointer;
+}
+.nc-subtabs button.on { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+.nc-design-table td { padding: 2px 4px; }
+.nc-design-table .nc-cell { min-width: 70px; height: 24px; }
+.nc-design-table input[type="checkbox"] { accent-color: var(--accent); }
+.nc-row-actions { white-space: nowrap; }
+.nc-mini {
+  width: 20px; height: 20px; border: 1px solid var(--line); border-radius: 4px;
+  background: var(--btn-bg); color: var(--muted); cursor: pointer;
+  font: 12px/1 var(--mono); padding: 0; margin: 0 1px;
+}
+.nc-mini:hover { color: var(--text); }
+.nc-mini.danger:hover { color: var(--err); border-color: var(--err); }
+.nc-add-col {
+  margin: 8px; border: 1px dashed var(--line-strong); border-radius: 5px;
+  background: transparent; color: var(--accent); font: inherit;
+  padding: 6px 12px; cursor: pointer;
+}
+.nc-add-col:hover { background: var(--accent-weak); }
+.nc-options { padding: 14px 16px; color: var(--muted); line-height: 1.9; }
+.nc-options code, .nc-hint code, .nc-form code {
+  font-family: var(--mono); background: var(--btn-bg); padding: 0 4px; border-radius: 3px;
+}
+
+/* ---- 视图 / 函数 / 触发器编辑 ---- */
+.nc-form { flex: 1; min-height: 0; overflow: auto; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; }
+.nc-form-row { display: flex; gap: 12px; flex-wrap: wrap; }
+.nc-form label { display: flex; flex-direction: column; gap: 4px; font-size: 11.5px; color: var(--muted); }
+.nc-form label.wide { width: 100%; }
+.nc-form input, .nc-form select {
+  height: 28px; border: 1px solid var(--line-strong); border-radius: 4px;
+  background: var(--panel); color: var(--text); font: inherit; padding: 0 9px; min-width: 160px;
+}
+.nc-code {
+  width: 100%; min-height: 180px; resize: vertical; box-sizing: border-box;
+  border: 1px solid var(--line-strong); border-radius: 5px;
+  background: var(--panel); color: var(--text);
+  font: 12.5px/1.65 var(--mono); padding: 10px 12px;
+}
+.nc-code.tall { min-height: 260px; }
+.nc-hint { margin: 4px 0; font-size: 11.5px; color: var(--muted); line-height: 1.7; }
+
+/* ---- 右侧信息 ---- */
+.nc-info {
+  flex: 0 0 196px; width: 196px; padding: 16px 14px; box-sizing: border-box;
+  border-left: 1px solid var(--line); background: var(--panel); overflow: auto;
+}
+.nc-info-db { color: #3aa0e8; }
+.nc-info-name {
+  margin-top: 6px; font-size: 13.5px; font-weight: 700;
+  word-break: break-all; line-height: 1.4;
+}
+.nc-info-sub { font-size: 11px; color: var(--muted); margin-bottom: 12px; }
+.nc-info-row {
+  display: flex; justify-content: space-between; gap: 8px;
+  padding: 5px 0; font-size: 11.5px; color: var(--muted);
+  border-bottom: 1px dashed var(--line);
+}
+.nc-info-row b { color: var(--text); font-weight: 500; text-align: right; word-break: break-all; }
+
+/* ---- 底部状态栏 ---- */
+.nc-status {
+  flex: 0 0 auto; height: 24px; display: flex; align-items: center; gap: 10px;
+  padding: 0 10px; font-size: 11px; color: var(--muted);
+  background: var(--panel-2); border-top: 1px solid var(--line);
+}
+.nc-status-item { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.nc-loading {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  gap: 8px; background: color-mix(in srgb, var(--panel) 72%, transparent);
+  color: var(--muted); font-size: 12px;
+}
+
+/* ---- 弹窗 ---- */
+.nc-mask {
+  position: absolute; inset: 0; z-index: 40;
+  background: rgba(0,0,0,.28); display: flex; align-items: center; justify-content: center;
+  padding: 20px;
+}
+.nc-dlg {
+  width: min(520px, 100%); max-height: 88%; overflow: auto;
+  background: var(--panel); border: 1px solid var(--line-strong);
+  border-radius: 10px; box-shadow: 0 18px 50px rgba(0,0,0,.3);
+  padding: 14px 16px;
+}
+.nc-dlg.wide { width: min(760px, 100%); }
+.nc-dlg-h {
+  display: flex; align-items: center; font-size: 14px; font-weight: 600;
+  padding-bottom: 10px; margin-bottom: 10px; border-bottom: 1px solid var(--line);
+}
+.nc-dlg-x {
+  margin-left: auto; border: 0; background: transparent; color: var(--muted);
+  font-size: 18px; cursor: pointer; line-height: 1;
+}
+.nc-dlg-f { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+.nc-field { display: flex; flex-direction: column; gap: 4px; margin: 8px 0; font-size: 11.5px; color: var(--muted); }
+.nc-field input { height: 28px; border: 1px solid var(--line-strong); border-radius: 4px;
+  background: var(--panel); color: var(--text); font: inherit; padding: 0 8px; }
+.nc-check { display: flex; align-items: center; gap: 7px; margin: 8px 0; color: var(--text); font-size: 12px; }
+.nc-build-tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--line); margin-bottom: 12px; overflow-x: auto; }
+.nc-build-tabs button {
+  border: 0; border-bottom: 2px solid transparent; background: transparent;
+  color: var(--muted); font: inherit; font-size: 12px; padding: 6px 12px; cursor: pointer;
+  white-space: nowrap;
+}
+.nc-build-tabs button.on { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+.nc-build-body { min-height: 120px; }
+.nc-build-row { display: flex; gap: 6px; margin-bottom: 6px; align-items: center; }
+.nc-build-row input, .nc-build-row select, .nc-wide-input {
+  height: 28px; border: 1px solid var(--line-strong); border-radius: 4px;
+  background: var(--panel); color: var(--text); font: inherit; padding: 0 8px;
+}
+.nc-build-row input { flex: 1; min-width: 0; }
+.nc-build-row select { width: 90px; flex: 0 0 auto; }
+.nc-wide-input { width: 100%; box-sizing: border-box; }
+.nc-preview {
+  margin: 12px 0 0; padding: 10px 12px; max-height: 150px; overflow: auto;
+  background: var(--btn-bg); border: 1px solid var(--line); border-radius: 6px;
+  font: 12px/1.6 var(--mono); color: var(--text); white-space: pre-wrap;
+}
+.nc-run-msg { margin-top: 10px; font-size: 12px; color: var(--muted); }
+
+/* ---- 做题页容器 ---- */
+/* Navicat 模式没有左侧题目栏，主区占满整行（否则会落进原网格的 244px 列） */
+.drills-ws.nav-mode { grid-template-columns: 1fr; }
+.navicat-pane { flex: 1; min-height: 0; }
+.navicat-head {
+  height: auto; min-height: var(--panel-h-h);
+  flex-wrap: wrap; padding: 6px 12px; row-gap: 6px;
+}
+.navicat-head .panel-title {
+  flex: 0 1 auto; min-width: 0; max-width: 34vw;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.navicat-head .btn, .navicat-head .mode-switch, .navicat-head .drill-idx,
+.navicat-head .drill-pts-badge { flex: 0 0 auto; white-space: nowrap; }
+.navicat-body { flex: 1; min-height: 0; }
+.navicat-body > .nc { height: 100%; }
+.mode-switch {
+  display: inline-flex; border: 1px solid var(--line-strong); border-radius: 6px;
+  overflow: hidden; background: var(--btn-bg);
+}
+.mode-switch button {
+  border: 0; background: transparent; color: var(--muted);
+  font: inherit; font-size: 11.5px; padding: 4px 10px; cursor: pointer;
+}
+.mode-switch button + button { border-left: 1px solid var(--line-strong); }
+.mode-switch button.on { background: var(--accent); color: #fff; font-weight: 600; }
+
+/* ---- 响应式 ---- */
+@media (max-width: 1200px) {
+  .nc-info { display: none; }
+}
+@media (max-width: 919px) {
+  .nc-side { flex-basis: 150px; width: 150px; }
+  .nc-toolbar { padding: 3px 4px; }
+  .nc-tool { min-width: 50px; padding: 3px 5px; font-size: 10.5px; }
+  .nc-tool-ico { width: 26px; height: 23px; }
+  .nc-comment { max-width: 160px; }
+  .nc-editor { flex: 1 1 40%; }
+  .nc-result { flex: 1 1 60%; }
+  .nc-design-top label.wide { min-width: 140px; }
+}
+@media (max-width: 640px) {
+  .nc-side { display: none; }
+  .nc-tool-t { display: none; }
+  .nc-tool { min-width: 38px; }
+  .nc-design-top { gap: 8px; }
+  .nc-frame { min-width: 620px; }
+}

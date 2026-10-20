@@ -55,6 +55,7 @@ TYPE_LABEL = {"sql": "SQL 练习题", "python": "Python 练习题", "single": "�
 TITLE_MAX = 160
 DRILL_MAX = 200          # 每人最多题目数
 PY_RUN_TIMEOUT = 25.0    # 判分时沙箱最长等待（秒）
+SETUP_TIMEOUT = 90.0     # 题目初始化 / 标准答案这类内部脚本的执行上限（慢盘也够用）
 SCORE_DEFAULT = 10       # 单题默认分值
 SCORE_MIN, SCORE_MAX = 1, 100
 PAPER_TITLE_MAX = 120
@@ -909,7 +910,7 @@ def try_sql(account: dict, setup: str, sql: str) -> dict:
         out = {"tables": [], "results": [], "error": ""}
         if (setup or "").strip():
             r = sqlrun.run_sql(tmp, account["mysql_user"], account["mysql_pass"],
-                               setup, owned_dbs=[tmp])
+                               setup, owned_dbs=[tmp], batch=True, timeout=SETUP_TIMEOUT)
             out["results"] = r.get("results") or []
             e = _first_error(out["results"])
             if e:
@@ -1193,12 +1194,143 @@ def ensure_sandbox(account: dict, drill_id: int, reset: bool = False) -> dict:
         setup = (full.get("setupSql") or "").strip()
         if setup:
             r = sqlrun.run_sql(db, account["mysql_user"], account["mysql_pass"],
-                               setup, owned_dbs=[db])
+                               setup, owned_dbs=[db], batch=True, timeout=SETUP_TIMEOUT)
             err = _first_error(r.get("results"))
             if err:
                 raise DrillError("题目的初始化 SQL 有问题，请联系出题老师：" + err)
     tables = sqlrun.list_tables(db, account["mysql_user"], account["mysql_pass"])
     return {"db": db, "tables": tables}
+
+
+def navicat_schema(account: dict, drill_id: int) -> dict:
+    """Navicat 模拟界面用的完整库结构：表、列、索引、视图、函数、触发器。"""
+    from .db import q_ident, user_conn
+
+    sb = ensure_sandbox(account, drill_id)
+    db = sb["db"]
+    out = {"db": db, "charset": "", "collation": "", "tables": [], "views": [],
+           "routines": [], "triggers": []}
+    conn = user_conn(db, account["mysql_user"], account["mysql_pass"])
+    try:
+        with conn.cursor() as cur:
+            try:
+                cur.execute("""SELECT DEFAULT_CHARACTER_SET_NAME, DEFAULT_COLLATION_NAME
+                               FROM information_schema.SCHEMATA WHERE SCHEMA_NAME=%s""", (db,))
+                r = cur.fetchone()
+                if r:
+                    out["charset"] = r[0] or ""
+                    out["collation"] = r[1] or ""
+            except Exception:
+                pass
+
+            cur.execute("""SELECT TABLE_NAME, TABLE_TYPE, ENGINE, TABLE_ROWS,
+                                  DATA_LENGTH, UPDATE_TIME, TABLE_COMMENT
+                           FROM information_schema.TABLES
+                           WHERE TABLE_SCHEMA=%s ORDER BY TABLE_NAME""", (db,))
+            tabs = cur.fetchall()
+
+            cur.execute("""SELECT TABLE_NAME, COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE,
+                                  COLUMN_KEY, COLUMN_DEFAULT, EXTRA, COLUMN_COMMENT,
+                                  ORDINAL_POSITION, CHARACTER_MAXIMUM_LENGTH,
+                                  NUMERIC_PRECISION, NUMERIC_SCALE
+                           FROM information_schema.COLUMNS
+                           WHERE TABLE_SCHEMA=%s
+                           ORDER BY TABLE_NAME, ORDINAL_POSITION""", (db,))
+            cols = {}
+            for c in cur.fetchall():
+                cols.setdefault(str(c[0]).lower(), []).append({
+                    "name": c[1], "type": c[2] or "", "nullable": c[3] == "YES",
+                    "key": c[4] or "", "default": "" if c[5] is None else str(c[5]),
+                    "extra": c[6] or "", "comment": c[7] or "",
+                    "position": int(c[8] or 0),
+                })
+
+            cur.execute("""SELECT TABLE_NAME, INDEX_NAME, NON_UNIQUE, SEQ_IN_INDEX,
+                                  COLUMN_NAME, INDEX_TYPE
+                           FROM information_schema.STATISTICS
+                           WHERE TABLE_SCHEMA=%s
+                           ORDER BY TABLE_NAME, INDEX_NAME, SEQ_IN_INDEX""", (db,))
+            idx = {}
+            for x in cur.fetchall():
+                by_table = idx.setdefault(str(x[0]).lower(), {})
+                item = by_table.setdefault(x[1], {
+                    "name": x[1], "unique": int(x[2]) == 0,
+                    "type": x[5] or "", "columns": []})
+                item["columns"].append(x[4])
+
+            cur.execute("""SELECT TABLE_NAME, VIEW_DEFINITION FROM information_schema.VIEWS
+                           WHERE TABLE_SCHEMA=%s ORDER BY TABLE_NAME""", (db,))
+            view_defs = {str(r[0]).lower(): r[1] or "" for r in cur.fetchall()}
+
+            for t in tabs:
+                name = t[0]
+                key = str(name).lower()
+                try:
+                    cur.execute(f"SELECT COUNT(*) FROM {q_ident(name)}")
+                    row_count = int(cur.fetchone()[0])
+                except Exception:
+                    row_count = 0
+                item = {
+                    "name": name, "rows": row_count,
+                    "dataLength": int(t[4] or 0), "engine": t[2] or "",
+                    "updated": str(t[5]) if t[5] else "",
+                    "comment": t[6] or "",
+                    "columns": cols.get(key, []),
+                    "indexes": list(idx.get(key, {}).values()),
+                }
+                if str(t[1]).upper() == "VIEW":
+                    item["definition"] = view_defs.get(key, "")
+                    out["views"].append(item)
+                else:
+                    item["primaryKey"] = [c["name"] for c in item["columns"]
+                                          if c["key"] == "PRI"]
+                    out["tables"].append(item)
+
+            # 函数 / 存储过程
+            cur.execute("""SELECT ROUTINE_NAME, ROUTINE_TYPE, DTD_IDENTIFIER,
+                                  ROUTINE_DEFINITION, ROUTINE_COMMENT
+                           FROM information_schema.ROUTINES
+                           WHERE ROUTINE_SCHEMA=%s
+                           ORDER BY ROUTINE_TYPE, ROUTINE_NAME""", (db,))
+            routines = cur.fetchall()
+            params = {}
+            try:
+                cur.execute("""SELECT SPECIFIC_NAME, PARAMETER_MODE, PARAMETER_NAME,
+                                      DTD_IDENTIFIER, ORDINAL_POSITION
+                               FROM information_schema.PARAMETERS
+                               WHERE SPECIFIC_SCHEMA=%s
+                               ORDER BY SPECIFIC_NAME, ORDINAL_POSITION""", (db,))
+                for p in cur.fetchall():
+                    if p[2] is None:      # 函数返回值那一行
+                        continue
+                    params.setdefault(str(p[0]).lower(), []).append({
+                        "mode": p[1] or "IN", "name": p[2], "type": p[3] or "",
+                        "position": int(p[4] or 0)})
+            except Exception:
+                pass
+            for r in routines:
+                out["routines"].append({
+                    "name": r[0], "type": r[1], "returns": r[2] or "",
+                    "definition": r[3] or "", "comment": r[4] or "",
+                    "params": params.get(str(r[0]).lower(), []),
+                })
+
+            # 触发器
+            try:
+                cur.execute("""SELECT TRIGGER_NAME, ACTION_TIMING, EVENT_MANIPULATION,
+                                      EVENT_OBJECT_TABLE, ACTION_STATEMENT
+                               FROM information_schema.TRIGGERS
+                               WHERE TRIGGER_SCHEMA=%s ORDER BY TRIGGER_NAME""", (db,))
+                for t in cur.fetchall():
+                    out["triggers"].append({
+                        "name": t[0], "timing": t[1], "event": t[2],
+                        "table": t[3], "statement": t[4] or "",
+                    })
+            except Exception:
+                pass
+    finally:
+        conn.close()
+    return out
 
 
 def _runner(method: str, path: str, payload=None):
@@ -1248,24 +1380,119 @@ def _all_cells(rs):
     return [v for row in (rs or {}).get("rows") or [] for v in row]
 
 
+def _norm_def(sql: str, db: str = "") -> str:
+    """对象定义归一化：去空白差异、DEFINER 和库名前缀，避免同义写法被误判。
+
+    MySQL 存视图定义时会把表名补成 `库名`.`表名`；学生库和标准答案库的库名
+    不同，必须先把库名去掉再比。
+    """
+    t = re.sub(r"\s+", " ", str(sql or "")).strip().lower()
+    t = re.sub(r"\bdefiner\s*=\s*`[^`]*`@`[^`]*`\s*", "", t)
+    if db:
+        for name in {db.lower(), db}:
+            t = t.replace("`" + name + "`.", "").replace(name + ".", "")
+    return t.rstrip("; ").strip()
+
+
+def _norm_col_type(t: str) -> str:
+    """字段类型归一化：整数显示宽度（int(8) / int(11)）不算差异，其余保留。"""
+    s = re.sub(r"\s+", " ", str(t or "").lower().strip())
+    s = re.sub(r"^(tinyint|smallint|mediumint|int|bigint)\(\d+\)", r"\1", s)
+    return s
+
+
 def snapshot_db(db: str, user: str, password: str, max_rows: int = 500) -> dict:
-    """整库快照：{表名: {cols, rows}}，用于 dbstate 判分（建表/增删改通用）。"""
+    """整库快照：表/视图的数据 + 表结构 + 视图/函数/存储过程/触发器的定义。
+
+    用于 dbstate 判分 —— Navicat 式的“建表、设计表、建视图、建函数、建触发器”
+    都能真正比对，而不是只看有没有留下表。
+    """
     from .db import q_ident, user_conn
 
     out = {}
     conn = user_conn(db, user, password)
     try:
         with conn.cursor() as cur:
-            cur.execute("SHOW TABLES")
-            names = [r[0] for r in cur.fetchall() if not str(r[0]).startswith("__")]
-            for name in sorted(names):
+            # 表结构（字段名/类型/可空/主键），用于「设计表」类题目的判分
+            meta = {}
+            try:
+                cur.execute("""SELECT TABLE_NAME, COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE,
+                                      COLUMN_KEY, ORDINAL_POSITION
+                               FROM information_schema.COLUMNS
+                               WHERE TABLE_SCHEMA=%s
+                               ORDER BY TABLE_NAME, ORDINAL_POSITION""", (db,))
+                for c in cur.fetchall():
+                    meta.setdefault(str(c[0]).lower(), []).append(
+                        [str(c[1]), _norm_col_type(c[2]), c[3] == "YES", c[4] == "PRI"])
+            except Exception:
+                pass
+
+            cur.execute("SHOW FULL TABLES")
+            objs = [(r[0], r[1]) for r in cur.fetchall() if not str(r[0]).startswith("__")]
+            for name, kind in sorted(objs):
+                key = str(name).lower()
                 try:
                     cur.execute(f"SELECT * FROM {q_ident(name)} LIMIT %s", (max_rows,))
                     cols = [d[0] for d in cur.description]
                     rows = [[conv_value(v) for v in r] for r in cur.fetchall()]
-                    out[str(name).lower()] = {"cols": cols, "rows": rows}
                 except Exception:
-                    out[str(name).lower()] = {"cols": [], "rows": []}
+                    cols, rows = [], []
+                item = {"cols": cols, "rows": rows}
+                if str(kind).upper() == "VIEW":
+                    try:
+                        cur.execute("""SELECT VIEW_DEFINITION FROM information_schema.VIEWS
+                                       WHERE TABLE_SCHEMA=%s AND TABLE_NAME=%s""", (db, name))
+                        v = cur.fetchone()
+                        item["def"] = _norm_def(v[0], db) if v else ""
+                    except Exception:
+                        item["def"] = ""
+                elif key in meta:
+                    item["schema"] = meta[key]
+                out[key] = item
+
+            # 函数 / 存储过程：签名 + 函数体
+            routines = []
+            try:
+                cur.execute("""SELECT ROUTINE_NAME, ROUTINE_TYPE, DTD_IDENTIFIER,
+                                      ROUTINE_DEFINITION
+                               FROM information_schema.ROUTINES WHERE ROUTINE_SCHEMA=%s""", (db,))
+                routines = cur.fetchall()
+            except Exception:
+                pass
+            for rname, rtype, returns, body in routines:
+                sig = ""
+                try:
+                    cur.execute("""SELECT PARAMETER_MODE, PARAMETER_NAME, DTD_IDENTIFIER
+                                   FROM information_schema.PARAMETERS
+                                   WHERE SPECIFIC_SCHEMA=%s AND SPECIFIC_NAME=%s
+                                   ORDER BY ORDINAL_POSITION""", (db, rname))
+                    parts = []
+                    for mode, pname, ptype in cur.fetchall():
+                        if pname is None:
+                            continue
+                        parts.append(f"{str(mode or 'IN').lower()} {str(pname).lower()} "
+                                     f"{str(ptype or '').lower()}")
+                    sig = "(" + ",".join(parts) + ")"
+                except Exception:
+                    pass
+                ret = (" returns " + str(returns).lower())                     if str(rtype).upper() == "FUNCTION" and returns else ""
+                key = f"{str(rtype).lower()}:{str(rname).lower()}"
+                out[key] = {"cols": [], "rows": [],
+                            "def": _norm_def(f"{rtype} {rname}{sig}{ret} {body or ''}", db)}
+
+            # 触发器：时机 + 事件 + 表 + 语句
+            triggers = []
+            try:
+                cur.execute("""SELECT TRIGGER_NAME, ACTION_TIMING, EVENT_MANIPULATION,
+                                      EVENT_OBJECT_TABLE, ACTION_STATEMENT
+                               FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA=%s""", (db,))
+                triggers = cur.fetchall()
+            except Exception:
+                pass
+            for tname, timing, event, table, body in triggers:
+                key = "trigger:" + str(tname).lower()
+                out[key] = {"cols": [], "rows": [],
+                            "def": _norm_def(f"{timing} {event} on {table} {body or ''}", db)}
     finally:
         conn.close()
     return out
@@ -1281,10 +1508,24 @@ def compare_db(student: dict, expected: dict) -> tuple[bool, str]:
     if extra:
         return False, "多了不该有的对象：" + "、".join(extra[:6])
     for t in sorted(ek):
+        # 视图 / 函数 / 存储过程 / 触发器：先比定义
+        s_def = student[t].get("def", "")
+        e_def = expected[t].get("def", "")
+        if s_def or e_def:
+            if s_def != e_def:
+                return False, f"{t} 的定义与标准答案不一致"
+            continue
         s_cols = [str(c) for c in student[t]["cols"]]
         e_cols = [str(c) for c in expected[t]["cols"]]
         if s_cols != e_cols:
             return False, f"表 {t} 的字段不一致（期望 {', '.join(e_cols[:6])}）"
+        # 字段定义（类型/可空/主键）：设计表类题目要看这个
+        if "schema" in expected[t] and "schema" in student[t]:
+            if student[t]["schema"] != expected[t]["schema"]:
+                want = "，".join(
+                    f"{c[0]} {c[1]}{'' if c[2] else ' NOT NULL'}{' PK' if c[3] else ''}"
+                    for c in expected[t]["schema"][:6])
+                return False, f"表 {t} 的字段定义不一致（期望 {want}）"
         s_rows = sorted([str(v) for v in row] for row in student[t]["rows"])
         e_rows = sorted([str(v) for v in row] for row in expected[t]["rows"])
         if s_rows != e_rows:
@@ -1332,8 +1573,9 @@ def judge_sql(account: dict, dr: dict, answer: str) -> dict:
                 pass
 
     def run(db, sql):
+        # 判分脚本（初始化 + 标准答案 + 学生答案）整批提交，慢盘上也不会一条一条 fsync
         out = sqlrun.run_sql(db, account["mysql_user"], account["mysql_pass"],
-                             sql, owned_dbs=[db])
+                             sql, owned_dbs=[db], batch=True, timeout=SETUP_TIMEOUT)
         results = out.get("results") or []
         return results, _first_error(results), _last_rows(results)
 

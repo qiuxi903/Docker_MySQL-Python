@@ -336,6 +336,9 @@ const App = {
       drillList: [],
       drillCurrent: null,
       drillLoading: false,
+      navMode: false,
+      navLog: [],
+      navLastQuery: "",
       drillOpenSeq: 0,
       drillResult: null,
       drillCode: "",
@@ -876,6 +879,18 @@ const App = {
       } catch (e) { this.toast(e.message); }
     },
 
+    setNavMode(on) {
+      this.navMode = !!on;
+      try { localStorage.setItem("lab_drill_mode", on ? "nav" : "sql"); } catch (e) {}
+      if (on) this.$nextTick(() => { if (this.$refs.navPanel) this.$refs.navPanel.reload(); });
+    },
+    onNavLog(sql) {
+      if (sql && !this.navLog.includes(sql)) this.navLog.push(sql);
+    },
+    onNavQuery(sql) {
+      this.navLastQuery = String(sql || "");
+    },
+
     async startDrill(d) {
       // 已经在这道题里就不用重新加载，避免把正在写的内容重置
       if (this.drillView === "do" && this.drillCurrent && this.drillCurrent.id === d.id) return;
@@ -948,11 +963,17 @@ const App = {
       this.drillShowSetup = false;
       this.drillShowHint = false;
       this.drillRunLog = [];
+      this.navLog = [];
+      this.navLastQuery = "";
       this.drillSandbox = { db: "", tables: [], loading: false };
       try {
         const det = await this.api(`/api/drills/${d.id}`);
         if (seq !== this.drillOpenSeq) return;
         this.drillCurrent = det;
+        // SQL 题默认用 Navicat 图形界面；学生上次主动切到纯 SQL 就记住
+        let pref = "nav";
+        try { pref = localStorage.getItem("lab_drill_mode") || "nav"; } catch (e) {}
+        this.navMode = det.type === "sql" && pref !== "sql";
         this.drawer = "";
         // 恢复这道题上次写了一半的内容（按账号 + 题目分开存，换题不互相覆盖）
         const draft = this.loadDrillDraft(det.id) || {};
@@ -1017,6 +1038,10 @@ const App = {
                                   { method: "POST", body: { reset: true } });
         this.drillSandbox = { db: sb.db, tables: sb.tables || [], loading: false };
         this.drillRunLog = [];
+        // 图形界面的操作记录也要清掉，否则重放会把已还原的改动又算进去
+        this.navLog = [];
+        this.navLastQuery = "";
+        if (this.$refs.navPanel) this.$refs.navPanel.reload();
         this.toast("已恢复到初始数据");
       } catch (e) { this.toast(e.message); }
     },
@@ -1457,7 +1482,27 @@ const App = {
       const d = this.drillCurrent;
       if (!d) return;
       let answer = "";
-      if (d.type === "sql" || d.type === "python") {
+      if (d.type === "sql" && this.navMode) {
+        // Navicat 模式：查询题交「最后一次运行的 SELECT」，
+        // 建表/改数据/建对象题交图形操作翻译出来的 SQL（判分时在干净库里重放）
+        const mode = d.judgeMode || "result";
+        const queryModes = ["result", "result_ordered", "rows_only", "cell", "contains"];
+        if (queryModes.includes(mode)) {
+          answer = this.navLastQuery ||
+            (this.$refs.navPanel && this.$refs.navPanel.lastQuerySql) || "";
+          if (!answer.trim()) {
+            this.toast("先在「查询」页写一条查询并点「运行」，再提交");
+            return;
+          }
+        } else {
+          answer = this.navLog.join(";\n");
+          if (answer.trim()) answer += ";";
+          if (!answer.trim()) {
+            this.toast("还没有做任何修改：可以新建表、改数据或建视图/函数/触发器");
+            return;
+          }
+        }
+      } else if (d.type === "sql" || d.type === "python") {
         answer = this.drillCode;
         if (!answer.trim()) { this.toast("先写点内容再提交"); return; }
       } else if (d.type === "fill") {
@@ -1474,7 +1519,7 @@ const App = {
       this.drillResult = null;
       try {
         // 1) 先像主页一样真跑一遍，把过程留在控制台（SQL 跑在本题沙箱库，Python 走沙箱）
-        if (d.type === "sql" && this.drillSandbox.db) {
+        if (d.type === "sql" && this.drillSandbox.db && !this.navMode) {
           try {
             const run = await this.api("/api/sql", { method: "POST",
               body: { sql: answer, db: this.drillSandbox.db } });
@@ -2664,4 +2709,5 @@ app.component("cm-editor", CmEditor);
 app.component("e-icon", EIcon);
 app.component("x-select", XSelect);
 app.component("x-check", XCheck);
+app.component("navicat-panel", NavicatPanel);
 app.mount("#app");

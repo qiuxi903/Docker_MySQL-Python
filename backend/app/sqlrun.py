@@ -276,8 +276,14 @@ def _short(stmt: str, limit: int = 120) -> str:
 
 
 def run_sql(db_name: str, mysql_user: str, mysql_pass: str, sql: str,
-            owned_dbs: list[str] | None = None) -> dict:
-    """在学生自己的库上执行（可能多条）SQL，逐条返回结果。"""
+            owned_dbs: list[str] | None = None, batch: bool = False,
+            timeout: float | None = None) -> dict:
+    """在学生自己的库上执行（可能多条）SQL，逐条返回结果。
+
+    batch=True 用于「题目初始化 / 标准答案」这类内部脚本：整批放在一个事务里提交，
+    磁盘慢的机器上不会因为每条语句都 fsync 而超时；timeout 也可以单独放宽。
+    """
+    limit = float(timeout if timeout is not None else C.SQL_TIMEOUT)
     stmts = prepare_statements(sql)
     if not stmts:
         raise SqlError("没有可执行的 SQL 语句")
@@ -301,10 +307,15 @@ def run_sql(db_name: str, mysql_user: str, mysql_pass: str, sql: str,
         killed.set()
 
     conn = user_conn(db_name, mysql_user, mysql_pass)
+    if batch:
+        try:
+            conn.autocommit(False)
+        except Exception:
+            pass
     timer = None
     t_start = time.monotonic()
     try:
-        timer = threading.Timer(C.SQL_TIMEOUT, watchdog, (conn.thread_id(),))
+        timer = threading.Timer(limit, watchdog, (conn.thread_id(),))
         timer.daemon = True
         timer.start()
 
@@ -346,7 +357,7 @@ def run_sql(db_name: str, mysql_user: str, mysql_pass: str, sql: str,
                 if killed.is_set():
                     results.append({
                         "type": "error", "index": idx, "sql": _short(stmt),
-                        "msg": f"执行超时（超过 {C.SQL_TIMEOUT:g} 秒），已被服务器终止。"
+                        "msg": f"执行超时（超过 {limit:g} 秒），已被服务器终止。"
                                f"如果是查询太慢，试试加 LIMIT 或建索引。",
                     })
                     break
@@ -357,6 +368,11 @@ def run_sql(db_name: str, mysql_user: str, mysql_pass: str, sql: str,
                 results.append({"type": "error", "index": idx, "sql": _short(stmt),
                                 "errno": int(errno), "msg": str(msg)})
                 break
+        if batch and not any(r.get("type") == "error" for r in results):
+            try:
+                conn.commit()
+            except pymysql.MySQLError:
+                pass
     finally:
         if timer is not None:
             timer.cancel()

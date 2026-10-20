@@ -28,6 +28,7 @@ html[data-theme="light"] body { background: #f6f8fa; }
 <link rel="stylesheet" href="/vendor/codemirror/addon/hint/show-hint.css">
 <link rel="stylesheet" href="/fonts/misans/misans.css">
 <link rel="stylesheet" href="/style.css?v=138">
+  <link rel="stylesheet" href="/navicat.css?v=2">
 </head>
 <body>
 <div id="app" v-cloak>
@@ -392,11 +393,11 @@ html[data-theme="light"] body { background: #f6f8fa; }
         </div>
 
         <!-- ===== 3) 做题（与主页工作台完全一致） ===== -->
-        <div v-else class="ws drills-ws">
+        <div v-else class="ws drills-ws" :class="{ 'nav-mode': navMode }">
           <div class="drawer-mask m-only" v-show="drawer==='drills'" @click="drawer=''"></div>
 
-          <!-- 左：本套题目 + SQL 题的沙箱数据库表 -->
-          <aside class="side drawer" :class="{open: drawer==='drills'}">
+          <!-- 左：本套题目 + SQL 题的沙箱数据库表（Navicat 模式用面板自带的连接树） -->
+          <aside v-if="!navMode" class="side drawer" :class="{open: drawer==='drills'}">
             <div class="side-h">
               <button class="icon-btn" title="返回" @click="paperCurrent ? backToPaper() : backToPapers()">
                 <e-icon name="chevron-right" :size="14" style="transform:rotate(180deg);display:inline-block"></e-icon>
@@ -469,6 +470,50 @@ html[data-theme="light"] body { background: #f6f8fa; }
                 </template>
               </div>
             </template>
+            <!-- Navicat 模式：图形界面做题（主要方式） -->
+            <template v-else-if="navMode">
+              <section class="panel navicat-pane">
+                <div class="panel-h navicat-head">
+                  <button v-if="paperCurrent" class="btn mini ghost m-hide" @click="backToPaper">
+                    <e-icon name="chevron-right" :size="12" style="transform:rotate(180deg);display:inline-block"></e-icon> 试卷
+                  </button>
+                  <span class="drill-idx">{{ String(drillSideList.findIndex(x => drillCurrent && x.id === drillCurrent.id) + 1).padStart(2, '0') }}</span>
+                  <span class="panel-title">{{ qTitle(drillCurrent.title) }}</span>
+                  <span class="drill-pts-badge">{{ drillCurrent.score }} 分</span>
+                  <span v-if="drillCurrent.passed" class="drill-passed"><e-icon name="check" :size="12"></e-icon> 已通过</span>
+                  <span class="spacer"></span>
+                  <button v-if="drillCurrent.setupSql" class="btn mini ghost" @click="drillShowSetup=!drillShowSetup">
+                    <e-icon name="database" :size="12"></e-icon> <span class="m-hide">{{ drillShowSetup ? '隐藏数据' : '题目数据' }}</span>
+                  </button>
+                  <button v-if="drillCurrent.hint" class="btn mini ghost" @click="drillShowHint=!drillShowHint">
+                    <e-icon name="shield" :size="12"></e-icon> 提示
+                  </button>
+                  <span class="mode-switch">
+                    <button :class="{on: navMode}" @click="setNavMode(true)">Navicat</button>
+                    <button :class="{on: !navMode}" @click="setNavMode(false)">SQL</button>
+                  </span>
+                  <button class="btn run run-btn" :disabled="drillBusy" @click="submitDrill">
+                    <e-icon name="target" :size="13"></e-icon> 提交判分
+                  </button>
+                </div>
+                <div v-if="drillShowSetup && drillCurrent.setupSql" class="drill-paper drill-data-paper">
+                  <div class="drill-data-h">题目数据（初始化 SQL）</div>
+                  <pre class="drill-setup">{{ drillCurrent.setupSql }}</pre>
+                </div>
+                <div v-if="drillShowHint && drillCurrent.hint" class="drill-paper">
+                  <div class="drill-hint">{{ drillCurrent.hint }}</div>
+                </div>
+                <div class="navicat-body">
+                  <div v-if="!drillSandbox.db" class="drill-blank">
+                    <div class="spin"></div>
+                    <p>正在准备本题数据库…</p>
+                  </div>
+                  <navicat-panel v-else ref="navPanel" :drill="drillCurrent" :db="drillSandbox.db"
+                                 :token="token" @log="onNavLog" @query="onNavQuery" @toast="toast" />
+                </div>
+              </section>
+            </template>
+
             <template v-else>
               <section class="panel editor-pane">
                 <div class="panel-h">
@@ -482,6 +527,10 @@ html[data-theme="light"] body { background: #f6f8fa; }
                   <span class="drill-pts-badge">{{ drillCurrent.score }} 分</span>
                   <span v-if="drillCurrent.passed" class="drill-passed"><e-icon name="check" :size="12"></e-icon> 已通过</span>
                   <span class="spacer"></span>
+                  <span class="mode-switch" v-if="drillCurrent.type==='sql'">
+                    <button :class="{on: navMode}" @click="setNavMode(true)">Navicat</button>
+                    <button :class="{on: !navMode}" @click="setNavMode(false)">SQL</button>
+                  </span>
                   <button v-if="drillCurrent.setupSql" class="btn mini ghost" @click="drillShowSetup=!drillShowSetup">
                     <e-icon name="database" :size="12"></e-icon> <span class="m-hide">{{ drillShowSetup ? '隐藏数据' : '题目数据' }}</span>
                   </button>
@@ -638,7 +687,7 @@ html[data-theme="light"] body { background: #f6f8fa; }
             </template>
           </div>
 
-          <button v-show="drawer!=='drills'" class="fab-drawer m-only" @click="drawer='drills'">
+          <button v-if="!navMode" v-show="drawer!=='drills'" class="fab-drawer m-only" @click="drawer='drills'">
             <e-icon name="target" :size="16"></e-icon> 题目
             <span class="cnt">{{ drillSideList.length }}</span>
           </button>
@@ -1862,6 +1911,641 @@ INSERT INTO course VALUES (1,'数学');</pre>
 <script src="/vendor/codemirror/addon/display/placeholder.js"></script>
 <script src="/vendor/codemirror/addon/hint/show-hint.js"></script>
 <script src="/vendor/codemirror/addon/hint/sql-hint.js"></script>
+<script type="text/x-template" id="navicat-tpl">
+<div class="nc" :class="{ 'nc-loading': loading }">
+  <!-- 菜单栏 -->
+  <div class="nc-menubar">
+    <button v-for="m in ['文件','编辑','查看','收藏夹','工具','窗口','帮助']" :key="m"
+            class="nc-menu" @click.stop="toggleMenu(m)">{{ m }}</button>
+    <div class="nc-menu-pop" v-if="menu" @click.stop>
+      <button @click="menuAction('newQuery')"><e-icon name="search" :size="13"></e-icon> 新建查询</button>
+      <button @click="menuAction('refresh')"><e-icon name="refresh" :size="13"></e-icon> 刷新对象列表</button>
+      <button @click="menuAction('closeTab')"><e-icon name="x" :size="13"></e-icon> 关闭当前页</button>
+      <button @click="menuAction('export')"><e-icon name="download" :size="13"></e-icon> 导出当前数据库</button>
+    </div>
+    <span class="spacer"></span>
+    <span class="nc-brand">Navicat 模拟 · 课堂版</span>
+  </div>
+
+  <!-- 工具栏 -->
+  <div class="nc-toolbar">
+    <button v-for="t in tools" :key="t.key" class="nc-tool" :class="{ on: toolActive === t.key }"
+            @click="toolClick(t)" :title="t.label">
+      <span class="nc-tool-ico" :style="{ background: t.color }"><e-icon :name="t.icon" :size="17"></e-icon></span>
+      <span class="nc-tool-t">{{ t.label }}</span>
+    </button>
+  </div>
+
+  <div class="nc-body">
+    <!-- 连接树 -->
+    <aside class="nc-side">
+      <div class="nc-side-h">我的连接</div>
+      <div class="nc-tree">
+        <div class="nc-node conn">
+          <e-icon name="chevron-down" :size="12"></e-icon>
+          <span class="nc-conn-dot"></span>
+          <span class="nc-node-t">本地</span>
+        </div>
+        <div class="nc-node db" @click="selectNode('tables')">
+          <e-icon name="chevron-down" :size="12"></e-icon>
+          <span class="nc-db-ico"><e-icon name="database" :size="13"></e-icon></span>
+          <span class="nc-node-t" :title="schema.db || db">{{ schema.db || db }}</span>
+        </div>
+        <div v-for="n in treeNodes" :key="n.key" class="nc-node child"
+             :class="{ on: node === n.key && active === 'objects' }" @click="selectNode(n.key)">
+          <span class="nc-node-ico"><e-icon :name="n.icon" :size="13"></e-icon></span>
+          <span class="nc-node-t">{{ n.label }}</span>
+          <span class="nc-count">{{ n.count }}</span>
+        </div>
+      </div>
+      <div class="nc-side-f">
+        <div class="nc-search">
+          <e-icon name="search" :size="12"></e-icon>
+          <input v-model.trim="filter" placeholder="搜索">
+        </div>
+      </div>
+    </aside>
+
+    <!-- 主区域 -->
+    <div class="nc-main">
+      <div class="nc-tabs">
+        <button class="nc-tab" :class="{ on: active === 'objects' }" @click="openObjects">
+          <e-icon name="table" :size="12"></e-icon> 对象
+        </button>
+        <button v-for="t in tabs" :key="t.id" class="nc-tab" :class="{ on: active === t.id }"
+                @click="active = t.id">
+          <e-icon :name="t.icon" :size="12"></e-icon>
+          <span class="nc-tab-t">{{ t.title }}</span>
+          <span class="nc-tab-x" @click.stop="closeTab(t)">×</span>
+        </button>
+        <button class="nc-tab-add" title="新建查询" @click="newQueryTab">+</button>
+      </div>
+
+      <!-- 对象列表 -->
+      <div v-if="active === 'objects'" class="nc-page">
+        <div class="nc-obj-bar">
+          <template v-if="node === 'tables'">
+            <button class="nc-btn" :disabled="!selected" @click="openTable(selected, 'table')">
+              <e-icon name="folder-open" :size="13"></e-icon> 打开表</button>
+            <button class="nc-btn" :disabled="!selected" @click="openDesign(selected)">
+              <e-icon name="file-text" :size="13"></e-icon> 设计表</button>
+            <button class="nc-btn primary" @click="openDesign('', 'new')">
+              <e-icon name="plus" :size="13"></e-icon> 新建表</button>
+            <button class="nc-btn" :disabled="!selected" @click="dropTable(selected)">
+              <e-icon name="trash" :size="13"></e-icon> 删除表</button>
+          </template>
+          <template v-else-if="node === 'views'">
+            <button class="nc-btn" :disabled="!selected" @click="openTable(selected, 'view')">
+              <e-icon name="folder-open" :size="13"></e-icon> 打开视图</button>
+            <button class="nc-btn" :disabled="!selected" @click="openViewDesign(selected)">
+              <e-icon name="file-text" :size="13"></e-icon> 设计视图</button>
+            <button class="nc-btn primary" @click="openViewDesign('', 'new')">
+              <e-icon name="plus" :size="13"></e-icon> 新建视图</button>
+            <button class="nc-btn" :disabled="!selected" @click="dropView(selected)">
+              <e-icon name="trash" :size="13"></e-icon> 删除视图</button>
+          </template>
+          <template v-else-if="node === 'routines'">
+            <button class="nc-btn primary" @click="openRoutine(null, 'new')">
+              <e-icon name="plus" :size="13"></e-icon> 新建过程</button>
+            <button class="nc-btn primary" @click="openRoutine({ type: 'FUNCTION' }, 'new')">
+              <e-icon name="plus" :size="13"></e-icon> 新建函数</button>
+            <button class="nc-btn" :disabled="!selectedObject" @click="openRoutine(selectedObject)">
+              <e-icon name="file-text" :size="13"></e-icon> 设计</button>
+            <button class="nc-btn" :disabled="!selectedObject" @click="openRunRoutine(selectedObject)">
+              <e-icon name="play" :size="13"></e-icon> 运行</button>
+            <button class="nc-btn" :disabled="!selectedObject" @click="dropRoutine(selectedObject)">
+              <e-icon name="trash" :size="13"></e-icon> 删除</button>
+          </template>
+          <template v-else-if="node === 'triggers'">
+            <button class="nc-btn primary" @click="openTrigger(null, 'new')">
+              <e-icon name="plus" :size="13"></e-icon> 新建触发器</button>
+            <button class="nc-btn" :disabled="!selectedObject" @click="openTrigger(selectedObject)">
+              <e-icon name="file-text" :size="13"></e-icon> 设计</button>
+            <button class="nc-btn" :disabled="!selectedObject" @click="dropTrigger(selectedObject)">
+              <e-icon name="trash" :size="13"></e-icon> 删除</button>
+          </template>
+          <template v-else-if="node === 'queries'">
+            <button class="nc-btn primary" @click="newQueryTab">
+              <e-icon name="plus" :size="13"></e-icon> 新建查询</button>
+          </template>
+          <template v-else>
+            <button class="nc-btn" @click="exportDb">
+              <e-icon name="download" :size="13"></e-icon> 备份当前库</button>
+          </template>
+          <span class="spacer"></span>
+          <button class="nc-btn" @click="openImport">
+            <e-icon name="upload" :size="13"></e-icon> 导入向导</button>
+          <button class="nc-btn" @click="exportDb">
+            <e-icon name="download" :size="13"></e-icon> 导出向导</button>
+          <button class="nc-btn icon" title="刷新" @click="reload">
+            <e-icon name="refresh" :size="13"></e-icon></button>
+        </div>
+
+        <div class="nc-grid-wrap">
+          <table class="nc-grid nc-obj-grid">
+            <thead>
+              <tr v-if="node === 'tables'">
+                <th>名称</th><th class="num">行</th><th class="num">数据长度</th>
+                <th>引擎</th><th>修改日期</th><th>注释</th>
+              </tr>
+              <tr v-else-if="node === 'views'">
+                <th>名称</th><th class="num">行</th><th class="num">列</th><th>定义</th>
+              </tr>
+              <tr v-else-if="node === 'routines'">
+                <th>名称</th><th>类型</th><th>参数</th><th>返回</th><th>注释</th>
+              </tr>
+              <tr v-else-if="node === 'triggers'">
+                <th>名称</th><th>时机</th><th>事件</th><th>作用表</th>
+              </tr>
+              <tr v-else><th>名称</th><th>说明</th></tr>
+            </thead>
+            <tbody>
+              <tr v-for="o in filteredObjects" :key="o.name" :class="{ sel: selected === o.name }"
+                  @click="selected = o.name" @dblclick="openObject(o)">
+                <td class="nc-name">
+                  <span class="nc-obj-ico">
+                    <e-icon :name="node === 'views' ? 'file-text' : (node === 'routines' ? typeIcon(o.type) : (node === 'triggers' ? 'target' : 'table'))" :size="13"></e-icon>
+                  </span>{{ o.name }}
+                </td>
+                <template v-if="node === 'tables'">
+                  <td class="num">{{ o.rows }}</td>
+                  <td class="num">{{ fmtBytes(o.dataLength) }}</td>
+                  <td>{{ o.engine }}</td>
+                  <td>{{ fmtDate(o.updated) }}</td>
+                  <td class="nc-comment">{{ o.comment }}</td>
+                </template>
+                <template v-else-if="node === 'views'">
+                  <td class="num">{{ o.rows }}</td>
+                  <td class="num">{{ (o.columns || []).length }}</td>
+                  <td class="nc-comment">{{ o.definition }}</td>
+                </template>
+                <template v-else-if="node === 'routines'">
+                  <td>{{ o.type === 'FUNCTION' ? '函数' : '存储过程' }}</td>
+                  <td class="nc-comment">{{ (o.params || []).map(p => p.mode + ' ' + p.name + ' ' + p.type).join(', ') }}</td>
+                  <td>{{ o.type === 'FUNCTION' ? o.returns : '—' }}</td>
+                  <td class="nc-comment">{{ o.comment }}</td>
+                </template>
+                <template v-else-if="node === 'triggers'">
+                  <td>{{ o.timing }}</td><td>{{ o.event }}</td><td>{{ o.table }}</td>
+                </template>
+                <template v-else>
+                  <td class="nc-comment">{{ node === 'queries' ? '双击或点「新建查询」开始写 SQL' : '可以用「导出向导」备份整个库' }}</td>
+                </template>
+              </tr>
+            </tbody>
+          </table>
+          <div v-if="!filteredObjects.length" class="nc-empty">
+            <template v-if="node === 'queries'">还没有查询，点「新建查询」开一个。</template>
+            <template v-else-if="node === 'backup'">还没有备份，点「备份当前库」导出 .sql。</template>
+            <template v-else>这里还没有{{ nodeLabel }}。</template>
+          </div>
+        </div>
+      </div>
+
+      <!-- 查询页 -->
+      <div v-else-if="active === 'query'" class="nc-page nc-query">
+        <div class="nc-query-bar">
+          <button class="nc-btn" @click="saveQuery"><e-icon name="file-text" :size="13"></e-icon> 保存</button>
+          <button class="nc-btn" @click="openBuilder"><e-icon name="list" :size="13"></e-icon> 查询创建工具</button>
+          <button class="nc-btn" @click="beautifySql">美化 SQL</button>
+          <button class="nc-btn" @click="insertSnippet">代码段</button>
+          <span class="nc-vsep"></span>
+          <span class="nc-conn"><i class="nc-dot ok"></i> 本地</span>
+          <span class="nc-dbselect">{{ schema.db || db }}</span>
+          <span class="nc-vsep"></span>
+          <button class="nc-run" :disabled="running" @click="runQuery">
+            <e-icon name="play" :size="12"></e-icon> {{ running ? '运行中…' : '运行' }}
+          </button>
+          <button class="nc-btn" @click="explainQuery">解释</button>
+        </div>
+        <div class="nc-editor" @click="updateCursor" @keyup="updateCursor">
+          <cm-editor ref="cmQuery" mode="text/x-mysql" :value="sqlText" @change="onSqlChange"
+                     placeholder="在这里写 SQL，然后点「运行」"></cm-editor>
+        </div>
+        <div class="nc-result" v-if="queryResult || queryMsg">
+          <div class="nc-result-h">
+            <button :class="{ on: resultTab === 'result' }" @click="resultTab = 'result'">结果</button>
+            <button :class="{ on: resultTab === 'message' }" @click="resultTab = 'message'">消息</button>
+            <span class="spacer"></span>
+            <span class="nc-muted">{{ queryInfo }}</span>
+          </div>
+          <div v-show="resultTab === 'result'" class="nc-grid-wrap">
+            <table v-if="queryResult && queryResult.columns.length" class="nc-grid">
+              <thead>
+                <tr><th class="rowid">#</th><th v-for="c in queryResult.columns" :key="c">{{ c }}</th></tr>
+              </thead>
+              <tbody>
+                <tr v-for="(r, i) in queryResult.rows" :key="i">
+                  <td class="rowid">{{ i + 1 }}</td>
+                  <td v-for="(v, j) in r" :key="j" :class="{ null: v === null }">{{ v === null ? 'NULL' : v }}</td>
+                </tr>
+              </tbody>
+            </table>
+            <div v-else class="nc-empty">没有结果集</div>
+          </div>
+          <pre v-show="resultTab === 'message'" class="nc-msg">{{ queryMsg }}</pre>
+        </div>
+        <div class="nc-query-status">
+          <span>{{ schema.db || db }}</span>
+          <span class="spacer"></span>
+          <span>Ln {{ cursor.line }}, Col {{ cursor.col }}</span>
+        </div>
+      </div>
+
+      <!-- 表 / 视图数据 -->
+      <div v-else-if="currentTab && (currentTab.kind === 'table' || currentTab.kind === 'view')"
+           class="nc-page nc-tabledata">
+        <div class="nc-obj-bar">
+          <span class="nc-table-name">
+            <e-icon :name="currentTab.kind === 'view' ? 'file-text' : 'table'" :size="14"></e-icon>
+            {{ table.name }}
+          </span>
+          <span class="nc-muted">{{ currentTab.kind === 'view' ? '视图（只读）' : table.total + ' 行' }}</span>
+          <span class="spacer"></span>
+          <template v-if="currentTab.kind === 'table'">
+            <button class="nc-btn" @click="addRow"><e-icon name="plus" :size="13"></e-icon> 添加记录</button>
+            <button class="nc-btn primary" @click="applyTable"><e-icon name="check" :size="13"></e-icon> 应用</button>
+            <button class="nc-btn" @click="revertTable">取消</button>
+          </template>
+          <button class="nc-btn icon" title="刷新" @click="loadRows">
+            <e-icon name="refresh" :size="13"></e-icon></button>
+        </div>
+        <div class="nc-filterbar">
+          <span class="nc-fl">筛选</span>
+          <input v-model.trim="table.filter" placeholder="例如 money > 5000"
+                 @keyup.enter="table.page = 0; loadRows()">
+          <span class="nc-vsep"></span>
+          <span class="nc-fl">排序</span>
+          <select v-model="table.orderBy" @change="loadRows">
+            <option value="">（无）</option>
+            <option v-for="c in table.columns" :key="c" :value="c">{{ c }}</option>
+          </select>
+          <select v-model="table.orderDir" @change="loadRows"><option>ASC</option><option>DESC</option></select>
+          <span class="spacer"></span>
+          <span class="nc-muted">第 {{ table.page + 1 }} / {{ Math.max(1, Math.ceil(table.total / table.size)) }} 页</span>
+          <button class="nc-btn icon" :disabled="table.page <= 0" @click="tablePage(-1)">‹</button>
+          <button class="nc-btn icon" :disabled="(table.page + 1) * table.size >= table.total"
+                  @click="tablePage(1)">›</button>
+        </div>
+        <div class="nc-grid-wrap">
+          <table class="nc-grid nc-data-table">
+            <thead>
+              <tr>
+                <th class="rowid">#</th>
+                <th v-for="c in table.columns" :key="c">
+                  {{ c }}<span v-if="tablePk.includes(c)" class="nc-pk">PK</span>
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="(row, ri) in table.rows" :key="'r' + ri"
+                  :class="{ del: table.deleted.includes(ri) }">
+                <td class="rowid">
+                  <button class="nc-rowdel" title="删除这行" @click="deleteRow(ri)">×</button>{{ ri + 1 }}
+                </td>
+                <td v-for="(c, ci) in table.columns" :key="ci" :class="{ edited: isEdited(ri, ci) }">
+                  <input class="nc-cell" :value="cellValue(ri, ci) === null ? '' : cellValue(ri, ci)"
+                         @change="cellInput(ri, ci, $event)">
+                </td>
+              </tr>
+              <tr v-for="(add, ai) in table.added" :key="'a' + ai" class="added">
+                <td class="rowid">
+                  <button class="nc-rowdel" title="移除新增行" @click="deleteRow(table.rows.length + ai)">×</button>+
+                </td>
+                <td v-for="(c, ci) in table.columns" :key="ci" class="edited">
+                  <input class="nc-cell" :value="add[ci] === null ? '' : add[ci]"
+                         @input="add[ci] = $event.target.value">
+                </td>
+              </tr>
+              <tr v-if="!table.rows.length && !table.added.length">
+                <td :colspan="table.columns.length + 1" class="nc-empty-cell">表中没有数据</td>
+              </tr>
+            </tbody>
+          </table>
+          <div v-if="table.loading" class="nc-loading"><div class="spin small"></div> 读取数据…</div>
+        </div>
+      </div>
+
+      <!-- 设计表 -->
+      <div v-else-if="currentTab && currentTab.kind === 'design'" class="nc-page nc-design">
+        <div class="nc-obj-bar">
+          <span class="nc-table-name">
+            <e-icon name="table" :size="14"></e-icon>
+            {{ design.mode === 'new' ? '新建表' : '设计表：' + design.originalName }}
+          </span>
+          <span class="spacer"></span>
+          <button class="nc-btn primary" @click="saveDesign">
+            <e-icon name="check" :size="13"></e-icon> 保存</button>
+        </div>
+        <div class="nc-design-top">
+          <label>表名 <input v-model.trim="design.name"></label>
+          <label>引擎
+            <select v-model="design.engine"><option>InnoDB</option><option>MyISAM</option></select>
+          </label>
+          <label>字符集
+            <select v-model="design.charset">
+              <option>utf8mb4</option><option>utf8</option><option>gbk</option>
+            </select>
+          </label>
+          <label class="wide">注释 <input v-model="design.comment"></label>
+        </div>
+        <div class="nc-subtabs">
+          <button :class="{ on: design.tab === 'columns' }" @click="design.tab = 'columns'">字段</button>
+          <button :class="{ on: design.tab === 'indexes' }" @click="design.tab = 'indexes'">索引</button>
+          <button :class="{ on: design.tab === 'options' }" @click="design.tab = 'options'">选项</button>
+        </div>
+        <div v-show="design.tab === 'columns'" class="nc-grid-wrap">
+          <table class="nc-grid nc-design-table">
+            <thead>
+              <tr>
+                <th>名称</th><th>类型</th><th class="num">长度</th><th class="num">小数点</th>
+                <th class="center">允许空</th><th class="center">主键</th>
+                <th class="center">自动递增</th><th>默认值</th><th>注释</th><th></th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="(c, i) in design.columns" :key="i">
+                <td><input v-model.trim="c.name" class="nc-cell"></td>
+                <td>
+                  <select v-model="c.type" class="nc-cell">
+                    <option v-for="t in designTypeOptions" :key="t">{{ t }}</option>
+                  </select>
+                </td>
+                <td><input v-model.number="c.length" type="number" min="0" class="nc-cell num"></td>
+                <td><input v-model.number="c.scale" type="number" min="0" class="nc-cell num"></td>
+                <td class="center"><input type="checkbox" v-model="c.nullable"></td>
+                <td class="center"><input type="checkbox" v-model="c.pk" @change="c.pk && (c.nullable = false)"></td>
+                <td class="center"><input type="checkbox" v-model="c.auto"></td>
+                <td><input v-model="c.default" class="nc-cell"></td>
+                <td><input v-model="c.comment" class="nc-cell"></td>
+                <td class="nc-row-actions">
+                  <button class="nc-mini" title="上移" @click="moveDesignCol(i, -1)">↑</button>
+                  <button class="nc-mini" title="下移" @click="moveDesignCol(i, 1)">↓</button>
+                  <button class="nc-mini danger" title="删除字段" @click="delDesignCol(i)">×</button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+          <button class="nc-add-col" @click="addDesignCol">＋ 添加字段</button>
+        </div>
+        <div v-show="design.tab === 'indexes'" class="nc-grid-wrap">
+          <table class="nc-grid nc-design-table">
+            <thead><tr><th>索引名</th><th class="center">唯一</th><th>字段（逗号分隔）</th><th>类型</th><th></th></tr></thead>
+            <tbody>
+              <tr v-for="(ix, i) in design.indexes" :key="i">
+                <td><input v-model.trim="ix.name" class="nc-cell"></td>
+                <td class="center"><input type="checkbox" v-model="ix.unique"></td>
+                <td><input v-model.trim="ix.columns" class="nc-cell" placeholder="col1, col2"></td>
+                <td><select v-model="ix.type" class="nc-cell"><option>BTREE</option><option>HASH</option></select></td>
+                <td><button class="nc-mini danger" @click="delIndex(i)">×</button></td>
+              </tr>
+            </tbody>
+          </table>
+          <button class="nc-add-col" @click="addIndex">＋ 添加索引</button>
+        </div>
+        <div v-show="design.tab === 'options'" class="nc-options">
+          <p><b>引擎</b>{{ design.engine }}　<b>字符集</b>{{ design.charset }}</p>
+          <p>保存时会根据字段差异自动生成 <code>CREATE TABLE</code> / <code>ALTER TABLE</code>，
+             这些语句会记录到本题作答里，判分时在干净库中重放。</p>
+        </div>
+      </div>
+
+      <!-- 视图设计 -->
+      <div v-else-if="currentTab && currentTab.kind === 'viewDesign'" class="nc-page">
+        <div class="nc-obj-bar">
+          <span class="nc-table-name">
+            <e-icon name="file-text" :size="14"></e-icon>
+            {{ viewForm.mode === 'new' ? '新建视图' : '设计视图' }}
+          </span>
+          <span class="spacer"></span>
+          <button class="nc-btn primary" @click="saveView">
+            <e-icon name="check" :size="13"></e-icon> 保存</button>
+        </div>
+        <div class="nc-form">
+          <label class="wide">视图名 <input v-model.trim="viewForm.name" placeholder="例如 v_hrm"></label>
+          <label class="wide">定义（SELECT 语句）</label>
+          <textarea class="nc-code tall" v-model="viewForm.definition" spellcheck="false"></textarea>
+          <p class="nc-hint">保存后执行 <code>CREATE OR REPLACE VIEW</code>，可以点左侧「视图 → 打开视图」查看结果。</p>
+        </div>
+      </div>
+
+      <!-- 函数 / 存储过程 -->
+      <div v-else-if="currentTab && currentTab.kind === 'routine'" class="nc-page">
+        <div class="nc-obj-bar">
+          <span class="nc-table-name">
+            <e-icon name="code" :size="14"></e-icon>
+            {{ routineForm.mode === 'new' ? '新建' : '设计' }}{{ routineForm.type === 'FUNCTION' ? '函数' : '存储过程' }}
+          </span>
+          <span class="spacer"></span>
+          <button class="nc-btn primary" @click="saveRoutine">
+            <e-icon name="check" :size="13"></e-icon> 保存</button>
+        </div>
+        <div class="nc-form">
+          <div class="nc-form-row">
+            <label>名称 <input v-model.trim="routineForm.name" placeholder="例如 calculate_total_salary"></label>
+            <label>类型
+              <select v-model="routineForm.type">
+                <option value="PROCEDURE">存储过程 PROCEDURE</option>
+                <option value="FUNCTION">函数 FUNCTION</option>
+              </select>
+            </label>
+            <label v-if="routineForm.type === 'FUNCTION'">返回类型
+              <input v-model.trim="routineForm.returns" placeholder="DOUBLE"></label>
+          </div>
+          <label class="wide">参数（逗号分隔，如 <code>IN emp_id INT, OUT total DOUBLE</code>）
+            <input v-model.trim="routineForm.params"></label>
+          <label class="wide">注释 <input v-model.trim="routineForm.comment"></label>
+          <label class="wide">语句体（<code>BEGIN … END</code> 之间的内容）</label>
+          <textarea class="nc-code tall" v-model="routineForm.body" spellcheck="false"
+                    placeholder="SELECT SUM(money) INTO total FROM t_salary WHERE e_id = emp_id;"></textarea>
+          <p class="nc-hint">保存后执行 <code>DROP … IF EXISTS</code> + <code>CREATE …</code>；
+             保存好可以在左侧「函数」里点「运行」测试。</p>
+        </div>
+      </div>
+
+      <!-- 触发器 -->
+      <div v-else-if="currentTab && currentTab.kind === 'trigger'" class="nc-page">
+        <div class="nc-obj-bar">
+          <span class="nc-table-name">
+            <e-icon name="target" :size="14"></e-icon>
+            {{ triggerForm.mode === 'new' ? '新建触发器' : '设计触发器' }}
+          </span>
+          <span class="spacer"></span>
+          <button class="nc-btn primary" @click="saveTrigger">
+            <e-icon name="check" :size="13"></e-icon> 保存</button>
+        </div>
+        <div class="nc-form">
+          <div class="nc-form-row">
+            <label>名称 <input v-model.trim="triggerForm.name" placeholder="例如 update_department_description"></label>
+            <label>时机
+              <select v-model="triggerForm.timing"><option>BEFORE</option><option>AFTER</option></select>
+            </label>
+            <label>事件
+              <select v-model="triggerForm.event"><option>INSERT</option><option>UPDATE</option><option>DELETE</option></select>
+            </label>
+            <label>作用表
+              <select v-model="triggerForm.table">
+                <option value="">选择表</option>
+                <option v-for="t in schema.tables" :key="t.name" :value="t.name">{{ t.name }}</option>
+              </select>
+            </label>
+          </div>
+          <label class="wide">触发器语句（<code>BEGIN … END</code> 之间的内容）</label>
+          <textarea class="nc-code tall" v-model="triggerForm.statement" spellcheck="false"
+                    placeholder="IF NEW.d_id IS NOT NULL THEN&#10;  UPDATE t_department SET description = '部门描述待更新' WHERE id = NEW.d_id;&#10;END IF;"></textarea>
+          <p class="nc-hint">保存后执行 <code>CREATE TRIGGER … FOR EACH ROW</code>。注意触发器不能对同一张表做写操作。</p>
+        </div>
+      </div>
+
+      <div v-else class="nc-page">
+        <div class="nc-empty">从左侧选择对象，或双击表名打开。</div>
+      </div>
+    </div>
+
+    <!-- 右侧信息 -->
+    <aside class="nc-info">
+      <div class="nc-info-db"><e-icon name="database" :size="24"></e-icon></div>
+      <div class="nc-info-name" :title="schema.db || db">{{ schema.db || db }}</div>
+      <div class="nc-info-sub">数据库</div>
+      <div class="nc-info-row"><span>字符集</span><b>{{ schema.charset || '—' }}</b></div>
+      <div class="nc-info-row"><span>排序规则</span><b>{{ schema.collation || '—' }}</b></div>
+      <div class="nc-info-row"><span>表</span><b>{{ schema.tables.length }}</b></div>
+      <div class="nc-info-row"><span>视图</span><b>{{ schema.views.length }}</b></div>
+      <div class="nc-info-row"><span>函数 / 过程</span><b>{{ schema.routines.length }}</b></div>
+      <div class="nc-info-row"><span>触发器</span><b>{{ schema.triggers.length }}</b></div>
+    </aside>
+  </div>
+
+  <!-- 状态栏 -->
+  <div class="nc-status">
+    <span>{{ statusText }}</span>
+    <span v-if="table.name && currentTab && currentTab.kind === 'table'" class="nc-muted">
+      · {{ table.total }} 行</span>
+    <span class="spacer"></span>
+    <span class="nc-status-item"><i class="nc-dot ok"></i> 本地</span>
+    <span class="nc-status-item">{{ schema.db || db }}</span>
+  </div>
+
+  <!-- 查询创建工具 -->
+  <div class="nc-mask" v-if="dlg === 'builder'" @click.self="dlg = ''">
+    <div class="nc-dlg wide">
+      <div class="nc-dlg-h">
+        查询创建工具
+        <button class="nc-dlg-x" @click="dlg = ''">×</button>
+      </div>
+      <div class="nc-build-tabs">
+        <button v-for="t in ['SELECT','FROM','WHERE','GROUP BY','HAVING','ORDER BY','LIMIT']"
+                :key="t" :class="{ on: build.tab === t }" @click="build.tab = t">{{ t }}</button>
+      </div>
+      <div class="nc-build-body">
+        <template v-if="build.tab === 'SELECT'">
+          <div v-for="(s, i) in build.select" :key="i" class="nc-build-row">
+            <input v-model="s.expr" placeholder="字段或表达式，如 e.name">
+            <input v-model="s.alias" placeholder="别名（可选）">
+            <button class="nc-mini danger" @click="removeBuildRow('select', i)">×</button>
+          </div>
+          <button class="nc-add-col" @click="addBuildRow('select')">＋ 添加字段</button>
+        </template>
+        <template v-else-if="build.tab === 'FROM'">
+          <input class="nc-wide-input" v-model="build.from" placeholder="表名，如 t_employee e">
+        </template>
+        <template v-else-if="build.tab === 'WHERE'">
+          <div v-for="(w, i) in build.where" :key="i" class="nc-build-row">
+            <input v-model="w.col" placeholder="字段">
+            <select v-model="w.op">
+              <option>=</option><option>&gt;</option><option>&lt;</option>
+              <option>&gt;=</option><option>&lt;=</option><option>&lt;&gt;</option>
+              <option>LIKE</option><option>IN</option>
+            </select>
+            <input v-model="w.val" placeholder="值">
+            <button class="nc-mini danger" @click="removeBuildRow('where', i)">×</button>
+          </div>
+          <button class="nc-add-col" @click="addBuildRow('where')">＋ 添加条件</button>
+        </template>
+        <template v-else-if="build.tab === 'GROUP BY'">
+          <input class="nc-wide-input" v-model="build.group" placeholder="字段，逗号分隔">
+        </template>
+        <template v-else-if="build.tab === 'HAVING'">
+          <input class="nc-wide-input" v-model="build.having" placeholder="如 COUNT(*) > 2">
+        </template>
+        <template v-else-if="build.tab === 'ORDER BY'">
+          <div v-for="(o, i) in build.order" :key="i" class="nc-build-row">
+            <input v-model="o.col" placeholder="字段">
+            <select v-model="o.dir"><option>ASC</option><option>DESC</option></select>
+            <button class="nc-mini danger" @click="removeBuildRow('order', i)">×</button>
+          </div>
+          <button class="nc-add-col" @click="addBuildRow('order')">＋ 添加排序</button>
+        </template>
+        <template v-else>
+          <div class="nc-build-row">
+            <input v-model="build.limitOffset" placeholder="偏移（可空）">
+            <input v-model="build.limitCount" placeholder="条数">
+          </div>
+        </template>
+      </div>
+      <pre class="nc-preview">{{ builderSql() }}</pre>
+      <div class="nc-dlg-f">
+        <button class="nc-btn" @click="dlg = ''">取消</button>
+        <button class="nc-btn primary" @click="applyBuilder">生成 SQL 并放到查询页</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 运行函数 / 存储过程 -->
+  <div class="nc-mask" v-if="dlg === 'runRoutine'" @click.self="dlg = ''">
+    <div class="nc-dlg">
+      <div class="nc-dlg-h">
+        运行 {{ runForm.routine ? runForm.routine.name : '' }}
+        <button class="nc-dlg-x" @click="dlg = ''">×</button>
+      </div>
+      <label class="nc-field">参数（按顺序逗号分隔，没有就留空）
+        <input v-model="runForm.args" placeholder="例如 10001, '林子山'">
+      </label>
+      <div class="nc-dlg-f">
+        <button class="nc-btn" @click="dlg = ''">关闭</button>
+        <button class="nc-btn primary" @click="runRoutineNow">
+          <e-icon name="play" :size="12"></e-icon> 运行</button>
+      </div>
+      <div v-if="runForm.msg" class="nc-run-msg">{{ runForm.msg }}</div>
+      <div v-if="runForm.result" class="nc-grid-wrap" style="max-height:240px">
+        <table class="nc-grid">
+          <thead><tr><th v-for="c in runForm.result.columns" :key="c">{{ c }}</th></tr></thead>
+          <tbody>
+            <tr v-for="(r, i) in runForm.result.rows" :key="i">
+              <td v-for="(v, j) in r" :key="j">{{ v === null ? 'NULL' : v }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- 导入向导 -->
+  <div class="nc-mask" v-if="dlg === 'import'" @click.self="dlg = ''">
+    <div class="nc-dlg">
+      <div class="nc-dlg-h">
+        导入向导（导入到当前题目数据库）
+        <button class="nc-dlg-x" @click="dlg = ''">×</button>
+      </div>
+      <label class="nc-field">文件（.csv / .xlsx / .sql）
+        <input type="file" accept=".csv,.xlsx,.sql" @change="pickImport">
+      </label>
+      <label class="nc-field">表名（.csv / .xlsx 用，留空按文件名）
+        <input v-model.trim="importForm.table">
+      </label>
+      <label class="nc-check"><input type="checkbox" v-model="importForm.header"> 第一行是表头</label>
+      <label class="nc-check"><input type="checkbox" v-model="importForm.overwrite"> 覆盖同名表</label>
+      <div class="nc-dlg-f">
+        <button class="nc-btn" @click="dlg = ''">取消</button>
+        <button class="nc-btn primary" :disabled="importForm.busy" @click="doImport">
+          {{ importForm.busy ? '导入中…' : '开始导入' }}</button>
+      </div>
+    </div>
+  </div>
+</div>
+</script>
+
+<script src="/navicat.js?v=1"></script>
 <script src="/app.js?v=127"></script>
 </body>
 </html>

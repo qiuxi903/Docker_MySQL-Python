@@ -834,6 +834,32 @@ check("判分：返回本套累计得分",
 _, r = call(f"/api/drills/{qp_ids[0]}/submit", {"answer_text": "SELECT 1;"}, token=tok_md)
 check("判分：未通过记 0 分", r.get("score") == 0 and r.get("maxScore") == 10, str(r)[:120])
 
+# ---- Navicat 模拟界面用的库结构接口 ----
+code, sc = call(f"/api/drills/{qp_ids[0]}/navicat/schema", token=tok_md)
+check("Navicat：返回库结构", code == 200 and sc.get("db"), str(sc)[:160])
+check("Navicat：列出表与字段",
+      any(t["name"] == "t_employee" and len(t["columns"]) >= 3 for t in sc.get("tables", [])),
+      str([t["name"] for t in sc.get("tables", [])]))
+check("Navicat：字段带类型/可空/主键",
+      all(set(("name", "type", "nullable", "key")) <= set(c) for t in sc.get("tables", [])
+          for c in t["columns"]), str(sc.get("tables", [{}])[0].get("columns"))[:160])
+check("Navicat：表带行数与引擎",
+      all(("rows" in t and "engine" in t) for t in sc.get("tables", [])), str(sc.get("tables"))[:160])
+check("Navicat：字符集信息", bool(sc.get("charset")), str(sc.get("charset")))
+check("Navicat：视图/函数/触发器字段齐全",
+      all(k in sc for k in ("views", "routines", "triggers")), str(list(sc.keys())))
+
+# 图形界面翻译出来的 SQL 也能判分（建表 + 建视图）
+code, r = call(f"/api/drills/{qp_ids[0]}/submit",
+               {"answer_text": "CREATE TABLE t_purchase (id INT(8) PRIMARY KEY, name VARCHAR(30));"},
+               token=tok_md)
+check("Navicat：图形建表 SQL 判分", r.get("passed") is True, str(r)[:160])
+code, r = call(f"/api/drills/{qp_ids[0]}/submit",
+               {"answer_text": "CREATE TABLE t_purchase (id INT(8) PRIMARY KEY, name TEXT);"},
+               token=tok_md)
+check("Navicat：字段类型不对被拒", r.get("passed") is False and "字段定义" in (r.get("reason") or ""),
+      str(r)[:160])
+
 # 清理
 for i in qp_ids:
     call(f"/api/drills/{i}", token=tok_ad2, method="DELETE")

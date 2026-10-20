@@ -1224,6 +1224,16 @@ class SandboxBody(BaseModel):
     reset: bool = False
 
 
+@app.get("/api/drills/{did}/navicat/schema")
+def api_navicat_schema(did: int, request: Request):
+    """Navicat 模拟界面的库结构（表/列/索引/视图/函数/触发器）。"""
+    a = acct(sess(request))
+    try:
+        return drills.navicat_schema(a, did)
+    except DrillError as e:
+        raise HTTPException(400, str(e))
+
+
 @app.post("/api/drills/{did}/sandbox")
 def api_drill_sandbox(did: int, b: SandboxBody, request: Request):
     a = acct(sess(request))
