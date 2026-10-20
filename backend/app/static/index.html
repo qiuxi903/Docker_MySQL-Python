@@ -28,7 +28,7 @@ html[data-theme="light"] body { background: #f6f8fa; }
 <link rel="stylesheet" href="/vendor/codemirror/addon/hint/show-hint.css">
 <link rel="stylesheet" href="/fonts/misans/misans.css">
 <link rel="stylesheet" href="/style.css?v=138">
-  <link rel="stylesheet" href="/navicat.css?v=7">
+  <link rel="stylesheet" href="/navicat.css?v=9">
 </head>
 <body>
 <div id="app" v-cloak>
@@ -1929,6 +1929,10 @@ INSERT INTO course VALUES (1,'数学');</pre>
 
   <!-- 工具栏 -->
   <div class="nc-toolbar">
+    <button class="nc-tool nc-tool-mobile" @click="mobileTree = !mobileTree" title="连接">
+      <span class="nc-tool-ico" style="background:#5b8def"><e-icon name="menu" :size="17"></e-icon></span>
+      <span class="nc-tool-t">连接</span>
+    </button>
     <button v-for="t in tools" :key="t.key" class="nc-tool" :class="{ on: toolActive === t.key }"
             @click="toolClick(t)" :title="t.label">
       <span class="nc-tool-ico" :style="{ background: t.color }"><e-icon :name="t.icon" :size="17"></e-icon></span>
@@ -1937,9 +1941,13 @@ INSERT INTO course VALUES (1,'数学');</pre>
   </div>
 
   <div class="nc-body">
-    <!-- 连接树 -->
-    <aside class="nc-side">
-      <div class="nc-side-h">我的连接</div>
+    <!-- 连接树（手机上是从左侧滑出的抽屉） -->
+    <div v-if="mobileTree" class="nc-side-mask" @click="mobileTree = false"></div>
+    <aside class="nc-side" :class="{ open: mobileTree }">
+      <div class="nc-side-h">
+        我的连接
+        <button class="nc-side-x m-only" @click="mobileTree = false">×</button>
+      </div>
       <div class="nc-tree">
         <div class="nc-node conn">
           <e-icon name="chevron-down" :size="12"></e-icon>
@@ -1952,7 +1960,10 @@ INSERT INTO course VALUES (1,'数学');</pre>
           <span class="nc-node-t" :title="schema.db || db">{{ schema.db || db }}</span>
         </div>
         <div v-for="n in treeNodes" :key="n.key" class="nc-node child"
-             :class="{ on: node === n.key && active === 'objects' }" @click="selectNode(n.key)">
+             :class="{ on: node === n.key && active === 'objects' }" @click="selectNode(n.key)"
+             @contextmenu.prevent.stop="openCtx($event, 'tree', n.key)"
+             @pointerdown="pressStart($event, 'tree', n.key)" @pointerup="pressEnd"
+             @pointermove="pressEnd" @pointercancel="pressEnd">
           <span class="nc-node-ico"><e-icon :name="n.icon" :size="13"></e-icon></span>
           <span class="nc-node-t">{{ n.label }}</span>
           <span class="nc-count">{{ n.count }}</span>
@@ -1967,13 +1978,14 @@ INSERT INTO course VALUES (1,'数学');</pre>
     </aside>
 
     <!-- 主区域 -->
-    <div class="nc-main">
+    <div class="nc-main" @contextmenu.prevent="openCtx($event, 'blank')">
       <div class="nc-tabs">
         <button class="nc-tab" :class="{ on: active === 'objects' }" @click="openObjects">
           <e-icon name="table" :size="12"></e-icon> 对象
         </button>
         <button v-for="t in tabs" :key="t.id" class="nc-tab" :class="{ on: active === t.id }"
-                @click="active = t.id">
+                @click="active = t.id"
+                @contextmenu.prevent.stop="active = t.id; openCtx($event, 'tab')">
           <e-icon :name="t.icon" :size="12"></e-icon>
           <span class="nc-tab-t">{{ t.title }}</span>
           <span class="nc-tab-x" @click.stop="closeTab(t)">×</span>
@@ -2061,7 +2073,10 @@ INSERT INTO course VALUES (1,'数学');</pre>
             </thead>
             <tbody>
               <tr v-for="o in filteredObjects" :key="o.name" :class="{ sel: selected === o.name }"
-                  @click="selected = o.name" @dblclick="openObject(o)">
+                  @click="selected = o.name" @dblclick="openObject(o)"
+                  @contextmenu.prevent.stop="selected = o.name; openCtx($event, ctxKind, o.name)"
+                  @pointerdown="pressStart($event, ctxKind, o.name)" @pointerup="pressEnd"
+                  @pointermove="pressEnd" @pointercancel="pressEnd">
                 <td class="nc-name">
                   <span class="nc-obj-ico">
                     <e-icon :name="node === 'views' ? 'file-text' : (node === 'routines' ? typeIcon(o.type) : (node === 'triggers' ? 'target' : 'table'))" :size="13"></e-icon>
@@ -2118,7 +2133,8 @@ INSERT INTO course VALUES (1,'数学');</pre>
           </button>
           <button class="nc-btn" @click="explainQuery">解释</button>
         </div>
-        <div class="nc-editor" @click="updateCursor" @keyup="updateCursor">
+        <div class="nc-editor" @click="updateCursor" @keyup="updateCursor"
+             @contextmenu.prevent.stop="openCtx($event, 'editor')">
           <cm-editor ref="cmQuery" mode="text/x-mysql" :value="sqlText" @change="onSqlChange"
                      placeholder="在这里写 SQL，然后点「运行」"></cm-editor>
         </div>
@@ -2203,7 +2219,10 @@ INSERT INTO course VALUES (1,'数学');</pre>
                 <td class="rowid">
                   <button class="nc-rowdel" title="删除这行" @click="deleteRow(ri)">×</button>{{ ri + 1 }}
                 </td>
-                <td v-for="(c, ci) in table.columns" :key="ci" :class="{ edited: isEdited(ri, ci) }">
+                <td v-for="(c, ci) in table.columns" :key="ci" :class="{ edited: isEdited(ri, ci) }"
+                    @contextmenu.prevent.stop="openCtx($event, 'cell', { ri, ci })"
+                    @pointerdown="pressStart($event, 'cell', { ri, ci })" @pointerup="pressEnd"
+                    @pointermove="pressEnd" @pointercancel="pressEnd">
                   <input class="nc-cell" :value="cellValue(ri, ci) === null ? '' : cellValue(ri, ci)"
                          @change="cellInput(ri, ci, $event)">
                 </td>
@@ -2416,6 +2435,19 @@ INSERT INTO course VALUES (1,'数学');</pre>
     </aside>
   </div>
 
+  <!-- 右键菜单 -->
+  <div v-if="ctx.show" class="nc-ctx" ref="ctxMenu" :style="{ left: ctx.x + 'px', top: ctx.y + 'px' }"
+       @click.stop @contextmenu.prevent>
+    <template v-for="(it, i) in ctx.items" :key="i">
+      <div v-if="it.sep" class="nc-ctx-sep"></div>
+      <button v-else class="nc-ctx-item" :class="{ danger: it.danger, disabled: it.disabled }"
+              :disabled="it.disabled" @click="runCtx(it)">
+        <e-icon :name="it.icon || 'chevron-right'" :size="13"></e-icon>
+        <span>{{ it.label }}</span>
+      </button>
+    </template>
+  </div>
+
   <!-- 状态栏 -->
   <div class="nc-status">
     <span>{{ statusText }}</span>
@@ -2436,7 +2468,8 @@ INSERT INTO course VALUES (1,'数学');</pre>
 
       <!-- 上方：图形化表连接（始终显示，只有这里能拖） -->
       <div class="nc-canvas" ref="canvas"
-           @pointermove="onCanvasMove" @pointerup="onCanvasUp" @pointerleave="onCanvasUp">
+           @pointermove="onCanvasMove" @pointerup="onCanvasUp" @pointerleave="onCanvasUp"
+           @contextmenu.prevent.stop="openCtx($event, 'canvas')">
         <svg class="nc-lines">
           <path v-for="j in build.joins" :key="j.id" :d="joinPath(j)" class="nc-line"></path>
           <path v-if="dragJoin" :d="dragLinePath()" class="nc-line temp"></path>

@@ -464,11 +464,11 @@ tr.added td { background: rgba(46,160,67,.06); }
   .nc-design-top label.wide { min-width: 140px; }
 }
 @media (max-width: 640px) {
-  .nc-side { display: none; }
+  /* 连接树不再隐藏，交给抽屉控制（见上面的 .nc-side 规则） */
   .nc-tool-t { display: none; }
-  .nc-tool { min-width: 38px; }
+  .nc-tool { min-width: 40px; padding: 4px 6px; }
+  .nc-tool-ico { width: 28px; height: 24px; }
   .nc-design-top { gap: 8px; }
-  .nc-frame { min-width: 620px; }
 }
 
 /* ---- 查询创建工具：上方图形化 + 下方表字段/页签 ---- */
@@ -565,4 +565,94 @@ tr.added td { background: rgba(46,160,67,.06); }
 .nc-canvas-empty {
   position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
   color: var(--muted); font-size: 12px; pointer-events: none; text-align: center; padding: 20px;
+}
+
+/* ============ 桌面应用手感：不可选中 + 自建右键菜单 ============ */
+.nc { user-select: none; -webkit-user-select: none; }
+.nc input, .nc textarea, .nc select,
+.nc .CodeMirror, .nc .nc-preview, .nc .nc-msg, .nc .nc-code {
+  user-select: text; -webkit-user-select: text;
+}
+
+.nc-ctx {
+  position: absolute; z-index: 60; min-width: 186px; padding: 5px;
+  background: var(--panel); border: 1px solid var(--line-strong);
+  border-radius: 8px; box-shadow: 0 12px 34px rgba(0,0,0,.22);
+}
+.nc-ctx-item {
+  display: flex; align-items: center; gap: 9px; width: 100%;
+  border: 0; background: transparent; color: var(--text);
+  font: inherit; font-size: 12.5px; padding: 6px 10px; border-radius: 5px;
+  cursor: pointer; text-align: left; white-space: nowrap;
+}
+.nc-ctx-item:hover:not(:disabled) { background: var(--accent-weak); color: var(--accent); }
+.nc-ctx-item.danger { color: var(--err); }
+.nc-ctx-item.danger:hover { background: var(--err-weak); color: var(--err); }
+.nc-ctx-item:disabled { opacity: .45; cursor: default; }
+.nc-ctx-sep { height: 1px; margin: 4px 6px; background: var(--line); }
+
+/* ============ 手机竖屏 ============ */
+.nc-side-mask {
+  position: absolute; inset: 0; z-index: 25; background: rgba(0,0,0,.32);
+}
+.nc-side-x {
+  margin-left: auto; border: 0; background: transparent; color: var(--muted);
+  font-size: 18px; line-height: 1; cursor: pointer; padding: 0 4px;
+}
+.nc-tool-mobile { display: none; }
+
+@media (max-width: 919px) {
+  /* 连接树改成左侧抽屉，默认收起 */
+  .nc-side {
+    position: absolute; top: 0; bottom: 0; left: 0; z-index: 30;
+    width: 232px; flex-basis: 232px;
+    transform: translateX(-100%); transition: transform var(--dur) var(--ease-out);
+    box-shadow: 0 0 24px rgba(0,0,0,.22);
+  }
+  .nc-side.open { transform: translateX(0); }
+  .nc-tool-mobile { display: flex; }
+  .nc-side-h { height: 36px; }
+  .nc-side .nc-node { padding: 7px 8px; font-size: 13px; }
+  .nc-side .nc-bt-col, .nc-side .nc-count { font-size: 11px; }
+  .nc-side-f { padding: 8px; }
+  .nc-search input { height: 30px; }
+  /* 对象列表：手机上只留名称和行数 */
+  .nc-obj-grid th:nth-child(n+3), .nc-obj-grid td:nth-child(n+3) { display: none; }
+  .nc-grid th, .nc-grid td { padding: 7px 9px; }
+  .nc-data-table .nc-cell { height: 32px; }
+  .nc-obj-bar { gap: 4px; padding: 5px 6px; }
+  .nc-btn { padding: 5px 8px; font-size: 11.5px; }
+  .nc-tabs { height: 34px; }
+  .nc-tab { padding: 0 9px; }
+  .nc-filterbar input { width: 130px; }
+  .nc-query-bar { gap: 4px; }
+  .nc-query-bar .nc-btn { padding: 4px 7px; }
+  .nc-editor { flex: 1 1 42%; min-height: 150px; }
+  .nc-result { flex: 1 1 58%; }
+  .nc-design-top { gap: 8px; padding: 8px; }
+  .nc-design-top label { font-size: 11.5px; }
+  .nc-form { padding: 10px; }
+  .nc-form-row { gap: 8px; }
+  .nc-form input, .nc-form select { min-width: 120px; }
+  /* 弹窗铺满 */
+  .nc-mask { padding: 8px; }
+  .nc-dlg, .nc-dlg.wide, .nc-dlg.builder { width: 100%; max-height: 96%; padding: 12px; }
+  .nc-canvas { height: 168px; }
+  .nc-build-bottom { flex-direction: column; height: auto; min-height: 0; gap: 8px; }
+  .nc-bt-list {
+    flex: 0 0 auto; max-height: 132px; border-right: 0;
+    border-bottom: 1px solid var(--line); padding: 0 0 6px;
+  }
+  .nc-build-main { min-height: 190px; }
+  .nc-build-body { padding-top: 8px; }
+  .nc-build-row { flex-wrap: wrap; }
+  .nc-build-row input { min-width: 120px; }
+  .nc-preview { max-height: 84px; font-size: 11px; }
+  .nc-info { display: none; }
+  .nc-status { font-size: 10.5px; }
+}
+@media (max-width: 640px) {
+  .nc-tool-t { display: none; }
+  .nc-tool { min-width: 40px; padding: 4px 6px; }
+  .nc-tool-ico { width: 28px; height: 24px; }
 }

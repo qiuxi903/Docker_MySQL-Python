@@ -51,6 +51,8 @@ const NavicatPanel = {
       dragJoin: null,
       dragPos: null,
       focusTarget: null,
+      ctx: { show: false, x: 0, y: 0, items: [] },
+      mobileTree: false,
       runForm: { routine: null, args: "", result: null, msg: "" },
       importForm: { file: null, table: "", header: true, overwrite: false, busy: false },
       typeList: ["INT", "BIGINT", "TINYINT", "SMALLINT", "VARCHAR", "CHAR", "TEXT",
@@ -106,6 +108,11 @@ const NavicatPanel = {
       const t = this.schema.tables.find(x => x.name === this.table.name);
       return (t && t.primaryKey) || [];
     },
+    ctxKind() {
+      return this.node === "views" ? "view"
+        : this.node === "routines" ? "routine"
+        : this.node === "triggers" ? "trigger" : "table";
+    },
     tools() {
       return [
         { key: "conn", label: "连接", icon: "link", color: "#5b8def" },
@@ -139,11 +146,15 @@ const NavicatPanel = {
 
   mounted() {
     if (this.db) this.reload();
-    this._menuOff = () => { this.menu = ""; };
+    this._menuOff = () => { this.menu = ""; this.ctx.show = false; };
+    this._escOff = (e) => { if (e.key === "Escape") { this.ctx.show = false; this.menu = ""; } };
     document.addEventListener("click", this._menuOff);
+    document.addEventListener("keydown", this._escOff);
   },
   beforeUnmount() {
     document.removeEventListener("click", this._menuOff);
+    document.removeEventListener("keydown", this._escOff);
+    clearTimeout(this._pressTimer);
   },
 
   methods: {
@@ -216,6 +227,7 @@ const NavicatPanel = {
       this.node = key;
       this.selected = "";
       this.active = "objects";
+      this.mobileTree = false;
     },
     openObjects() { this.active = "objects"; },
     openObject(o) {
@@ -1040,6 +1052,163 @@ const NavicatPanel = {
         await this.reload();
       } catch (e) { this.toast(e.message); }
       finally { f.busy = false; }
+    },
+
+    /* ---------------- 右键菜单（Navicat 风格） ---------------- */
+    openCtx(ev, kind, payload) {
+      if (ev && ev.preventDefault) ev.preventDefault();
+      const items = this.ctxItems(kind, payload).filter(Boolean);
+      if (!items.length) return;
+      const r = this.$el.getBoundingClientRect();
+      this.ctx = { show: true, x: Math.round(ev.clientX - r.left), y: Math.round(ev.clientY - r.top), items };
+      this.$nextTick(() => this.clampCtx());
+    },
+    clampCtx() {
+      const el = this.$refs.ctxMenu;
+      if (!el) return;
+      const r = this.$el.getBoundingClientRect();
+      const w = el.offsetWidth, h = el.offsetHeight;
+      if (this.ctx.x + w > r.width - 6) this.ctx.x = Math.max(4, r.width - w - 6);
+      if (this.ctx.y + h > r.height - 6) this.ctx.y = Math.max(4, r.height - h - 6);
+    },
+    runCtx(it) {
+      this.ctx.show = false;
+      if (it && !it.disabled && typeof it.action === "function") it.action();
+    },
+    // 触屏长按等同右键
+    pressStart(ev, kind, payload) {
+      if (ev.pointerType === "mouse") return;
+      clearTimeout(this._pressTimer);
+      const x = ev.clientX, y = ev.clientY;
+      this._pressTimer = setTimeout(() => {
+        this.openCtx({ clientX: x, clientY: y, preventDefault() {} }, kind, payload);
+      }, 550);
+    },
+    pressEnd() { clearTimeout(this._pressTimer); },
+    async copyText(text) {
+      try {
+        await navigator.clipboard.writeText(String(text == null ? "" : text));
+        this.toast("已复制：" + String(text).slice(0, 40));
+      } catch (e) {
+        this.toast("复制失败，请手动选中复制");
+      }
+    },
+    async pasteCell(ri, ci) {
+      try {
+        const txt = await navigator.clipboard.readText();
+        this.cellInput(ri, ci, { target: { value: txt } });
+      } catch (e) { this.toast("浏览器不允许读取剪贴板，请直接输入"); }
+    },
+    ctxItems(kind, p) {
+      const sep = { sep: true };
+      const refresh = { label: "刷新", icon: "refresh", action: () => this.reload() };
+      const newQuery = { label: "新建查询", icon: "search", action: () => this.newQueryTab() };
+      if (kind === "tree") {
+        const map = {
+          tables: { label: "新建表", icon: "plus", action: () => this.openDesign("", "new") },
+          views: { label: "新建视图", icon: "plus", action: () => this.openViewDesign("", "new") },
+          routines: { label: "新建存储过程", icon: "plus", action: () => this.openRoutine(null, "new") },
+          triggers: { label: "新建触发器", icon: "plus", action: () => this.openTrigger(null, "new") },
+          queries: newQuery,
+        };
+        return [map[p], sep, newQuery, refresh].filter(Boolean);
+      }
+      if (kind === "table") {
+        return [
+          { label: "打开表", icon: "folder-open", action: () => this.openTable(p, "table") },
+          { label: "设计表", icon: "file-text", action: () => this.openDesign(p) },
+          sep,
+          { label: "新建表", icon: "plus", action: () => this.openDesign("", "new") },
+          { label: "删除表", icon: "trash", danger: true, action: () => this.dropTable(p) },
+          sep,
+          { label: "复制表名", icon: "list", action: () => this.copyText(p) },
+          { label: "导入向导", icon: "upload", action: () => this.openImport() },
+          { label: "导出整库", icon: "download", action: () => this.exportDb() },
+          refresh,
+        ];
+      }
+      if (kind === "view") {
+        return [
+          { label: "打开视图", icon: "folder-open", action: () => this.openTable(p, "view") },
+          { label: "设计视图", icon: "file-text", action: () => this.openViewDesign(p) },
+          sep,
+          { label: "新建视图", icon: "plus", action: () => this.openViewDesign("", "new") },
+          { label: "删除视图", icon: "trash", danger: true, action: () => this.dropView(p) },
+          sep,
+          { label: "复制视图名", icon: "list", action: () => this.copyText(p) },
+          refresh,
+        ];
+      }
+      if (kind === "routine") {
+        const r = this.schema.routines.find(x => x.name === p) || {};
+        return [
+          { label: "运行", icon: "play", action: () => this.openRunRoutine(r) },
+          { label: "设计", icon: "file-text", action: () => this.openRoutine(r) },
+          sep,
+          { label: "新建存储过程", icon: "plus", action: () => this.openRoutine(null, "new") },
+          { label: "新建函数", icon: "plus", action: () => this.openRoutine({ type: "FUNCTION" }, "new") },
+          { label: "删除", icon: "trash", danger: true, action: () => this.dropRoutine(r) },
+          sep,
+          { label: "复制名称", icon: "list", action: () => this.copyText(p) },
+          refresh,
+        ];
+      }
+      if (kind === "trigger") {
+        const t = this.schema.triggers.find(x => x.name === p) || {};
+        return [
+          { label: "设计", icon: "file-text", action: () => this.openTrigger(t) },
+          { label: "新建触发器", icon: "plus", action: () => this.openTrigger(null, "new") },
+          { label: "删除", icon: "trash", danger: true, action: () => this.dropTrigger(t) },
+          sep,
+          { label: "复制名称", icon: "list", action: () => this.copyText(p) },
+          refresh,
+        ];
+      }
+      if (kind === "cell") {
+        const val = this.cellValue(p.ri, p.ci);
+        const isView = this.currentTab && this.currentTab.kind === "view";
+        return [
+          { label: "复制该值", icon: "list", action: () => this.copyText(val) },
+          isView ? null : { label: "粘贴", icon: "download", action: () => this.pasteCell(p.ri, p.ci) },
+          isView ? null : { label: "设为 NULL", icon: "eraser", action: () => this.cellInput(p.ri, p.ci, { target: { value: "" } }) },
+          sep,
+          isView ? null : { label: "在上面插入一行", icon: "plus", action: () => this.addRow() },
+          isView ? null : { label: "删除这一行", icon: "trash", danger: true, action: () => this.deleteRow(p.ri) },
+          sep,
+          { label: "应用修改", icon: "check", action: () => this.applyTable() },
+          { label: "刷新数据", icon: "refresh", action: () => this.loadRows() },
+        ].filter(Boolean);
+      }
+      if (kind === "editor") {
+        return [
+          { label: "运行", icon: "play", action: () => this.runQuery() },
+          { label: "解释执行计划", icon: "search", action: () => this.explainQuery() },
+          sep,
+          { label: "美化 SQL", icon: "list", action: () => this.beautifySql() },
+          { label: "插入代码段", icon: "plus", action: () => this.insertSnippet() },
+          sep,
+          { label: "全选", icon: "check", action: () => { const cm = this.$refs.cmQuery && this.$refs.cmQuery.cm; if (cm) cm.execCommand("selectAll"); } },
+          { label: "清空", icon: "eraser", danger: true, action: () => { this.sqlText = ""; this.$nextTick(() => { if (this.$refs.cmQuery) this.$refs.cmQuery.setValue(""); }); } },
+          { label: "保存查询", icon: "file-text", action: () => this.saveQuery() },
+        ];
+      }
+      if (kind === "canvas") {
+        return [
+          { label: "添加表", icon: "plus", action: () => this.toast("从左边「＋ 添加表」里选一张表") },
+          { label: "清空画布", icon: "eraser", danger: true, action: () => { this.build.tables = []; this.build.joins = []; } },
+        ];
+      }
+      if (kind === "tab") {
+        return [
+          { label: "关闭", icon: "x", action: () => this.closeTab(this.currentTab) },
+          { label: "关闭其他", icon: "x", action: () => { this.tabs = []; this.active = "objects"; } },
+          sep,
+          newQuery,
+          refresh,
+        ];
+      }
+      // 空白处
+      return [newQuery, { label: "新建表", icon: "plus", action: () => this.openDesign("", "new") }, sep, refresh];
     },
 
     /* ---------------- 模板辅助 ---------------- */
