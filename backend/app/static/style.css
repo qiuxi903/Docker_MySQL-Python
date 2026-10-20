@@ -239,13 +239,13 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-we
   min-height: 100vh; min-height: 100dvh;
   display: flex; flex-direction: column;
 }
-header {
+#app > header {
   flex: 0 0 auto; height: var(--header-h);
   background: var(--head-bg); border-bottom: 1px solid var(--line);
   padding: 0 14px; display: flex; align-items: center; gap: 16px;
   position: relative;   /* 让导航相对整个头部绝对居中 */
 }
-[data-theme="dark"] header { background: var(--panel-2); }
+[data-theme="dark"] #app > header { background: var(--panel-2); }
 .brand { font-weight: 700; font-size: 14px; display: flex; align-items: center; gap: 9px; white-space: nowrap; }
 /* 导航按整屏正中定位：左右两侧宽度不等也不会被挤偏 */
 .nav {
@@ -254,8 +254,8 @@ header {
   margin: 0;
 }
 /* 左右内容给导航让出空间，窄屏时不重叠 */
-header .brand { flex: 0 0 auto; }
-header .userbox { flex: 0 0 auto; margin-left: auto; position: relative; z-index: 1; }
+#app > header .brand { flex: 0 0 auto; }
+#app > header .userbox { flex: 0 0 auto; margin-left: auto; position: relative; z-index: 1; }
 .nav button {
   border: 0; background: transparent; padding: 0 14px; font-size: 13.5px;
   font-weight: 600; color: var(--muted); cursor: pointer; font-family: inherit;
@@ -1160,7 +1160,7 @@ dialog::backdrop { animation: backdropIn var(--dur) var(--ease-out); }
 #toast { transition: opacity .22s var(--ease-out), transform .28s var(--ease-spring); }
 
 /* 15) 主题切换：全站色彩平滑过渡 */
-body, header, .panel, .side, .console-pane, .community-page, .admin-dlg, dialog {
+body, #app > header, .panel, .side, .console-pane, .community-page, .admin-dlg, dialog {
   transition: background-color var(--dur) var(--ease-out), border-color var(--dur) var(--ease-out);
 }
 
@@ -1271,13 +1271,13 @@ body, header, .panel, .side, .console-pane, .community-page, .admin-dlg, dialog 
 
 /* 导航居中后：中等宽度收窄按钮，避免与品牌/用户区重叠 */
 @media (max-width: 1200px) and (min-width: 920px) {
-  header .nav button { padding: 0 10px; font-size: 12.5px; gap: 5px; }
+  #app > header .nav button { padding: 0 10px; font-size: 12.5px; gap: 5px; }
 }
 @media (max-width: 1100px) and (min-width: 920px) {
-  header .brand { font-size: 13px; gap: 6px; }
-  header .brand .logo-mark { width: 22px; height: 22px; }
-  header .nav button { padding: 0 7px; font-size: 12px; gap: 4px; }
-  header .userbox .who-btn { max-width: 70px; }
+  #app > header .brand { font-size: 13px; gap: 6px; }
+  #app > header .brand .logo-mark { width: 22px; height: 22px; }
+  #app > header .nav button { padding: 0 7px; font-size: 12px; gap: 4px; }
+  #app > header .userbox .who-btn { max-width: 70px; }
 }
 
 @media (max-width: 919px) {
@@ -1852,7 +1852,7 @@ dialog > .u-table { width: calc(100% - 44px); }
 
   /* ---- 以下为原有的移动端整体布局规则（必须留在媒体查询内） ---- */
   #app { height: auto; min-height: 100vh; }
-  header { padding: 0 12px; gap: 10px; flex-wrap: wrap; height: auto; }
+  #app > header { padding: 0 12px; gap: 10px; flex-wrap: wrap; height: auto; }
   .brand { padding: 9px 0 0; }
   .nav { margin: 0; order: 3; width: 100%; }
   .nav button { padding: 8px 6px; flex: 1; justify-content: center; white-space: nowrap; font-size: 12.5px; }

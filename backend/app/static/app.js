@@ -770,7 +770,14 @@ const App = {
       this.view = v;
       this.drawer = "";
       if (v === "community" && !this.community.length) this.loadCommunity();
-      if (v === "drills") this.loadPapers();
+      if (v === "drills") {
+        // 从别的页面点「练习」总是回到清单，不停在上次那道题里
+        this.drillView = "list";
+        this.paperCurrent = null;
+        this.drillCurrent = null;
+        this.drillResult = null;
+        this.loadPapers();
+      }
     },
 
     /* ---------- 练习：清单 → 试卷详情 → 做题 ---------- */
