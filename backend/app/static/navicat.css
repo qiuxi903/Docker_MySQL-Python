@@ -396,7 +396,7 @@ tr.added td { background: rgba(46,160,67,.06); }
 .nc-field input { height: 28px; border: 1px solid var(--line-strong); border-radius: 4px;
   background: var(--panel); color: var(--text); font: inherit; padding: 0 8px; }
 .nc-check { display: flex; align-items: center; gap: 7px; margin: 8px 0; color: var(--text); font-size: 12px; }
-.nc-build-tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--line); margin-bottom: 12px; overflow-x: auto; }
+.nc-build-tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--line); overflow-x: auto; flex: 0 0 auto; }
 .nc-build-tabs button {
   border: 0; border-bottom: 2px solid transparent; background: transparent;
   color: var(--muted); font: inherit; font-size: 12px; padding: 6px 12px; cursor: pointer;
@@ -413,7 +413,7 @@ tr.added td { background: rgba(46,160,67,.06); }
 .nc-build-row select { width: 90px; flex: 0 0 auto; }
 .nc-wide-input { width: 100%; box-sizing: border-box; }
 .nc-preview {
-  margin: 12px 0 0; padding: 10px 12px; max-height: 150px; overflow: auto;
+  margin: 10px 0 0; padding: 9px 12px; max-height: 104px; overflow: auto;
   background: var(--btn-bg); border: 1px solid var(--line); border-radius: 6px;
   font: 12px/1.6 var(--mono); color: var(--text); white-space: pre-wrap;
 }
@@ -468,25 +468,43 @@ tr.added td { background: rgba(46,160,67,.06); }
   .nc-frame { min-width: 620px; }
 }
 
-/* ---- 查询创建工具：可视化表连接 ---- */
-.nc-build-from {
-  display: flex; gap: 10px; height: 280px; min-height: 220px;
+/* ---- 查询创建工具：上方图形化 + 下方表字段/页签 ---- */
+.nc-dlg.builder { width: min(940px, 96vw); }
+.nc-build-bottom {
+  display: flex; gap: 10px; height: 214px; min-height: 180px; margin-top: 10px;
 }
 .nc-bt-list {
-  flex: 0 0 150px; overflow: auto; padding-right: 4px;
+  flex: 0 0 178px; overflow: auto; padding-right: 6px;
   border-right: 1px solid var(--line);
 }
-.nc-bt-h { font-size: 11.5px; font-weight: 600; color: var(--muted); padding: 2px 0 6px; }
-.nc-bt-item {
-  display: flex; align-items: center; gap: 6px; width: 100%;
-  border: 1px solid transparent; background: transparent; color: var(--text);
-  font: inherit; font-size: 12px; padding: 4px 6px; border-radius: 4px;
+.nc-bt-h {
+  display: flex; align-items: center; justify-content: space-between; gap: 6px;
+  font-size: 11.5px; font-weight: 600; color: var(--muted); padding: 0 0 6px;
+}
+.nc-bt-add {
+  height: 22px; max-width: 96px; border: 1px solid var(--line-strong); border-radius: 4px;
+  background: var(--panel); color: var(--text); font: 11px var(--font, inherit); padding: 0 4px;
+}
+.nc-bt-group { margin-bottom: 8px; }
+.nc-bt-gname {
+  display: flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 600;
+  color: var(--accent); padding: 3px 2px;
+}
+.nc-bt-gname span:first-of-type { flex: 1; min-width: 0; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+.nc-bt-alias { font: 11px var(--mono); color: var(--muted); }
+.nc-bt-col {
+  display: flex; align-items: center; gap: 5px; width: 100%;
+  border: 0; background: transparent; color: var(--text);
+  font: 11.5px var(--font, inherit); padding: 3px 6px; border-radius: 4px;
   cursor: pointer; text-align: left;
 }
-.nc-bt-item:hover:not(:disabled) { background: var(--accent-weak); color: var(--accent); }
-.nc-bt-item:disabled { opacity: .45; cursor: default; }
+.nc-bt-col:hover { background: var(--accent-weak); color: var(--accent); }
+.nc-bt-col.pk { font-weight: 600; }
+.nc-build-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.nc-build-body { flex: 1; min-height: 0; overflow: auto; padding-top: 10px; }
 .nc-canvas {
-  position: relative; flex: 1; min-width: 0; overflow: auto;
+  position: relative; flex: 1; min-width: 0; height: 196px; overflow: auto;
   background:
     linear-gradient(var(--line) 1px, transparent 1px) 0 0 / 20px 20px,
     linear-gradient(90deg, var(--line) 1px, transparent 1px) 0 0 / 20px 20px,

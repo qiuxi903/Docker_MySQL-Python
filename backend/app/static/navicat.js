@@ -50,6 +50,7 @@ const NavicatPanel = {
       dragTable: null,
       dragJoin: null,
       dragPos: null,
+      focusTarget: null,
       runForm: { routine: null, args: "", result: null, msg: "" },
       importForm: { file: null, table: "", header: true, overwrite: false, busy: false },
       typeList: ["INT", "BIGINT", "TINYINT", "SMALLINT", "VARCHAR", "CHAR", "TEXT",
@@ -789,7 +790,7 @@ const NavicatPanel = {
     /* ---------------- 查询创建工具 ---------------- */
     blankBuilder() {
       return {
-        tab: "FROM",
+        tab: "SELECT",
         tables: [],
         joins: [],
         select: [{ expr: "", alias: "" }],
@@ -824,6 +825,24 @@ const NavicatPanel = {
         x: 16 + (n % 2) * 200, y: 14 + Math.floor(n / 2) * 168,
         columns: (t.columns || []).map(c => ({ name: c.name, key: c.key || "" })),
       });
+    },
+    addBuildTableByName(name) {
+      const t = this.schema.tables.find(x => x.name === name);
+      if (t) this.addBuildTable(t);
+    },
+    // 左边字段点一下插到当前正在填的输入框里；没有焦点就加到 SELECT
+    insertField(ref) {
+      const f = this.focusTarget;
+      if (f && typeof f === "object" && "expr" in f) {
+        f.expr = f.expr ? f.expr + ", " + ref : ref;
+        return;
+      }
+      if (f && typeof f === "object" && "col" in f) {
+        f.col = ref;
+        return;
+      }
+      this.build.select.push({ expr: ref, alias: "" });
+      this.build.tab = "SELECT";
     },
     removeBuildTable(t) {
       this.build.tables = this.build.tables.filter(x => x !== t);
