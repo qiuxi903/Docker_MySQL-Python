@@ -149,6 +149,7 @@ def init():
                     id BIGINT AUTO_INCREMENT PRIMARY KEY,
                     account_id BIGINT NOT NULL,
                     drill_id BIGINT NOT NULL,
+                    attempt_id BIGINT NOT NULL DEFAULT 0,
                     passed TINYINT(1) NOT NULL DEFAULT 0,
                     answer MEDIUMTEXT,
                     detail MEDIUMTEXT,
@@ -156,6 +157,29 @@ def init():
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                     KEY idx_user (account_id, drill_id),
                     KEY idx_drill (drill_id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+            try:
+                cur.execute(f"ALTER TABLE {q_ident(C.COMMUNITY_DB)}.drill_submissions "
+                            "ADD COLUMN attempt_id BIGINT NOT NULL DEFAULT 0")
+            except Exception:
+                pass
+            # 整卷交卷记录：一次交卷一整行，次数限制和统计都按整卷算
+            cur.execute(f"""
+                CREATE TABLE IF NOT EXISTS {q_ident(C.COMMUNITY_DB)}.drill_paper_attempts (
+                    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                    paper_id BIGINT NOT NULL,
+                    account_id BIGINT NOT NULL,
+                    attempt_no INT NOT NULL DEFAULT 1,
+                    score INT NOT NULL DEFAULT 0,
+                    total_score INT NOT NULL DEFAULT 0,
+                    passed_n INT NOT NULL DEFAULT 0,
+                    answered_n INT NOT NULL DEFAULT 0,
+                    question_n INT NOT NULL DEFAULT 0,
+                    detail MEDIUMTEXT,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    KEY idx_user (account_id, paper_id),
+                    KEY idx_paper (paper_id)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             """)
     finally:
@@ -382,6 +406,54 @@ _PAPER_SELECT = """
 """
 
 
+def _attempt_map(account_id: int, paper_ids: list[int], with_detail: bool = False) -> dict:
+    """按试卷批量取「我」的整卷交卷记录，按交卷顺序返回。"""
+    out = {}
+    ids = [int(x) for x in paper_ids if int(x or 0) > 0]
+    if not ids:
+        return out
+    marks = ",".join(["%s"] * len(ids))
+    cols = ("id, attempt_no, score, total_score, passed_n, answered_n, question_n"
+            + (", detail" if with_detail else "") + ", created_at")
+    conn = root_conn(C.COMMUNITY_DB)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(f"""SELECT paper_id, {cols} FROM drill_paper_attempts
+                             WHERE account_id=%s AND paper_id IN ({marks})
+                             ORDER BY attempt_no ASC, id ASC""",
+                        [account_id] + ids)
+            rows = cur.fetchall()
+    finally:
+        conn.close()
+    for r in rows:
+        pid = int(r[0])
+        d = {"id": int(r[1]), "no": int(r[2]), "score": int(r[3] or 0),
+             "totalScore": int(r[4] or 0), "passed_n": int(r[5] or 0),
+             "answered_n": int(r[6] or 0), "question_n": int(r[7] or 0)}
+        if with_detail:
+            d["detail"] = r[8] or ""
+            d["at"] = str(r[9])
+        else:
+            d["at"] = str(r[8])
+        out.setdefault(pid, []).append(d)
+    return out
+
+
+def _apply_attempt_summary(p: dict, rows: list[dict]):
+    p["attemptCount"] = len(rows)
+    if not rows:
+        p["lastScore"] = 0
+        p["lastAttemptAt"] = ""
+        return
+    last = rows[-1]
+    p["myScore"] = max(r["score"] for r in rows)
+    p["doneCount"] = max(r["passed_n"] for r in rows)
+    p["triedCount"] = last["answered_n"]
+    p["lastScore"] = last["score"]
+    p["lastAttemptAt"] = last["at"]
+    p["finished"] = p["questionCount"] > 0 and p["doneCount"] >= p["questionCount"]
+
+
 def list_papers(account: dict, course: str = "") -> list[dict]:
     """练习页的卡片清单：已发布的试卷 + 自己的草稿试卷，带我的得分与进度。"""
     where = ["(p.status = 1 OR p.account_id = %s)"]
@@ -407,7 +479,11 @@ def list_papers(account: dict, course: str = "") -> list[dict]:
         p["courseLabel"] = COURSE_LABEL.get(p["course"], p["course"])
         p["mine"] = r[1] == account["id"]
         p["finished"] = p["questionCount"] > 0 and p["doneCount"] >= p["questionCount"]
+        p["attemptCount"] = 0
         out.append(p)
+    amap = _attempt_map(account["id"], [p["id"] for p in out])
+    for p in out:
+        _apply_attempt_summary(p, amap.get(p["id"]) or [])
     return out
 
 
@@ -453,12 +529,56 @@ def get_paper(account: dict, pid: int) -> dict:
         d["gotScore"] = d["score"] if d["passed"] else 0
         qs.append(d)
     p["questions"] = qs
+    # 整卷口径：有交卷记录时，卡片/详情的分数和每题状态都以最近的整卷交卷为准
+    amap = _attempt_map(account["id"], [pid])
+    arows = amap.get(pid) or []
+    _apply_attempt_summary(p, arows)
+    p["latestAttemptNo"] = 0
+    p["latestAttemptAt"] = ""
+    if arows:
+        last = arows[-1]
+        p["latestAttemptNo"] = last["no"]
+        p["latestAttemptAt"] = last["at"]
+        detail = {}
+        conn = root_conn(C.COMMUNITY_DB)
+        try:
+            with conn.cursor() as cur:
+                cur.execute("""SELECT detail FROM drill_paper_attempts
+                                WHERE paper_id=%s AND account_id=%s
+                                ORDER BY attempt_no DESC, id DESC LIMIT 1""",
+                            (pid, account["id"]))
+                dr = cur.fetchone()
+                if dr and dr[0]:
+                    try:
+                        detail = json.loads(dr[0])
+                    except Exception:
+                        detail = {}
+        finally:
+            conn.close()
+        infos = {}
+        for x in detail.get("questions") or []:
+            try:
+                infos[int(x.get("id"))] = x
+            except Exception:
+                pass
+        for q in qs:
+            info = infos.get(int(q["id"]))
+            if info:
+                q["passed"] = bool(info.get("passed"))
+                q["gotScore"] = int(info.get("score") or 0)
+                q["attempts"] = 1 if info.get("answered") else 0
+                q["lastAt"] = last["at"] if info.get("answered") else ""
+            else:
+                q["passed"] = False
+                q["gotScore"] = 0
+                q["attempts"] = 0
+                q["lastAt"] = ""
     return p
 
 
 def update_paper_settings(account: dict, pid: int, max_attempts: int = 0,
                           show_answer: bool = True) -> dict:
-    """出卷人设置：每题可交卷次数（0=不限）与交卷后是否显示答案。"""
+    """出卷人设置：整套卷子可交卷次数（0=不限）与交卷后是否显示答案。"""
     n = int(max_attempts or 0)
     n = max(0, min(99, n))
     conn = root_conn(C.COMMUNITY_DB)
@@ -522,43 +642,107 @@ def _paper_ref_answer(dtype: str, verify_sql: str, expected_output: str,
 
 
 def paper_stats(account: dict, pid: int) -> dict:
-    """本套试卷的作答统计：每题得分、尝试次数、我的答案；允许时附参考答案。"""
+    """本套试卷的作答统计：按「第 N 次交卷」展示每题得分与我的答案。"""
+    p, used = _paper_cfg(account, pid)
+    mine = p[1] == account["id"]
+    max_attempts = int(p[5] or 0)
+    show_answer = bool(p[6])
     conn = root_conn(C.COMMUNITY_DB)
     try:
         with conn.cursor() as cur:
-            cur.execute("""SELECT id, account_id, title, course, status,
-                                  max_attempts, show_answer
-                             FROM drill_papers WHERE id=%s""", (pid,))
-            p = cur.fetchone()
-            if not p:
-                raise DrillError("试卷不存在")
-            mine = p[1] == account["id"]
-            if not p[4] and not (mine or account.get("role") == "admin"):
-                raise DrillError("这是别人的草稿，不能查看")
-            max_attempts = int(p[5] or 0)
-            show_answer = bool(p[6])
             cur.execute("""SELECT id, type, title, stem, score, judge_mode,
                                   verify_sql, expected_output, answer_json, test_cases
                              FROM drills
                             WHERE paper_id=%s AND (status=1 OR account_id=%s)
                             ORDER BY id ASC""", (pid, account["id"]))
             drows = cur.fetchall()
-            cur.execute("""SELECT s.drill_id, s.passed, s.answer, s.created_at, s.ms
-                             FROM drill_submissions s
-                             JOIN drills d ON d.id = s.drill_id
-                            WHERE s.account_id=%s AND d.paper_id=%s
-                            ORDER BY s.id ASC""", (account["id"], pid))
-            srows = cur.fetchall()
+            cur.execute("""SELECT id, attempt_no, score, total_score, passed_n,
+                                  answered_n, question_n, detail, created_at
+                             FROM drill_paper_attempts
+                            WHERE paper_id=%s AND account_id=%s
+                            ORDER BY attempt_no ASC, id ASC""", (pid, account["id"]))
+            arows = cur.fetchall()
+            srows = []
+            if not arows:
+                cur.execute("""SELECT s.drill_id, s.passed, s.answer, s.created_at, s.ms
+                                 FROM drill_submissions s
+                                 JOIN drills d ON d.id = s.drill_id
+                                WHERE s.account_id=%s AND d.paper_id=%s
+                                ORDER BY s.id ASC""", (account["id"], pid))
+                srows = cur.fetchall()
     finally:
         conn.close()
 
+    base = {"id": int(p[0]), "title": p[2] or "", "course": p[3] or "sql",
+            "mine": mine, "maxAttempts": max_attempts, "showAnswer": show_answer}
+
+    if arows:
+        attempts = []
+        for a in arows:
+            aid, ano, ascore, atotal, apassed, aanswered, aqn, detail_raw, at = a
+            at = str(at)
+            try:
+                detail = json.loads(detail_raw or "{}")
+            except Exception:
+                detail = {}
+            infos = {}
+            for x in detail.get("questions") or []:
+                try:
+                    infos[int(x.get("id"))] = x
+                except Exception:
+                    pass
+            qs = []
+            for i, r in enumerate(drows, 1):
+                dr_id, dtype = int(r[0]), (r[1] or "sql")
+                score = int(r[4] or 0)
+                info = infos.get(dr_id) or {}
+                answered = bool(info.get("answered"))
+                passed = bool(info.get("passed"))
+                q = {
+                    "no": i, "id": dr_id, "type": dtype,
+                    "typeLabel": TYPE_LABEL.get(dtype, dtype),
+                    "title": r[2] or "", "stem": r[3] or "", "score": score,
+                    "judgeMode": r[5] or "",
+                    "judgeLabel": JUDGE_LABEL.get(r[5] or "", r[5] or ""),
+                    "passed": passed, "answered": answered,
+                    "attempts": 1 if answered else 0,
+                    "gotScore": int(info.get("score") or 0),
+                    "lastAt": at if answered else "",
+                    "lastAnswer": info.get("answer"),
+                    "history": ([{"at": at, "passed": passed,
+                                  "ms": int(info.get("ms") or 0)}] if answered else []),
+                    "ref": None,
+                }
+                if show_answer and answered:
+                    q["ref"] = _paper_ref_answer(dtype, r[6] or "", r[7] or "",
+                                                 r[8] or "", r[9] or "")
+                qs.append(q)
+            attempts.append({
+                "id": int(aid), "no": int(ano), "score": int(ascore or 0),
+                "totalScore": int(atotal or 0), "passedCount": int(apassed or 0),
+                "answeredCount": int(aanswered or 0),
+                "questionCount": len(qs), "at": at, "questions": qs,
+                "finished": len(qs) > 0 and int(apassed or 0) >= len(qs),
+            })
+        latest = attempts[-1]
+        out = dict(base)
+        out.update({
+            "attemptCount": len(attempts), "attempts": attempts,
+            "currentNo": latest["no"],
+            "questionCount": latest["questionCount"],
+            "totalScore": latest["totalScore"], "myScore": latest["score"],
+            "doneCount": latest["passedCount"], "triedCount": latest["answeredCount"],
+            "finished": latest["finished"], "questions": latest["questions"],
+        })
+        return out
+
+    # ---- 兼容旧数据：还没有整卷交卷记录时，按单题提交历史汇总 ----
     hist = {}
     for dr_id, passed, answer, at, ms in srows:
         hist.setdefault(int(dr_id), []).append({
             "at": str(at), "passed": bool(passed), "ms": int(ms or 0),
             "answer": _decode_submitted_answer(answer),
         })
-
     questions = []
     total_score = my_score = 0
     done_n = tried_n = 0
@@ -580,7 +764,8 @@ def paper_stats(account: dict, pid: int) -> dict:
             "title": r[2] or "", "stem": r[3] or "", "score": score,
             "judgeMode": r[5] or "",
             "judgeLabel": JUDGE_LABEL.get(r[5] or "", r[5] or ""),
-            "passed": passed, "attempts": len(attempts),
+            "passed": passed, "answered": bool(attempts),
+            "attempts": len(attempts), "gotScore": score if passed else 0,
             "lastAt": last["at"] if last else "",
             "lastAnswer": last["answer"] if last else None,
             "history": [{"at": a["at"], "passed": a["passed"], "ms": a["ms"]}
@@ -591,15 +776,15 @@ def paper_stats(account: dict, pid: int) -> dict:
             q["ref"] = _paper_ref_answer(dtype, r[6] or "", r[7] or "",
                                          r[8] or "", r[9] or "")
         questions.append(q)
-
-    return {
-        "id": int(p[0]), "title": p[2] or "", "course": p[3] or "sql",
-        "mine": mine, "maxAttempts": max_attempts, "showAnswer": show_answer,
+    out = dict(base)
+    out.update({
+        "attemptCount": 0, "attempts": [], "currentNo": 0,
         "questionCount": len(drows), "totalScore": total_score,
         "myScore": my_score, "doneCount": done_n, "triedCount": tried_n,
         "finished": bool(questions) and done_n >= len(questions),
         "questions": questions,
-    }
+    })
+    return out
 
 
 def paper_score(account_id: int, paper_id: int) -> dict:
@@ -668,6 +853,7 @@ def delete_paper(account: dict, pid: int):
             cur.execute("""DELETE s FROM drill_submissions s
                            JOIN drills d ON d.id = s.drill_id
                            WHERE d.paper_id = %s""", (pid,))
+            cur.execute("DELETE FROM drill_paper_attempts WHERE paper_id=%s", (pid,))
             cur.execute("DELETE FROM drills WHERE paper_id=%s", (pid,))
             cur.execute("DELETE FROM drill_papers WHERE id=%s", (pid,))
         conn.commit()
@@ -2098,34 +2284,8 @@ def judge_objective(dr: dict, answer) -> dict:
             "reason": "答对了。" if passed else "答错了。", "expected": want}
 
 
-def submit(account: dict, did: int, answer) -> dict:
-    full = get_full(did)
-    mine = full["account_id"] == account["id"]
-    if not full["status"] and not (mine or account.get("role") == "admin"):
-        raise DrillError("这题还没发布")
-    # 试卷设置：每题可交卷次数、交卷后是否显示答案
-    pid = int(full.get("paperId") or 0)
-    cfg = None
-    used = 0
-    if pid:
-        conn = root_conn(C.COMMUNITY_DB)
-        try:
-            with conn.cursor() as cur:
-                cur.execute("SELECT max_attempts, show_answer FROM drill_papers WHERE id=%s",
-                            (pid,))
-                cfg = cur.fetchone()
-                cur.execute("""SELECT COUNT(*) FROM drill_submissions
-                                WHERE drill_id=%s AND account_id=%s""",
-                            (did, account["id"]))
-                used = int(cur.fetchone()[0] or 0)
-        finally:
-            conn.close()
-    max_attempts = int(cfg[0] or 0) if cfg else 0
-    show_answer = bool(cfg[1]) if cfg else True
-    if (max_attempts > 0 and not mine and account.get("role") != "admin"
-            and used >= max_attempts):
-        raise DrillError(f"这套试卷每题最多可以交卷 {max_attempts} 次，"
-                         f"你已经交过 {used} 次了。")
+def _judge_one(account: dict, full: dict, answer, show_answer: bool) -> dict:
+    """判一道题并按老师设置裁剪答案，返回带分值的判分结果。"""
     t0 = time.monotonic()
     if full["type"] == "sql":
         res = judge_sql(account, full, str(answer or ""))
@@ -2133,8 +2293,7 @@ def submit(account: dict, did: int, answer) -> dict:
         res = judge_python(account, full, str(answer or ""))
     else:
         res = judge_objective(full, answer)
-    ms = int((time.monotonic() - t0) * 1000)
-    res["ms"] = ms
+    res["ms"] = int((time.monotonic() - t0) * 1000)
     # 老师设置交卷后不显示答案：把参考答案和逐组期望值去掉，
     # 也不再用“期望是 X”这类提示把答案带出来
     if not show_answer:
@@ -2144,28 +2303,157 @@ def submit(account: dict, did: int, answer) -> dict:
                 c.pop("expected", None)
         if not res.get("passed") and _mode(full) in ("cell", "contains", "state", "dbstate"):
             res["reason"] = "未通过，请再检查一下作答。"
-    # 分值：通过拿满分，没通过 0 分；同时回传本套题的累计得分
     max_score = int(full.get("score") or SCORE_DEFAULT)
     res["maxScore"] = max_score
     res["score"] = max_score if res["passed"] else 0
+    res["passed"] = bool(res["passed"])
+    return res
+
+
+def _store_submission(account: dict, did: int, answer, res: dict, attempt_id: int = 0):
     conn = root_conn(C.COMMUNITY_DB)
     try:
         with conn.cursor() as cur:
             cur.execute("""INSERT INTO drill_submissions
-                           (account_id, drill_id, passed, answer, detail, ms)
-                           VALUES (%s,%s,%s,%s,%s,%s)""",
-                        (account["id"], did, 1 if res["passed"] else 0,
+                           (account_id, drill_id, attempt_id, passed, answer, detail, ms)
+                           VALUES (%s,%s,%s,%s,%s,%s,%s)""",
+                        (account["id"], did, int(attempt_id or 0),
+                         1 if res["passed"] else 0,
                          json.dumps(answer, ensure_ascii=False) if not isinstance(answer, str)
                          else answer[:60000],
-                         json.dumps(res, ensure_ascii=False, default=str)[:20000], ms))
+                         json.dumps(res, ensure_ascii=False, default=str)[:20000],
+                         int(res.get("ms") or 0)))
         conn.commit()
     finally:
         conn.close()
-    res["passed"] = bool(res["passed"])
-    paper = paper_score(account["id"], int(full.get("paperId") or 0))
+
+
+def _answer_is_empty(a) -> bool:
+    if a is None:
+        return True
+    if isinstance(a, str):
+        return not a.strip()
+    if isinstance(a, (list, tuple, dict)):
+        return not a
+    return False
+
+
+def _paper_cfg(account: dict, pid: int):
+    """读试卷设置与「我」已交卷次数，顺便做可见性校验。返回 (paper_row, used)。"""
+    conn = root_conn(C.COMMUNITY_DB)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""SELECT id, account_id, title, course, status,
+                                  max_attempts, show_answer
+                             FROM drill_papers WHERE id=%s""", (pid,))
+            p = cur.fetchone()
+            if not p:
+                raise DrillError("试卷不存在")
+            mine = p[1] == account["id"]
+            if not p[4] and not (mine or account.get("role") == "admin"):
+                raise DrillError("这是别人的草稿，不能查看")
+            cur.execute("""SELECT COUNT(*) FROM drill_paper_attempts
+                            WHERE paper_id=%s AND account_id=%s""", (pid, account["id"]))
+            used = int(cur.fetchone()[0] or 0)
+    finally:
+        conn.close()
+    return p, used
+
+
+def submit(account: dict, did: int, answer) -> dict:
+    """单题交卷（兼容旧入口）；整卷做题请用 submit_paper。"""
+    full = get_full(did)
+    mine = full["account_id"] == account["id"]
+    if not full["status"] and not (mine or account.get("role") == "admin"):
+        raise DrillError("这题还没发布")
+    pid = int(full.get("paperId") or 0)
+    show_answer = True
+    if pid:
+        # 单题入口只用于错题本重做，不消耗整卷交卷次数
+        p, _used = _paper_cfg(account, pid)
+        show_answer = bool(p[6])
+    res = _judge_one(account, full, answer, show_answer)
+    _store_submission(account, did, answer, res)
+    paper = paper_score(account["id"], pid)
     if paper:
         res["paper"] = paper
     return res
+
+
+def submit_paper(account: dict, pid: int, answers: dict) -> dict:
+    """整卷交卷：一次判完整套题，只消耗一次交卷机会。"""
+    p, used = _paper_cfg(account, pid)
+    mine = p[1] == account["id"]
+    max_attempts = int(p[5] or 0)
+    show_answer = bool(p[6])
+    if (max_attempts > 0 and not mine and account.get("role") != "admin"
+            and used >= max_attempts):
+        raise DrillError(f"这套试卷最多可以交卷 {max_attempts} 次，"
+                         f"你已经交过 {used} 次了。")
+    answers = answers or {}
+    conn = root_conn(C.COMMUNITY_DB)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(f"""SELECT {_COLS} FROM drills
+                             WHERE paper_id=%s AND (status=1 OR account_id=%s)
+                             ORDER BY id ASC""", (pid, account["id"]))
+            rows = cur.fetchall()
+    finally:
+        conn.close()
+    if not rows:
+        raise DrillError("这套试卷还没有可作答的题目")
+
+    infos = []
+    pending = []
+    total_score = my_score = 0
+    passed_n = answered_n = 0
+    for i, row in enumerate(rows, 1):
+        dr = _row_to_dict(row)
+        did = int(dr["id"])
+        qscore = int(dr.get("score") or 0)
+        total_score += qscore
+        ans = answers.get(str(did), answers.get(did))
+        if _answer_is_empty(ans):
+            infos.append({"id": did, "no": i, "answered": False, "passed": False,
+                          "score": 0, "maxScore": qscore, "reason": "未作答",
+                          "answer": None, "ms": 0})
+            continue
+        res = _judge_one(account, dr, ans, show_answer)
+        answered_n += 1
+        if res["passed"]:
+            passed_n += 1
+            my_score += res["score"]
+        infos.append({"id": did, "no": i, "answered": True,
+                      "passed": bool(res["passed"]), "score": res["score"],
+                      "maxScore": res["maxScore"], "reason": res.get("reason") or "",
+                      "answer": ans, "ms": res.get("ms") or 0})
+        pending.append((did, ans, res))
+    if answered_n == 0:
+        raise DrillError("还没有作答，先做几道题再交卷")
+
+    # 先写整卷记录，再把每题提交挂到这次交卷上
+    detail = {"questions": infos}
+    conn = root_conn(C.COMMUNITY_DB)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""INSERT INTO drill_paper_attempts
+                           (paper_id, account_id, attempt_no, score, total_score,
+                            passed_n, answered_n, question_n, detail)
+                           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                        (pid, account["id"], used + 1, my_score, total_score,
+                         passed_n, answered_n, len(rows),
+                         json.dumps(detail, ensure_ascii=False, default=str)[:4_000_000]))
+            attempt_id = int(cur.lastrowid)
+        conn.commit()
+    finally:
+        conn.close()
+    for did, ans, res in pending:
+        _store_submission(account, did, ans, res, attempt_id)
+
+    out = paper_stats(account, pid)
+    out["attemptId"] = attempt_id
+    out["attemptNo"] = used + 1
+    return out
 
 
 def my_wrong(account: dict, limit: int = 100) -> list[dict]:

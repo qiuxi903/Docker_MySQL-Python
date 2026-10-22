@@ -822,35 +822,46 @@ if mine:
     code, r = call(f"/api/papers/{card['id']}", token=tok_md)
     check("试卷：已发布学生可看", code == 200, str(r)[:100])
 
-    # ---- 试卷设置：每题可交卷次数 + 交卷后是否显示答案 ----
-    _, d0 = call(f"/api/drills/{qp_ids[0]}", token=tok_md)
-    used = int(d0.get("attempts") or 0)
+    # ---- 试卷设置：整卷交卷次数 + 交卷后是否显示答案 ----
     check("试卷：默认不限次数、显示答案",
           pd.get("maxAttempts") == 0 and pd.get("showAnswer") is True, str(pd)[:160])
     code, r = call(f"/api/papers/{card['id']}/settings",
-                   {"maxAttempts": used + 1, "showAnswer": False}, token=tok_ad2)
+                   {"maxAttempts": 1, "showAnswer": False}, token=tok_ad2)
     check("试卷：出卷人可改设置",
-          code == 200 and r.get("maxAttempts") == used + 1 and r.get("showAnswer") is False,
+          code == 200 and r.get("maxAttempts") == 1 and r.get("showAnswer") is False,
           str(r)[:120])
     code, r = call(f"/api/papers/{card['id']}/settings",
                    {"maxAttempts": 1, "showAnswer": False}, token=tok_md)
     check("试卷：学生不能改设置", code == 400, f"{code} {str(r)[:100]}")
     _, d0 = call(f"/api/drills/{qp_ids[0]}", token=tok_md)
     check("试卷：设置下发到做题页",
-          d0.get("paperMaxAttempts") == used + 1 and d0.get("paperShowAnswer") is False,
+          d0.get("paperMaxAttempts") == 1 and d0.get("paperShowAnswer") is False,
           str(d0)[:200])
-    code, r = call(f"/api/drills/{qp_ids[0]}/submit",
-                   {"answer_text": answers["-- 1"]}, token=tok_md)
-    check("试卷：关闭答案后判分不返回标准答案",
-          r.get("passed") is True and "expected" not in r and "cases" not in r, str(r)[:160])
-    code, r = call(f"/api/drills/{qp_ids[0]}/submit",
-                   {"answer_text": answers["-- 1"]}, token=tok_md)
-    check("试卷：超过交卷次数被拦",
-          code == 400 and "最多可以交卷" in str(r), f"{code} {str(r)[:120]}")
+
+    all_answers = {str(qp_ids[i]): answers[f"-- {i + 1}"] for i in range(3)}
+    code, r = call(f"/api/papers/{card['id']}/submit",
+                   {"answers": all_answers}, token=tok_md)
+    check("整卷：一次交卷判完所有题",
+          code == 200 and r.get("attemptCount") == 1 and r.get("myScore") == 30,
+          str({k: r.get(k) for k in ("attemptCount", "myScore", "totalScore")}))
+    check("整卷：本次每题都已作答",
+          r.get("triedCount") == 3 and all(q.get("answered") for q in r.get("questions") or []),
+          str([(q.get("id"), q.get("answered")) for q in r.get("questions") or []])[:200])
+    check("整卷：关闭答案时不返回参考答案",
+          all(q.get("ref") is None for q in r.get("questions") or []),
+          str([q.get("ref") for q in r.get("questions") or []])[:160])
+    code, r2 = call(f"/api/papers/{card['id']}/submit",
+                    {"answers": all_answers}, token=tok_md)
+    check("整卷：超过交卷次数被拦",
+          code == 400 and "最多可以交卷" in str(r2), f"{code} {str(r2)[:120]}")
+
     _, stats = call(f"/api/papers/{card['id']}/stats", token=tok_md)
+    check("统计：按交卷次数记录",
+          stats.get("attemptCount") == 1 and (stats.get("attempts") or [{}])[0].get("score") == 30,
+          str({k: stats.get(k) for k in ("attemptCount", "myScore")}))
     stq = (stats.get("questions") or [{}])[0]
-    check("统计：交卷次数与我的答案",
-          stq.get("attempts") == used + 1 and stq.get("lastAnswer") == answers["-- 1"],
+    check("统计：我的答案与作答状态",
+          stq.get("answered") is True and stq.get("lastAnswer") == answers["-- 1"],
           str(stq)[:200])
     check("统计：关闭答案时不显示参考答案",
           stq.get("ref") is None and stats.get("showAnswer") is False, str(stq)[:160])
@@ -863,6 +874,11 @@ if mine:
     check("统计：本套汇总分数",
           stats.get("myScore") == 30 and stats.get("totalScore") == 30,
           str({k: stats.get(k) for k in ("myScore", "totalScore")}))
+    _, pd2 = call(f"/api/papers/{card['id']}", token=tok_md)
+    check("试卷：详情反映整卷交卷次数与每题状态",
+          pd2.get("attemptCount") == 1 and pd2.get("latestAttemptNo") == 1 and
+          all(q.get("passed") for q in pd2.get("questions") or []),
+          str({k: pd2.get(k) for k in ("attemptCount", "latestAttemptNo")}))
 
 # 提交判分返回分值
 code, r = call(f"/api/drills/{qp_ids[0]}/submit",

@@ -1056,6 +1056,10 @@ class PaperSettingsBody(BaseModel):
     showAnswer: bool = True
 
 
+class PaperSubmitBody(BaseModel):
+    answers: dict = {}
+
+
 @app.post("/api/papers/{pid}/rename")
 def api_paper_rename(pid: int, b: PaperRenameBody, request: Request):
     a = acct(sess(request))
@@ -1079,6 +1083,16 @@ def api_paper_stats(pid: int, request: Request):
     a = acct(sess(request))
     try:
         return drills.paper_stats(a, pid)
+    except DrillError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/papers/{pid}/submit")
+def api_paper_submit(pid: int, b: PaperSubmitBody, request: Request):
+    """整卷交卷：一次判完整套题，只消耗一次交卷机会。"""
+    a = acct(sess(request))
+    try:
+        return drills.submit_paper(a, pid, b.answers or {})
     except DrillError as e:
         raise HTTPException(400, str(e))
 

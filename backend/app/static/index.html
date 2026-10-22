@@ -27,7 +27,7 @@ html[data-theme="light"] body { background: #f6f8fa; }
 <link rel="stylesheet" href="/vendor/codemirror/codemirror.css">
 <link rel="stylesheet" href="/vendor/codemirror/addon/hint/show-hint.css">
 <link rel="stylesheet" href="/fonts/misans/misans.css">
-<link rel="stylesheet" href="/style.css?v=141">
+<link rel="stylesheet" href="/style.css?v=143">
   <link rel="stylesheet" href="/navicat.css?v=10">
 </head>
 <body>
@@ -332,6 +332,7 @@ html[data-theme="light"] body { background: #f6f8fa; }
                 <div class="pc-bar"><i :style="{width: paperPct(p) + '%'}"></i></div>
                 <div class="pc-foot">
                   <span>已通过 {{ p.doneCount }}/{{ p.questionCount }} 题</span>
+                  <span v-if="p.attemptCount" class="pc-attempts">已交卷 {{ p.attemptCount }} 次</span>
                   <span class="spacer"></span>
                   <span class="pc-go">{{ p.single ? '去做' : '进入' }} <e-icon name="chevron-right" :size="12"></e-icon></span>
                 </div>
@@ -364,21 +365,37 @@ html[data-theme="light"] body { background: #f6f8fa; }
                     @click="renamePaper(paperCurrent)"><e-icon name="file-text" :size="12"></e-icon> 改名</button>
             <button v-if="paperCurrent.mine && user && user.canPublish" class="btn mini ghost"
                     @click="deletePaper(paperCurrent)"><e-icon name="trash" :size="12"></e-icon> 删除整套</button>
-            <button v-if="paperCurrent.triedCount" class="btn mini ghost"
+            <button v-if="paperCurrent.attemptCount || paperCurrent.triedCount" class="btn mini ghost"
                     @click="openPaperStats(paperCurrent)"><e-icon name="target" :size="12"></e-icon> 统计</button>
             <div class="paper-score-box">
               <div class="ps-main"><b>{{ paperCurrent.myScore }}</b><span>/ {{ paperCurrent.totalScore }} 分</span></div>
-              <div class="ps-sub">已通过 {{ paperCurrent.doneCount }}/{{ paperCurrent.questionCount }} 题</div>
+              <div class="ps-sub">已通过 {{ paperCurrent.doneCount }}/{{ paperCurrent.questionCount }} 题
+                <template v-if="paperCurrent.attemptCount"> · 已交卷 {{ paperCurrent.attemptCount }} 次</template>
+              </div>
             </div>
           </header>
 
           <div class="paper-detail-body">
             <p class="paper-desc" v-if="paperCurrent.description">{{ paperCurrent.description }}</p>
             <div class="paper-rules">
-              <span class="badge tiny">{{ paperCurrent.maxAttempts ? '每题可交 ' + paperCurrent.maxAttempts + ' 次' : '不限交卷次数' }}</span>
+              <span class="badge tiny">{{ paperCurrent.maxAttempts ? '每套可交 ' + paperCurrent.maxAttempts + ' 次' : '不限交卷次数' }}</span>
               <span class="badge tiny ok" v-if="paperCurrent.showAnswer">交卷后可见答案</span>
               <span class="badge tiny" v-else>交卷后不显示答案</span>
-              <span class="badge tiny" v-if="paperCurrent.triedCount">已作答 {{ paperCurrent.triedCount }}/{{ paperCurrent.questionCount }} 题</span>
+              <span class="badge tiny" v-if="paperCurrent.attemptCount">
+                已交卷 {{ paperCurrent.attemptCount }} 次
+                <template v-if="paperCurrent.lastScore">· 最近 {{ paperCurrent.lastScore }} 分</template>
+              </span>
+              <span class="badge tiny" v-if="paperCurrent.attemptCount && paperCurrent.triedCount">
+                上次作答 {{ paperCurrent.triedCount }}/{{ paperCurrent.questionCount }} 题
+              </span>
+            </div>
+            <div class="paper-start-row">
+              <button class="btn primary" :disabled="paperOutOfTries" @click="startPaper">
+                <e-icon name="play" :size="13"></e-icon>
+                {{ paperCurrent.attemptCount ? '再做一次 / 继续作答' : '开始做题' }}
+              </button>
+              <span class="tip" v-if="paperOutOfTries">交卷次数已用完，点右上「统计」查看每次作答详情。</span>
+              <span class="tip" v-else>整套卷子统一交卷：做完后在题页顶部点「交卷」，交卷后统一判分。</span>
             </div>
 
             <div class="paper-q-list">
@@ -388,8 +405,8 @@ html[data-theme="light"] body { background: #f6f8fa; }
                   <span class="pq-no">{{ String(q.no).padStart(2,'0') }}</span>
                   <span class="pq-state">
                     <span v-if="q.passed" class="badge tiny ok">已通过</span>
-                    <span v-else-if="q.attempts" class="badge tiny err">做过未通过</span>
-                    <span v-else class="badge tiny">未做</span>
+                    <span v-else-if="q.attempts" class="badge tiny err">{{ paperCurrent.attemptCount ? '上次未通过' : '做过未通过' }}</span>
+                    <span v-else class="badge tiny">未作答</span>
                   </span>
                 </span>
                 <span class="pq-title">{{ qTitle(q.stem || q.title) }}</span>
@@ -413,7 +430,7 @@ html[data-theme="light"] body { background: #f6f8fa; }
             </button>
             <span class="auth-title">本套统计 · {{ qTitle(paperStats.title) }}</span>
             <span class="spacer"></span>
-            <span class="badge tiny">{{ paperStats.maxAttempts ? '每题可交 ' + paperStats.maxAttempts + ' 次' : '不限次数' }}</span>
+            <span class="badge tiny">{{ paperStats.maxAttempts ? '每套可交 ' + paperStats.maxAttempts + ' 次' : '不限次数' }}</span>
             <span class="badge tiny ok" v-if="paperStats.showAnswer">交卷后可见答案</span>
             <span class="badge tiny" v-else>交卷后不显示答案</span>
             <div class="paper-score-box">
@@ -423,17 +440,26 @@ html[data-theme="light"] body { background: #f6f8fa; }
           </header>
 
           <div class="paper-stats-body">
+            <div class="stat-attempts" v-if="paperStats.attempts && paperStats.attempts.length">
+              <span class="stat-attempts-l">交卷记录</span>
+              <button v-for="a in paperStats.attempts" :key="a.id" class="stat-attempt"
+                      :class="{on: paperStats.currentNo === a.no}" @click="viewAttempt(a)">
+                第 {{ a.no }} 次 · {{ a.score }}/{{ a.totalScore }} 分
+                <em>{{ a.at.slice(5, 16) }}</em>
+              </button>
+            </div>
             <div class="stat-hero">
               <div class="stat-hero-score">
                 <span class="stat-hero-num">{{ paperStats.myScore }}</span>
                 <span class="stat-hero-den">/ {{ paperStats.totalScore }} 分</span>
-                <span class="stat-hero-tip">本套得分</span>
+                <span class="stat-hero-tip">{{ paperStats.currentNo ? '第 ' + paperStats.currentNo + ' 次交卷得分' : '本套得分' }}</span>
               </div>
               <div class="stat-kpis">
                 <div class="stat-kpi"><b>{{ paperStats.doneCount }}</b><span>已通过</span></div>
                 <div class="stat-kpi"><b>{{ paperStats.triedCount }}</b><span>已作答</span></div>
                 <div class="stat-kpi"><b>{{ paperStats.questionCount - paperStats.triedCount }}</b><span>未作答</span></div>
-                <div class="stat-kpi"><b>{{ paperStats.maxAttempts || '不限' }}</b><span>每题可交次数</span></div>
+                <div class="stat-kpi"><b>{{ paperStats.maxAttempts || '不限' }}</b><span>每套可交次数</span></div>
+                <div class="stat-kpi"><b>{{ paperStats.attemptCount }}</b><span>已交卷次数</span></div>
               </div>
             </div>
 
@@ -451,7 +477,8 @@ html[data-theme="light"] body { background: #f6f8fa; }
                 </header>
                 <div class="stat-q-meta">
                   <span>{{ q.typeLabel }}</span>
-                  <span>交卷 {{ q.attempts }} 次<template v-if="paperStats.maxAttempts">（上限 {{ paperStats.maxAttempts }} 次）</template></span>
+                  <span v-if="paperStats.attemptCount">本次{{ q.answered ? '已作答' : '未作答' }}</span>
+                  <span v-else>交卷 {{ q.attempts }} 次</span>
                   <span v-if="q.lastAt">最近 {{ q.lastAt.slice(0, 16) }}</span>
                 </div>
 
@@ -500,7 +527,9 @@ html[data-theme="light"] body { background: #f6f8fa; }
                     </span>
                   </div>
                 </details>
-                <div class="stat-q-empty" v-else>还没有交过卷。</div>
+                <div class="stat-q-empty" v-else>
+                  {{ paperStats.attemptCount ? '本次交卷没有作答这道题。' : '还没有交过卷。' }}
+                </div>
               </article>
             </div>
             <p class="stat-note" v-if="!paperStats.showAnswer">
@@ -574,6 +603,28 @@ html[data-theme="light"] body { background: #f6f8fa; }
 
           <!-- 右：与主页相同的「编辑器 + 控制台」 -->
           <div class="wsmain">
+            <!-- 整卷交卷条：一套卷子统一交卷，不再逐题提交 -->
+            <div class="paper-do-bar" v-if="paperCurrent">
+              <button class="btn mini ghost" @click="backToPaper">返回试卷</button>
+              <span class="pdb-title">{{ qTitle(paperCurrent.title) }}</span>
+              <span class="pdb-stat">已作答 {{ paperAnsweredCount }}/{{ drillSideList.length }}</span>
+              <span v-if="paperTriesLeft !== null" class="pdb-stat"
+                    :class="{out: paperOutOfTries}">
+                {{ paperOutOfTries ? '交卷次数已用完' : '剩余 ' + paperTriesLeft + ' 次' }}
+              </span>
+              <span class="spacer"></span>
+              <button class="btn primary" :disabled="paperBusy || paperOutOfTries" @click="submitPaper">
+                <e-icon name="target" :size="13"></e-icon> {{ paperBusy ? '交卷中…' : '交卷' }}
+              </button>
+            </div>
+            <!-- 错题本单题：没有整套卷子，保留单题提交 -->
+            <div class="paper-do-bar" v-else-if="drillCurrent">
+              <span class="pdb-title">{{ qTitle(drillCurrent.title) }}</span>
+              <span class="spacer"></span>
+              <button class="btn primary" :disabled="drillBusy" @click="submitDrill">
+                <e-icon name="target" :size="13"></e-icon> 提交本题
+              </button>
+            </div>
             <template v-if="!drillCurrent">
               <div class="drill-blank">
                 <template v-if="drillLoading">
@@ -598,10 +649,6 @@ html[data-theme="light"] body { background: #f6f8fa; }
                   <span class="panel-title">{{ qTitle(drillCurrent.title) }}</span>
                   <span class="drill-pts-badge">{{ drillCurrent.score }} 分</span>
                   <span v-if="drillCurrent.passed" class="drill-passed"><e-icon name="check" :size="12"></e-icon> 已通过</span>
-                  <span v-if="drillTriesLeft !== null && !drillCurrent.mine"
-                        class="drill-tries" :class="{out: drillOutOfTries}">
-                    {{ drillOutOfTries ? '次数已用完' : '剩余 ' + drillTriesLeft + ' 次' }}
-                  </span>
                   <span class="spacer"></span>
                   <button v-if="drillCurrent.setupSql" class="btn mini ghost" @click="drillShowSetup=!drillShowSetup">
                     <e-icon name="database" :size="12"></e-icon> <span class="m-hide">{{ drillShowSetup ? '隐藏数据' : '题目数据' }}</span>
@@ -613,9 +660,6 @@ html[data-theme="light"] body { background: #f6f8fa; }
                     <button :class="{on: navMode}" @click="setNavMode(true)">Navicat</button>
                     <button :class="{on: !navMode}" @click="setNavMode(false)">SQL</button>
                   </span>
-                  <button class="btn run run-btn" :disabled="drillBusy || drillOutOfTries" @click="submitDrill">
-                    <e-icon name="target" :size="13"></e-icon> 提交判分
-                  </button>
                 </div>
                 <div v-if="drillShowSetup && drillCurrent.setupSql" class="drill-paper drill-data-paper">
                   <div class="drill-data-h">题目数据（初始化 SQL）</div>
@@ -647,10 +691,6 @@ html[data-theme="light"] body { background: #f6f8fa; }
                   <span class="panel-title">{{ qTitle(drillCurrent.title) }}</span>
                   <span class="drill-pts-badge">{{ drillCurrent.score }} 分</span>
                   <span v-if="drillCurrent.passed" class="drill-passed"><e-icon name="check" :size="12"></e-icon> 已通过</span>
-                  <span v-if="drillTriesLeft !== null && !drillCurrent.mine"
-                        class="drill-tries" :class="{out: drillOutOfTries}">
-                    {{ drillOutOfTries ? '次数已用完' : '剩余 ' + drillTriesLeft + ' 次' }}
-                  </span>
                   <span class="spacer"></span>
                   <span class="mode-switch" v-if="drillCurrent.type==='sql'">
                     <button :class="{on: navMode}" @click="setNavMode(true)">Navicat</button>
@@ -667,9 +707,6 @@ html[data-theme="light"] body { background: #f6f8fa; }
                   <button class="btn" :disabled="drillBusy || !drillCodeType ||
                           (drillCurrent.type==='sql' && !drillSandbox.db)" @click="runDrillOnly">
                     <e-icon name="play" :size="13"></e-icon> 运行
-                  </button>
-                  <button class="btn run run-btn" :disabled="drillBusy || drillOutOfTries" @click="submitDrill">
-                    <e-icon name="target" :size="13"></e-icon> 提交判分 <span class="kbd">Ctrl+↵</span>
                   </button>
                 </div>
 
@@ -692,7 +729,7 @@ html[data-theme="light"] body { background: #f6f8fa; }
                 <!-- 代码题：编辑器（与主页一致） -->
                 <div v-if="drillCodeType" class="panel-b editor-host">
                   <cm-editor ref="cmDrillRef" :mode="drillCurrent.type==='sql' ? 'text/x-mysql' : 'text/x-python'"
-                             :run="submitDrill" @change="onDrillCodeChange"
+                             :run="runDrillOnly" @change="onDrillCodeChange"
                              placeholder="把答案写在这里，写好后点「提交判分」"></cm-editor>
                 </div>
                 <!-- 客观题：选项区（同一块面板样式） -->
@@ -701,7 +738,7 @@ html[data-theme="light"] body { background: #f6f8fa; }
                     <p class="drill-stem" v-if="drillCurrent.stem">{{ drillCurrent.stem }}</p>
                     <template v-if="drillCurrent.type==='fill'">
                       <input type="text" class="drill-fill" v-model.trim="drillFill" placeholder="在这里作答"
-                             @input="onDrillFillInput" @keyup.enter="submitDrill">
+                             @input="onDrillFillInput">
                     </template>
                     <template v-else>
                       <button v-for="o in drillCurrent.options" :key="o.key" class="drill-opt"
@@ -719,10 +756,10 @@ html[data-theme="light"] body { background: #f6f8fa; }
               <section class="panel console-pane">
                 <div class="panel-h dark">
                   <span class="dot"></span><span class="dot"></span><span class="dot"></span>
-                  <span class="panel-title">判分结果</span>
-                  <span class="panel-note on-dark-note m-hide" v-if="drillCurrent.type==='sql'">在你的沙箱数据库里真实执行，结果集与标准答案比对</span>
-                  <span class="panel-note on-dark-note m-hide" v-else-if="drillCurrent.type==='python'">沙箱里真实运行，比对输出</span>
-                  <span class="panel-note on-dark-note m-hide" v-else>答完点「提交判分」自动核对</span>
+                  <span class="panel-title">运行控制台</span>
+                  <span class="panel-note on-dark-note m-hide" v-if="drillCurrent.type==='sql'">「运行」只给自己看，交卷后才统一判分</span>
+                  <span class="panel-note on-dark-note m-hide" v-else-if="drillCurrent.type==='python'">「运行」只给自己看，交卷后才统一判分</span>
+                  <span class="panel-note on-dark-note m-hide" v-else>做完后在顶部点「交卷」统一判分</span>
                   <span class="spacer"></span>
                   <button class="btn mini ghost on-dark" @click="drillResult=null; drillRunLog=[]"><e-icon name="eraser" :size="13"></e-icon> 清屏</button>
                 </div>
@@ -730,13 +767,12 @@ html[data-theme="light"] body { background: #f6f8fa; }
                   <div v-if="!drillResult && !drillRunLog.length" class="console-empty">
                     <div class="ce-ico"><e-icon name="terminal" :size="28"></e-icon></div>
                     <template v-if="drillCurrent.type==='sql'">
-                      左侧是这个题的数据库，可以在编辑器里先自己写 SQL 试（点「运行」只执行不判分）。<br>
-                      写好后点「提交判分」核对答案。
+                      左侧是这个题的数据库，可以点「运行」先自己试跑；整卷做完后点顶部「交卷」统一判分。
                     </template>
                     <template v-else-if="drillCurrent.type==='python'">
-                      写代码后点「运行」可先自己试跑（本题标准输入会自动喂给程序），点「提交判分」核对结果。
+                      写代码后点「运行」可先自己试跑（本题标准输入会自动喂给程序）；整卷做完后点顶部「交卷」统一判分。
                     </template>
-                    <template v-else>选好答案后点「提交判分」。</template>
+                    <template v-else>选好答案后继续下一题，整卷做完点顶部「交卷」。</template>
                   </div>
 
                   <!-- 自由运行记录（与主页控制台同款） -->
@@ -785,7 +821,7 @@ html[data-theme="light"] body { background: #f6f8fa; }
                         交卷后不显示参考答案
                       </span>
                       <span class="spacer"></span>
-                      <button v-if="drillCurrent && drillCurrent.paperId" class="btn mini ghost"
+                      <button v-if="paperCurrent && drillCurrent && drillCurrent.paperId" class="btn mini ghost"
                               @click="openPaperStats()">
                         <e-icon name="target" :size="12"></e-icon> 查看本套统计
                       </button>
@@ -2065,9 +2101,9 @@ INSERT INTO course VALUES (1,'数学');</pre>
     <div class="mini-title">试卷设置</div>
     <p class="mini-text" v-if="paperCurrent">{{ qTitle(paperCurrent.title) }}</p>
     <label class="mini-field">
-      <span>每题可交卷次数</span>
+      <span>每套可交卷次数</span>
       <input type="number" min="0" max="99" step="1" v-model.number="paperForm.maxAttempts">
-      <em>0 = 不限次数；填 1 表示每道题只能交一次</em>
+      <em>0 = 不限次数；填 1 表示整套卷子只能交一次（交卷时统一判所有题）</em>
     </label>
     <label class="mini-check">
       <input type="checkbox" v-model="paperForm.showAnswer">
@@ -2868,6 +2904,6 @@ INSERT INTO course VALUES (1,'数学');</pre>
 </script>
 
 <script src="/navicat.js?v=1"></script>
-<script src="/app.js?v=137"></script>
+<script src="/app.js?v=139"></script>
 </body>
 </html>

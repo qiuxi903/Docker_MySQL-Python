@@ -2243,3 +2243,37 @@ input[type="text"], input[type="password"], textarea, select, .CodeMirror,
   .stat-q-h { flex-wrap: wrap; }
   .stat-q-title { white-space: normal; }
 }
+
+/* ============ 整卷交卷 ============ */
+.paper-do-bar {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 7px 12px; background: var(--panel-2); border-bottom: 1px solid var(--line);
+}
+.pdb-title {
+  font-size: 13px; font-weight: 600; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.pdb-stat {
+  font-size: 11.5px; color: var(--muted); border: 1px solid var(--line);
+  border-radius: 999px; padding: 1px 8px; white-space: nowrap;
+}
+.pdb-stat.out { color: var(--err); border-color: var(--err); background: var(--err-weak); }
+.paper-start-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 0 0 14px; }
+.paper-start-row .tip { margin: 0; }
+.pc-attempts { font-size: 11px; color: var(--muted); white-space: nowrap; }
+.stat-attempts {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel);
+}
+.stat-attempts-l { font-size: 11.5px; color: var(--muted); margin-right: 4px; }
+.stat-attempt {
+  display: inline-flex; align-items: baseline; gap: 6px; padding: 4px 10px;
+  border-radius: 999px; border: 1px solid var(--line-strong); background: var(--panel);
+  color: var(--muted); font-size: 12px; cursor: pointer;
+}
+.stat-attempt em { font-style: normal; font-size: 10.5px; opacity: .7; }
+.stat-attempt.on { color: var(--accent); border-color: var(--accent); background: var(--accent-weak); }
+@media (max-width: 640px) {
+  .paper-do-bar { padding: 6px 8px; gap: 6px; }
+  .pdb-title { flex: 1 1 100%; order: -1; white-space: normal; }
+}
