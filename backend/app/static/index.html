@@ -27,7 +27,7 @@ html[data-theme="light"] body { background: #f6f8fa; }
 <link rel="stylesheet" href="/vendor/codemirror/codemirror.css">
 <link rel="stylesheet" href="/vendor/codemirror/addon/hint/show-hint.css">
 <link rel="stylesheet" href="/fonts/misans/misans.css">
-<link rel="stylesheet" href="/style.css?v=139">
+<link rel="stylesheet" href="/style.css?v=140">
   <link rel="stylesheet" href="/navicat.css?v=10">
 </head>
 <body>
@@ -219,29 +219,6 @@ html[data-theme="light"] body { background: #f6f8fa; }
         </aside>
 
         <div class="wsmain">
-          <!-- 正在作答的 Python 题：题目要求 + 一键交卷 -->
-          <div class="py-drill-bar" v-if="pyDrill">
-            <div class="py-drill-info">
-              <span class="py-drill-tag">正在作答</span>
-              <span class="py-drill-title">{{ qTitle(pyDrill.title) }}</span>
-              <span class="py-drill-stem"
-                    v-if="pyDrill.stem && pyDrill.stem.trim() !== qTitle(pyDrill.title).trim()">{{ pyDrill.stem }}</span>
-              <span class="py-drill-file mono">{{ pyCurrent }}</span>
-            </div>
-            <div class="py-drill-act">
-              <span class="py-drill-state" v-if="pyDrillResult"
-                    :class="pyDrillResult.passed ? 'ok' : 'err'">
-                {{ pyDrillResult.passed ? '已通过' : '未通过' }}
-                <template v-if="pyDrillResult.score != null">
-                  · {{ pyDrillResult.score }}/{{ pyDrillResult.maxScore }} 分
-                </template>
-              </span>
-              <button class="btn mini ghost" @click="closePyDrill">返回练习</button>
-              <button class="btn run" :disabled="pyDrillBusy" @click="submitPyDrill">
-                <e-icon name="target" :size="13"></e-icon> 提交判分
-              </button>
-            </div>
-          </div>
           <section class="panel editor-pane">
             <div class="panel-h">
               <button class="btn soft m-only" @click="drawer='py'"><e-icon name="menu" :size="14"></e-icon> 文件</button>
@@ -539,62 +516,6 @@ html[data-theme="light"] body { background: #f6f8fa; }
               </section>
             </template>
 
-            <!-- Python 题：到完整的 Python 编辑器里作答（多文件 / 交互输入） -->
-            <template v-else-if="drillCurrent.type==='python'">
-              <section class="panel editor-pane py-drill-pane">
-                <div class="panel-h">
-                  <button class="btn soft m-only" @click="drawer='drills'"><e-icon name="menu" :size="14"></e-icon> 题目</button>
-                  <button v-if="paperCurrent" class="btn mini ghost m-hide" @click="backToPaper">
-                    <e-icon name="chevron-right" :size="12" style="transform:rotate(180deg);display:inline-block"></e-icon> 试卷
-                  </button>
-                  <span class="drill-idx">{{ String(drillSideList.findIndex(x => drillCurrent && x.id === drillCurrent.id) + 1).padStart(2, '0') }}</span>
-                  <span class="drill-badge">Python 题</span>
-                  <span class="panel-title">{{ qTitle(drillCurrent.title) }}</span>
-                  <span class="drill-pts-badge">{{ drillCurrent.score }} 分</span>
-                  <span v-if="drillCurrent.passed" class="drill-passed"><e-icon name="check" :size="12"></e-icon> 已通过</span>
-                  <span class="spacer"></span>
-                  <button v-if="drillCurrent.hint" class="btn mini ghost" @click="drillShowHint=!drillShowHint">
-                    <e-icon name="shield" :size="12"></e-icon> 提示
-                  </button>
-                </div>
-
-                <div class="drill-paper">
-                  <p class="drill-stem" v-if="drillCurrent.stem">{{ drillCurrent.stem }}</p>
-                  <div v-if="drillCurrent.inputData" class="drill-hint">
-                    <b>标准输入</b><pre class="drill-setup" style="margin-top:6px">{{ drillCurrent.inputData }}</pre>
-                  </div>
-                  <div v-if="drillCurrent.hint && drillShowHint" class="drill-hint">{{ drillCurrent.hint }}</div>
-                </div>
-
-                <div class="py-drill-body">
-                  <div class="py-drill-card">
-                    <span class="py-drill-ico"><e-icon name="code" :size="26"></e-icon></span>
-                    <h3>用 Python 编辑器作答</h3>
-                    <p>编辑器支持多文件、跨文件 import、交互式 input，和平时写 Python 一样；
-                       打开时会自动为本题准备专属文件，不同题目的代码互不影响。
-                       写完点「运行」看结果，满意了再「提交判分」。</p>
-                    <div class="py-drill-act">
-                      <button class="btn run" @click="openPyDrill">
-                        <e-icon name="play" :size="13"></e-icon> 打开 Python 编辑器
-                      </button>
-                      <button class="btn ghost" v-if="pyDrill && pyDrill.id===drillCurrent.id" @click="closePyDrill">
-                        返回本题
-                      </button>
-                    </div>
-                    <div class="py-drill-result" v-if="pyDrill && pyDrill.id===drillCurrent.id && pyDrillResult">
-                      <span :class="['badge', pyDrillResult.passed ? 'ok' : 'err']">
-                        {{ pyDrillResult.passed ? '已通过' : '未通过' }}
-                      </span>
-                      <span v-if="pyDrillResult.score != null" class="mono">
-                        {{ pyDrillResult.score }} / {{ pyDrillResult.maxScore }} 分
-                      </span>
-                      <span class="muted">{{ pyDrillResult.reason }}</span>
-                    </div>
-                  </div>
-                </div>
-              </section>
-            </template>
-
             <template v-else>
               <section class="panel editor-pane">
                 <div class="panel-h">
@@ -629,10 +550,15 @@ html[data-theme="light"] body { background: #f6f8fa; }
                   </button>
                 </div>
 
-                <!-- 题干常显：进题就能看到要求；初始化数据和提示按需展开 -->
-                <div v-if="drillCodeType && (drillCurrent.stem || (drillShowHint && drillCurrent.hint))"
-                     class="drill-paper">
+                <!-- 题干常显：进题就能看到要求；初始化数据、标准输入和提示按需展开 -->
+                <div v-if="drillCodeType && (drillCurrent.stem || drillCurrent.inputData
+                        || (drillShowHint && drillCurrent.hint))" class="drill-paper">
                   <p class="drill-stem" v-if="drillCurrent.stem">{{ drillCurrent.stem }}</p>
+                  <div v-if="drillCurrent.type==='python' && drillCurrent.inputData" class="drill-hint">
+                    <b>标准输入</b>
+                    <span class="muted">（点「运行」或「提交判分」时自动喂给程序）</span>
+                    <pre class="drill-setup" style="margin-top:6px">{{ drillCurrent.inputData }}</pre>
+                  </div>
                   <div v-if="drillShowHint && drillCurrent.hint" class="drill-hint">{{ drillCurrent.hint }}</div>
                 </div>
                 <div v-if="drillShowSetup && drillCurrent.setupSql" class="drill-paper drill-data-paper">
@@ -684,7 +610,7 @@ html[data-theme="light"] body { background: #f6f8fa; }
                       写好后点「提交判分」核对答案。
                     </template>
                     <template v-else-if="drillCurrent.type==='python'">
-                      写代码后点「运行」可先自己试跑，点「提交判分」核对结果。
+                      写代码后点「运行」可先自己试跑（本题标准输入会自动喂给程序），点「提交判分」核对结果。
                     </template>
                     <template v-else>选好答案后点「提交判分」。</template>
                   </div>
@@ -2786,6 +2712,6 @@ INSERT INTO course VALUES (1,'数学');</pre>
 </script>
 
 <script src="/navicat.js?v=1"></script>
-<script src="/app.js?v=131"></script>
+<script src="/app.js?v=133"></script>
 </body>
 </html>
