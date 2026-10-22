@@ -578,11 +578,12 @@ html[data-theme="light"] body { background: #f6f8fa; }
                     <p class="drill-stem" v-if="drillCurrent.stem">{{ drillCurrent.stem }}</p>
                     <template v-if="drillCurrent.type==='fill'">
                       <input type="text" class="drill-fill" v-model.trim="drillFill" placeholder="在这里作答"
-                             @input="saveDrillDraft" @keyup.enter="submitDrill">
+                             @input="onDrillFillInput" @keyup.enter="submitDrill">
                     </template>
                     <template v-else>
-                      <button v-for="o in drillCurrent.options" :key="o.key" class="drill-opt" :class="{on: drillPick===o.key}"
-                              @click="drillPick=o.key">
+                      <button v-for="o in drillCurrent.options" :key="o.key" class="drill-opt"
+                              :class="{on: drillCurrent.type==='multiple' ? drillMulti.includes(o.key) : drillPick===o.key}"
+                              @click="pickDrillOption(o.key)">
                         <span class="drill-opt-key">{{ o.key }}</span>
                         <span class="drill-opt-text">{{ o.text }}</span>
                       </button>
@@ -1932,8 +1933,8 @@ INSERT INTO course VALUES (1,'数学');</pre>
     <div class="mini-title">{{ confirmBox.title }}</div>
     <p class="mini-text">{{ confirmBox.text }}</p>
     <div class="mini-foot">
-      <button class="btn soft" @click="confirmCancel">取消</button>
-      <button :class="confirmBox.danger ? 'btn danger solid' : 'btn primary'" @click="confirmOk">确定</button>
+      <button class="btn soft" @click="confirmCancel">{{ confirmBox.cancelText || '取消' }}</button>
+      <button :class="confirmBox.danger ? 'btn danger solid' : 'btn primary'" @click="confirmOk">{{ confirmBox.okText || '确定' }}</button>
     </div>
   </dialog>
 </div>
@@ -2712,6 +2713,6 @@ INSERT INTO course VALUES (1,'数学');</pre>
 </script>
 
 <script src="/navicat.js?v=1"></script>
-<script src="/app.js?v=133"></script>
+<script src="/app.js?v=135"></script>
 </body>
 </html>
