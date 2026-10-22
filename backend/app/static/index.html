@@ -1968,7 +1968,8 @@ INSERT INTO course VALUES (1,'数学');</pre>
       <span class="nc-tool-ico" style="background:#5b8def"><e-icon name="menu" :size="17"></e-icon></span>
       <span class="nc-tool-t">连接</span>
     </button>
-    <button v-for="t in tools" :key="t.key" class="nc-tool" :class="{ on: toolActive === t.key }"
+    <button v-for="t in tools" :key="t.key" class="nc-tool"
+            :class="[t.cls || '', { on: toolActive === t.key }]"
             @click="toolClick(t)" :title="t.label">
       <span class="nc-tool-ico" :style="{ background: t.color }"><e-icon :name="t.icon" :size="17"></e-icon></span>
       <span class="nc-tool-t">{{ t.label }}</span>

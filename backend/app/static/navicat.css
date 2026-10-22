@@ -481,8 +481,7 @@ tr.added td { background: rgba(46,160,67,.06); }
 }
 @media (max-width: 640px) {
   /* 连接树不再隐藏，交给抽屉控制（见上面的 .nc-side 规则） */
-  .nc-tool-t { display: none; }
-  .nc-tool { min-width: 40px; padding: 4px 6px; }
+  .nc-tool { min-width: 52px; padding: 4px 5px; font-size: 10.5px; }
   .nc-tool-ico { width: 28px; height: 24px; }
   .nc-design-top { gap: 8px; }
 }
@@ -672,7 +671,9 @@ tr.added td { background: rgba(46,160,67,.06); }
   .nc-status { font-size: 10.5px; }
 }
 @media (max-width: 640px) {
-  .nc-tool-t { display: none; }
-  .nc-tool { min-width: 40px; padding: 4px 6px; }
+  /* 工具栏保留文字标签，整行可横向滑动 */
+  .nc-tool { min-width: 52px; padding: 4px 5px; font-size: 10.5px; }
   .nc-tool-ico { width: 28px; height: 24px; }
+  /* 手机上「连接」由左边的抽屉按钮代替，避免两个同名入口 */
+  .nc-tool-conn { display: none; }
 }

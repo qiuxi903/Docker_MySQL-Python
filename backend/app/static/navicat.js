@@ -115,7 +115,7 @@ const NavicatPanel = {
     },
     tools() {
       return [
-        { key: "conn", label: "连接", icon: "link", color: "#5b8def" },
+        { key: "conn", label: "连接", icon: "link", color: "#5b8def", cls: "nc-tool-conn" },
         { key: "query", label: "新建查询", icon: "search", color: "#e8833a" },
         { key: "tables", label: "表", icon: "table", color: "#3aa0e8" },
         { key: "views", label: "视图", icon: "file-text", color: "#7b61d1" },
