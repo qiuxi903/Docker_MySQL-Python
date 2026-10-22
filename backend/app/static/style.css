@@ -1954,7 +1954,13 @@ pre, .cheat pre, .ddl-pre, .src-pre, .cstdout, .cstderr, .term-out, .term-err {
     flex: 1; border: 0; background: transparent; color: var(--muted);
     display: flex; flex-direction: column; align-items: center; gap: 2px;
     padding: 7px 0 6px; font-size: 10.5px; font-weight: 600; cursor: pointer;
-    font-family: inherit; position: relative;
+    font-family: inherit; position: relative; white-space: nowrap;
+  }
+  /* 右下角：个人中心 / 管理入口（从顶栏搬下来），与左侧主导航分组 */
+  .tabbar .tabbar-account { flex: 0 0 auto; min-width: 54px; padding-left: 8px; padding-right: 8px; }
+  .tabbar-sep {
+    flex: 0 0 auto; width: 1px; align-self: stretch; margin: 9px 3px;
+    background: var(--line);
   }
   .tabbar button.active { color: var(--accent); }
   .tabbar button.active::before {
@@ -1967,6 +1973,13 @@ pre, .cheat pre, .ddl-pre, .src-pre, .cstdout, .cstderr, .term-out, .term-err {
   /* 两页结构统一：MySQL 与 Python 都是 side + wsmain，切换不跳版 */
   .ws { min-height: 0; }
   .wsmain { min-height: 0; }
+  /* 做题页 Navicat 模式：面板撑满可视高度，数据网格才能滚动查看 */
+  .drills-ws.nav-mode {
+    min-height: calc(100vh - 104px);
+    min-height: calc(100dvh - 104px);
+  }
+  .drills-ws.nav-mode .navicat-pane { display: flex; flex-direction: column; }
+  .drills-ws.nav-mode .navicat-body { flex: 1 1 auto; min-height: 0; }
 
   /* ============ 抽屉式侧边栏（文件列表完全移出主区域） ============ */
   .m-only { display: inline-flex; }

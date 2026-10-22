@@ -19,12 +19,16 @@
 .nc-menu {
   border: 0; background: transparent; color: var(--text); font: inherit;
   padding: 3px 9px; border-radius: 4px; cursor: pointer;
+  /* 菜单项必须不被压缩：中文被压窄会一个字一行，竖着显示 */
+  flex: 0 0 auto; white-space: nowrap;
 }
+/* 手机上的合并菜单入口（桌面隐藏） */
+.nc-menu-m { display: none; align-items: center; gap: 5px; }
 .nc-menu:hover { background: var(--btn-hover); }
-.nc-brand { font-size: 11px; color: var(--muted); padding-right: 6px; }
+.nc-brand { font-size: 11px; color: var(--muted); padding-right: 6px; flex: 0 0 auto; white-space: nowrap; }
 .nc-menu-pop {
   position: absolute; top: 27px; left: 6px; z-index: 20;
-  min-width: 190px; padding: 5px;
+  min-width: 190px; max-width: calc(100vw - 24px); padding: 5px;
   background: var(--panel); border: 1px solid var(--line-strong);
   border-radius: 6px; box-shadow: 0 10px 30px rgba(0,0,0,.18);
 }
@@ -32,6 +36,7 @@
   display: flex; align-items: center; gap: 8px; width: 100%;
   border: 0; background: transparent; color: var(--text); font: inherit;
   padding: 7px 9px; border-radius: 4px; cursor: pointer; text-align: left;
+  white-space: nowrap;
 }
 .nc-menu-pop button:hover { background: var(--accent-weak); color: var(--accent); }
 
@@ -152,7 +157,9 @@
 .nc-table-name {
   display: inline-flex; align-items: center; gap: 6px;
   font-weight: 600; color: var(--text);
+  flex: 0 1 auto; min-width: 0; max-width: 100%;
 }
+.nc-table-name-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .nc-muted { color: var(--muted); font-size: 11.5px; }
 .nc-vsep { width: 1px; height: 18px; background: var(--line); margin: 0 4px; }
 
@@ -226,6 +233,7 @@ tr.added td { background: rgba(46,160,67,.06); }
 .nc-filterbar input, .nc-filterbar select {
   height: 25px; border: 1px solid var(--line-strong); border-radius: 4px;
   background: var(--panel); color: var(--text); font: inherit; padding: 0 7px;
+  flex: 0 0 auto; max-width: 46vw;
 }
 .nc-filterbar input { width: 200px; }
 .nc-fl { white-space: nowrap; }
@@ -238,8 +246,9 @@ tr.added td { background: rgba(46,160,67,.06); }
 .nc-dbselect {
   font: 600 12px var(--mono); padding: 4px 10px;
   border: 1px solid var(--line-strong); border-radius: 4px; background: var(--panel);
+  flex: 0 0 auto; white-space: nowrap; max-width: 46vw; overflow: hidden; text-overflow: ellipsis;
 }
-.nc-conn { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; }
+.nc-conn { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; flex: 0 0 auto; white-space: nowrap; }
 .nc-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
 .nc-dot.ok { background: #3fb950; }
 .nc-run {
@@ -265,7 +274,7 @@ tr.added td { background: rgba(46,160,67,.06); }
 }
 .nc-result-h button {
   border: 0; background: transparent; color: var(--muted); font: inherit; font-size: 12px;
-  padding: 3px 10px; border-radius: 4px; cursor: pointer;
+  padding: 3px 10px; border-radius: 4px; cursor: pointer; white-space: nowrap; flex: 0 0 auto;
 }
 .nc-result-h button.on { background: var(--panel); color: var(--accent); font-weight: 600; }
 .nc-msg {
@@ -283,8 +292,12 @@ tr.added td { background: rgba(46,160,67,.06); }
   flex: 0 0 auto; display: flex; gap: 14px; align-items: center; flex-wrap: wrap;
   padding: 8px 10px; border-bottom: 1px solid var(--line);
 }
-.nc-design-top label { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
-.nc-design-top label.wide { flex: 1; min-width: 200px; }
+.nc-design-top label {
+  display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted);
+  /* 表名/引擎/字符集等标签文字不可压缩，否则中文会一个字一行 */
+  flex: 0 0 auto; white-space: nowrap;
+}
+.nc-design-top label.wide { flex: 1 1 auto; min-width: 200px; }
 .nc-design-top label.wide input { flex: 1; }
 .nc-design-top input, .nc-design-top select {
   height: 26px; border: 1px solid var(--line-strong); border-radius: 4px;
@@ -362,7 +375,9 @@ tr.added td { background: rgba(46,160,67,.06); }
   flex: 0 0 auto; height: 24px; display: flex; align-items: center; gap: 10px;
   padding: 0 10px; font-size: 11px; color: var(--muted);
   background: var(--panel-2); border-top: 1px solid var(--line);
+  overflow-x: auto; white-space: nowrap;
 }
+.nc-status > span { flex: 0 0 auto; }
 .nc-status-item { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
 /* 数据网格的加载遮罩（只覆盖网格区域） */
 .nc-loading {
@@ -387,8 +402,9 @@ tr.added td { background: rgba(46,160,67,.06); }
 }
 .nc-dlg.wide { width: min(760px, 100%); }
 .nc-dlg-h {
-  display: flex; align-items: center; font-size: 14px; font-weight: 600;
+  display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600;
   padding-bottom: 10px; margin-bottom: 10px; border-bottom: 1px solid var(--line);
+  white-space: nowrap;
 }
 .nc-dlg-x {
   margin-left: auto; border: 0; background: transparent; color: var(--muted);
@@ -483,6 +499,7 @@ tr.added td { background: rgba(46,160,67,.06); }
 .nc-bt-h {
   display: flex; align-items: center; justify-content: space-between; gap: 6px;
   font-size: 11.5px; font-weight: 600; color: var(--muted); padding: 0 0 6px;
+  white-space: nowrap;
 }
 .nc-bt-add {
   height: 22px; max-width: 96px; border: 1px solid var(--line-strong); border-radius: 4px;
@@ -602,6 +619,9 @@ tr.added td { background: rgba(46,160,67,.06); }
 .nc-tool-mobile { display: none; }
 
 @media (max-width: 919px) {
+  /* 7 个菜单在手机上挤不开（中文被压成一个字一行），收成一个「菜单」按钮 */
+  .nc-menu-d { display: none; }
+  .nc-menu-m { display: inline-flex; }
   /* 连接树改成左侧抽屉，默认收起 */
   .nc-side {
     position: absolute; top: 0; bottom: 0; left: 0; z-index: 30;

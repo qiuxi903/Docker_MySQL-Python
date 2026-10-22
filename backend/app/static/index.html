@@ -84,9 +84,10 @@ html[data-theme="light"] body { background: #f6f8fa; }
         <button class="icon-btn theme-btn" :title="theme==='dark' ? '切换到亮色' : '切换到暗色'" @click="toggleTheme">
           <e-icon :name="theme==='dark' ? 'sun' : 'moon'" :size="16"></e-icon>
         </button>
-        <span class="avatar">{{ user ? user.name.slice(0,1) : '?' }}</span>
-        <button class="who-btn" title="个人中心" @click="openProfile">{{ user ? user.name : '' }}</button>
-        <button v-if="user && user.role==='admin'" class="btn mini" @click="openAdmin">管理</button>
+        <!-- 手机端：个人中心与管理入口移到底部栏右侧，这里隐藏避免重复 -->
+        <span class="avatar m-hide">{{ user ? user.name.slice(0,1) : '?' }}</span>
+        <button class="who-btn m-hide" title="个人中心" @click="openProfile">{{ user ? user.name : '' }}</button>
+        <button v-if="user && user.role==='admin'" class="btn mini m-hide" @click="openAdmin">管理</button>
         <button class="btn mini ghost" @click="logout">退出</button>
       </div>
     </header>
@@ -1138,6 +1139,13 @@ html[data-theme="light"] body { background: #f6f8fa; }
       <button :class="{active: view==='community'}" @click="switchView('community')">
         <e-icon name="globe" :size="19"></e-icon><span>题库</span>
       </button>
+      <span class="tabbar-sep"></span>
+      <button class="tabbar-account" title="个人中心" @click="openProfile">
+        <e-icon name="user" :size="19"></e-icon><span>我的</span>
+      </button>
+      <button v-if="user && user.role==='admin'" class="tabbar-account" title="管理后台" @click="openAdmin">
+        <e-icon name="shield" :size="19"></e-icon><span>管理</span>
+      </button>
     </nav>
   </template>
 
@@ -1916,8 +1924,11 @@ INSERT INTO course VALUES (1,'数学');</pre>
 <div class="nc" :class="{ 'nc-busy': loading }">
   <!-- 菜单栏 -->
   <div class="nc-menubar">
+    <!-- 手机上 7 个菜单挤不开会竖排，收成一个「菜单」按钮（点开的浮层内容完全相同） -->
+    <button class="nc-menu nc-menu-m" @click.stop="toggleMenu('文件')">
+      <e-icon name="menu" :size="13"></e-icon> 菜单</button>
     <button v-for="m in ['文件','编辑','查看','收藏夹','工具','窗口','帮助']" :key="m"
-            class="nc-menu" @click.stop="toggleMenu(m)">{{ m }}</button>
+            class="nc-menu nc-menu-d" @click.stop="toggleMenu(m)">{{ m }}</button>
     <div class="nc-menu-pop" v-if="menu" @click.stop>
       <button @click="menuAction('newQuery')"><e-icon name="search" :size="13"></e-icon> 新建查询</button>
       <button @click="menuAction('refresh')"><e-icon name="refresh" :size="13"></e-icon> 刷新对象列表</button>
@@ -2251,7 +2262,7 @@ INSERT INTO course VALUES (1,'数学');</pre>
         <div class="nc-obj-bar">
           <span class="nc-table-name">
             <e-icon name="table" :size="14"></e-icon>
-            {{ design.mode === 'new' ? '新建表' : '设计表：' + design.originalName }}
+            <span class="nc-table-name-t">{{ design.mode === 'new' ? '新建表' : '设计表：' + design.originalName }}</span>
           </span>
           <span class="spacer"></span>
           <button class="nc-btn primary" @click="saveDesign">
