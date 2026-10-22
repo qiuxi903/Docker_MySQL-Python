@@ -88,7 +88,7 @@ html[data-theme="light"] body { background: #f6f8fa; }
         <span class="avatar m-hide">{{ user ? user.name.slice(0,1) : '?' }}</span>
         <button class="who-btn m-hide" title="个人中心" @click="openProfile">{{ user ? user.name : '' }}</button>
         <button v-if="user && user.role==='admin'" class="btn mini m-hide" @click="openAdmin">管理</button>
-        <button class="btn mini ghost" @click="logout">退出</button>
+        <button class="btn mini ghost m-hide" @click="logout">退出</button>
       </div>
     </header>
 
@@ -1140,11 +1140,8 @@ html[data-theme="light"] body { background: #f6f8fa; }
         <e-icon name="globe" :size="19"></e-icon><span>题库</span>
       </button>
       <span class="tabbar-sep"></span>
-      <button class="tabbar-account" title="个人中心" @click="openProfile">
+      <button class="tabbar-account" title="我的" @click="openMe">
         <e-icon name="user" :size="19"></e-icon><span>我的</span>
-      </button>
-      <button v-if="user && user.role==='admin'" class="tabbar-account" title="管理后台" @click="openAdmin">
-        <e-icon name="shield" :size="19"></e-icon><span>管理</span>
       </button>
     </nav>
   </template>
@@ -1551,6 +1548,32 @@ INSERT INTO course VALUES (1,'数学');</pre>
 
   <!-- ================= 管理弹窗 ================= -->
   <!-- ================= 管理后台（独立菜单） ================= -->
+  <!-- 手机端底部栏的「我的」：个人中心 / 管理后台 / 退出登录 -->
+  <dialog ref="meDlg" class="mini-dlg-box me-dlg">
+    <div class="mini-title" style="margin-bottom:12px">我的</div>
+    <button class="hub-card" @click="meAction('profile')">
+      <span class="hub-ico"><e-icon name="user" :size="18"></e-icon></span>
+      <span class="hub-main">
+        <span class="hub-t">个人中心</span>
+        <span class="hub-d">账号资料、用量统计、修改密码、退出其他设备</span>
+      </span>
+    </button>
+    <button v-if="user && user.role==='admin'" class="hub-card" @click="meAction('admin')">
+      <span class="hub-ico"><e-icon name="shield" :size="18"></e-icon></span>
+      <span class="hub-main">
+        <span class="hub-t">管理后台</span>
+        <span class="hub-d">用户与游客管理、权限开关、操作日志</span>
+      </span>
+    </button>
+    <button class="hub-card me-danger" @click="meAction('logout')">
+      <span class="hub-ico"><e-icon name="x" :size="18"></e-icon></span>
+      <span class="hub-main">
+        <span class="hub-t">退出登录</span>
+        <span class="hub-d">退出后这台设备不再自动登录</span>
+      </span>
+    </button>
+  </dialog>
+
   <dialog ref="adminDlg" class="admin-dlg">
     <div class="dlg-head">
       <span class="dlg-ico"><e-icon name="shield" :size="19"></e-icon></span>

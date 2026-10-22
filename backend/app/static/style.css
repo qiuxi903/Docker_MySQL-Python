@@ -1512,6 +1512,12 @@ body, #app > header, .panel, .side, .console-pane, .community-page, .admin-dlg, 
   margin-bottom: 10px; transition: border .12s, background .12s;
 }
 .hub-card:hover { border-color: var(--accent); background: var(--btn-bg); }
+/* 「我的」面板：退出登录用危险色 */
+.me-dlg { width: min(420px, 94vw); }
+.me-dlg .hub-card { margin-bottom: 8px; }
+.me-dlg .hub-card:last-child { margin-bottom: 0; }
+.me-danger .hub-ico { background: var(--err-weak); color: var(--err); }
+.me-danger .hub-t { color: var(--err); }
 .hub-ico {
   flex: 0 0 34px; height: 34px; border-radius: 9px;
   background: var(--accent-weak); color: var(--accent);

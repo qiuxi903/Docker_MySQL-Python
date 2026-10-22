@@ -2651,6 +2651,21 @@ const App = {
     },
 
     /* ---------- 个人中心 ---------- */
+    /* 手机端底部栏「我的」：个人中心 / 管理后台 / 退出登录 */
+    openMe() {
+      const dlg = this.$refs.meDlg;
+      if (!dlg) return;
+      if (dlg.open) return;
+      dlg.showModal();
+    },
+    meAction(a) {
+      const dlg = this.$refs.meDlg;
+      if (dlg && dlg.open) dlg.close();
+      if (a === "profile") this.openProfile();
+      else if (a === "admin") this.openAdmin();
+      else if (a === "logout") this.logout();
+    },
+
     async openProfile() {
       this.profile = null;
       this.pwForm = { old: "", new: "", repeat: "" };
