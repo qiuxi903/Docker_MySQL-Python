@@ -677,3 +677,33 @@ tr.added td { background: rgba(46,160,67,.06); }
   /* 手机上「连接」由左边的抽屉按钮代替，避免两个同名入口 */
   .nc-tool-conn { display: none; }
 }
+
+/* ---- 题目要求（做题时必看） ---- */
+.nc-stem {
+  flex: 0 0 auto; padding: 7px 10px 8px;
+  background: var(--accent-weak); border-bottom: 1px solid var(--line);
+}
+.nc-stem-h {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 11.5px; font-weight: 600; color: var(--accent);
+}
+.nc-stem-btn {
+  border: 1px solid var(--accent); background: transparent; color: var(--accent);
+  font: inherit; font-size: 11px; padding: 1px 8px; border-radius: 999px; cursor: pointer;
+}
+.nc-stem-btn:hover { background: var(--accent); color: #fff; }
+.nc-stem-txt {
+  margin: 4px 0 0; font-size: 12.5px; line-height: 1.65; color: var(--text);
+  max-height: 3.3em; overflow: hidden;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+}
+.nc-stem-txt.open {
+  max-height: 42vh; overflow: auto; -webkit-line-clamp: unset;
+}
+@media (max-width: 919px) {
+  /* 手机上标题允许折两行，别只露一个头 */
+  .navicat-head .panel-title {
+    flex: 1 1 auto; min-width: 0; max-width: none; white-space: normal;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  }
+}

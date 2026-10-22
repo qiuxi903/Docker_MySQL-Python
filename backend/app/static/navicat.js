@@ -52,6 +52,7 @@ const NavicatPanel = {
       dragPos: null,
       focusTarget: null,
       ctx: { show: false, x: 0, y: 0, items: [] },
+      stemOpen: false,
       mobileTree: false,
       runForm: { routine: null, args: "", result: null, msg: "" },
       importForm: { file: null, table: "", header: true, overwrite: false, busy: false },
