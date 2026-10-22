@@ -17,7 +17,7 @@ ZIP_FILE_MAX = 8 * 1024 * 1024          # 单个文件解压后
 ZIP_TOTAL_MAX = 32 * 1024 * 1024        # 全部文件合计
 ZIP_MAX_ENTRIES = 40
 
-PACK_EXTS = (".txt", ".md", ".sql", ".myd", ".csv", ".xlsx")
+PACK_EXTS = (".txt", ".md", ".sql", ".myd", ".csv", ".xlsx", ".py", ".in")
 
 # 题干里出现这些词，说明这一行是「要求/注意」，不是题目正文
 NOTE_RE = re.compile(r"^(注意|说明|提示)\s*[:：]?")
@@ -281,6 +281,10 @@ def extract_title(stem_text: str) -> str:
     for line in _tidy(stem_text).splitlines():
         line = line.strip()
         if not line or line.startswith("『") or line.startswith("【"):
+            continue
+        # 「题目」「题 干」「题目  干」这类只有标记、没有内容的一行，跳过
+        compact = re.sub(r"\s+", "", line).strip("『』【】:：")
+        if compact in ("题目", "题干", "试题", "题目干", "题题干"):
             continue
         if len(line) <= 60:
             return line

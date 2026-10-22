@@ -860,6 +860,48 @@ code, r = call(f"/api/drills/{qp_ids[0]}/submit",
 check("Navicat：字段类型不对被拒", r.get("passed") is False and "字段定义" in (r.get("reason") or ""),
       str(r)[:160])
 
+# ---- 题目包也支持 Python 参考答案程序 ----
+PY_STEM = f"""题目  干
+Python 练习 {QP_TAG}：输入输出
+
+1、读入两个整数，输出它们的和。
+2、读入一段文本，输出第一个字符。
+"""
+PY_ANS1 = "a, b = input().split()\nprint(int(a) + int(b))\n"
+PY_ANS2 = "s = input().strip()\nprint(s[0])\n"
+py_buf = io.BytesIO()
+with zipfile.ZipFile(py_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+    zf.writestr("题目.txt", PY_STEM)
+    zf.writestr("答案/1.py", PY_ANS1)
+    zf.writestr("答案/1.in", "3 5\n")
+    zf.writestr("答案/2.py", PY_ANS2)
+    zf.writestr("答案/2.in", "hello\n")
+body, ct = multipart_files([("py试卷.zip", py_buf.getvalue())])
+code, pypkg = call("/api/author/qpack/parse", raw=body, ctype=ct, token=tok_ad2)
+check("Python 题包：解析出 Python 题",
+      code == 200 and pypkg.get("stats", {}).get("python") == 2, str(pypkg.get("stats")))
+check("Python 题包：带上参考答案与标准输入",
+      pypkg["questions"][0].get("pyCode") and pypkg["questions"][0].get("pyInput") == "3 5\n",
+      str(pypkg["questions"][0])[:160])
+code, pymade = call("/api/author/qpack/create",
+                    {"package": pypkg, "publish": True, "judge": {}}, token=tok_ad2)
+check("Python 题包：建成 Python 题", code == 200 and pymade.get("course") == "python",
+      str(pymade)[:160])
+py_ids = [x["id"] for x in pymade.get("created") or []]
+check("Python 题包：自动跑出期望输出",
+      len(py_ids) == 2 and not pymade.get("warnings"), str(pymade.get("warnings")))
+_, pd = call(f"/api/drills/{py_ids[0]}", token=tok_ad2)
+check("Python 题包：期望输出正确", (pd.get("expectedOutput") or "").strip() == "8",
+      repr(pd.get("expectedOutput")))
+check("Python 题包：标准输入带给学生", pd.get("inputData") == "3 5\n", repr(pd.get("inputData")))
+_, r = call(f"/api/drills/{py_ids[0]}/submit", {"answer_text": PY_ANS1}, token=tok_md)
+check("Python 题包：参考答案判分通过", r.get("passed") is True, str(r)[:140])
+_, r = call(f"/api/drills/{py_ids[0]}/submit",
+            {"answer_text": "print('wrong')"}, token=tok_md)
+check("Python 题包：错误答案被拒", r.get("passed") is False, str(r)[:140])
+for i in py_ids:
+    call(f"/api/drills/{i}", token=tok_ad2, method="DELETE")
+
 # 清理
 for i in qp_ids:
     call(f"/api/drills/{i}", token=tok_ad2, method="DELETE")

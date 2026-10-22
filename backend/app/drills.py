@@ -15,6 +15,7 @@
 """
 import io
 import json
+import os
 import re
 import time
 import urllib.error
@@ -548,6 +549,10 @@ def get_drill(account: dict, did: int) -> dict:
     out["passed"] = bool(p[0])
     out["attempts"] = int(p[1] or 0)
     out["mine"] = mine
+    if d["type"] == "python":
+        # 标准输入不是答案，可以给学生看（学生才知道要喂什么数据）
+        out["inputData"] = d["inputData"] or ""
+        out["starterCode"] = d["starterCode"] or ""
     return out
 
 
@@ -978,6 +983,13 @@ def unpack_package(files: list[dict]) -> list[dict]:
     return out
 
 
+def _file_question_no(name: str):
+    """从文件名里取题号：1.py / 2_求平均.py / 第3题.py / q4.py 都认。"""
+    base = os.path.splitext(os.path.basename(name or ""))[0]
+    m = re.match(r"^\D*(\d+)", base)
+    return int(m.group(1)) if m else None
+
+
 def parse_package(files: list[dict]) -> dict:
     """解析上传的题目包，返回预览：试卷信息 + 每道小题（含答案、建议判分方式）。
 
@@ -995,6 +1007,8 @@ def parse_package(files: list[dict]) -> dict:
     stem_texts = []
     ans_texts = []
     names = []
+    py_answers = {}      # 题号 -> 参考答案程序源码
+    py_inputs = {}       # 题号 -> 标准输入（.in 文件）
 
     for f in files:
         name = (f.get("name") or "").strip()
@@ -1004,6 +1018,24 @@ def parse_package(files: list[dict]) -> dict:
         names.append(name)
         low = name.lower()
         text = qpack.decode_text(raw)
+
+        # 0) Python 参考答案程序：1.py / 2_求平均.py / 第3题.py …
+        if low.endswith(".py"):
+            no = _file_question_no(name)
+            if no is None:
+                raise DrillError(
+                    f"Python 参考答案文件「{name}」看不出题号，"
+                    "请改成 1.py、2_求平均.py 这种带题号的文件名")
+            py_answers[no] = text
+            continue
+        # 0b) Python 标准输入：1.in / 2_求平均.in
+        if low.endswith(".in"):
+            no = _file_question_no(name)
+            if no is None:
+                raise DrillError(
+                    f"标准输入文件「{name}」看不出题号，请改成 1.in、2_求平均.in")
+            py_inputs[no] = text
+            continue
 
         # 1) 参考答案最先判定：有 -- 1 / ---8 这类题号分隔（题干和数据脚本都不会这样写）
         if re.search(r"^\s*-{2,}\s*(?:第\s*)?\d+\s*(?:题)?\s*$", text, re.M):
@@ -1054,14 +1086,18 @@ def parse_package(files: list[dict]) -> dict:
     items = []
     for q in stem["questions"]:
         ans = answers.get(q["no"], "")
-        qtype = qpack.guess_type(q["text"], ans)
+        if q["no"] in py_answers:
+            # 这题是 Python 题：参考程序就是标准答案
+            qtype = "python"
+        else:
+            qtype = qpack.guess_type(q["text"], ans)
         # 建对象/改数据题一律用「整库状态」判分：学生答案和参考答案各在一个干净库里
         # 执行，再比较最终数据库状态（不会重复执行同一句 SQL 导致“已存在”）
         if qtype in ("sql_dml", "sql_ddl"):
             mode = "dbstate"
         else:
             mode = "result"
-        items.append({
+        item = {
             "no": q["no"],
             "text": q["text"],
             "note": q.get("note", ""),
@@ -1069,7 +1105,14 @@ def parse_package(files: list[dict]) -> dict:
             "kind": qtype,
             "judgeMode": mode,
             "hasAnswer": bool(ans.strip()),
-        })
+        }
+        if q["no"] in py_answers:
+            item["answer"] = py_answers[q["no"]]
+            item["pyCode"] = py_answers[q["no"]]
+            item["pyInput"] = py_inputs.get(q["no"], "")
+            item["hasAnswer"] = True
+            item["judgeMode"] = "output"
+        items.append(item)
 
     from .community import parse_script_tables
 
@@ -1087,6 +1130,7 @@ def parse_package(files: list[dict]) -> dict:
             "total": len(items),
             "withAnswer": sum(1 for x in items if x["hasAnswer"]),
             "select": sum(1 for x in items if x["kind"] == "sql_select"),
+            "python": sum(1 for x in items if x["kind"] == "python"),
             "dml": sum(1 for x in items if x["kind"] == "sql_dml"),
             "ddl": sum(1 for x in items if x["kind"] == "sql_ddl"),
         },
@@ -1105,12 +1149,16 @@ def create_from_package(account: dict, pkg: dict, publish: bool = True,
 
     created = []
     duplicates = []
+    warnings = []
     conn = root_conn(C.COMMUNITY_DB)
     try:
         with conn.cursor() as cur:
             paper_title = (pkg.get("title") or "未命名试卷")[:PAPER_TITLE_MAX]
+            # 这套题是 SQL 题还是 Python 题：看有没有 Python 参考答案程序
+            is_py_paper = any(x.get("kind") == "python" for x in questions)
+            course = "python" if is_py_paper else "sql"
             # 先建一张试卷卡片，再往里放题；重复导入落到同一张卡片
-            paper_id = _ensure_paper(cur, account, "sql", paper_title,
+            paper_id = _ensure_paper(cur, account, course, paper_title,
                                      pkg.get("description") or "", publish)
             # 只跟「同一张试卷」里的题比：不同试卷可以有同名小题，重复导入才跳过
             cur.execute("SELECT title FROM drills WHERE paper_id=%s", (paper_id,))
@@ -1123,29 +1171,63 @@ def create_from_package(account: dict, pkg: dict, publish: bool = True,
                 if title in existing:
                     duplicates.append({"no": q["no"], "title": title})
                     continue
-                # DDL / DML 用 state 判分：答案作为“校验语句”不合适时，改用查询校验
-                verify = q["answer"]
                 score = int(q.get("score") or SCORE_DEFAULT)
                 score = max(SCORE_MIN, min(SCORE_MAX, score))
-                cur.execute(f"""INSERT INTO drills
-                    (account_id, uploader, course, type, title, stem, setup_sql, verify_sql,
-                     starter_code, input_data, expected_output, options_json, answer_json, hint,
-                     judge_mode, test_cases, status, published_at, paper_id, score)
-                    VALUES (%s,%s,'sql','sql',%s,%s,%s,%s,'','','','[]','{{}}',%s,%s,'',
-                            %s, CASE WHEN %s=1 THEN NOW() ELSE NULL END,%s,%s)""",
-                    (account["id"], account["display"], title,
-                     (q.get("text") or "") + (("\n\n" + q["note"]) if q.get("note") else ""),
-                     data_sql, verify, q.get("note", ""), mode,
-                     1 if publish else 0, 1 if publish else 0, paper_id, score))
+                stem_text = (q.get("text") or "") + (("\n\n" + q["note"]) if q.get("note") else "")
+                if q.get("kind") == "python":
+                    # Python 题：参考程序就是标准答案，跑一遍拿到期望输出
+                    expected, py_err, py_why = "", "", ""
+                    py_input = q.get("pyInput") or ""
+                    try:
+                        r = _run_py_once(account, q.get("pyCode") or "", py_input)
+                        expected = r.get("out") or ""
+                        py_err = (r.get("err") or "").strip()
+                        py_why = r.get("why") or ""
+                    except Exception as e:   # 沙箱不可用也不该让整批导入失败
+                        py_err = str(e)
+                    # 期望输出是空的题没法判分：建成草稿（学生看不到），并提醒老师
+                    ready = bool(expected.strip()) and not py_err
+                    if py_err:
+                        warnings.append(
+                            f"第 {q['no']} 题的参考程序运行出错，已存为草稿，"
+                            f"请修好答案或手工填写期望输出：{py_err.splitlines()[-1][:120]}")
+                    elif not ready:
+                        tip = ("等待输入超时，可能缺少对应的标准输入文件"
+                               if py_why in ("idle", "timeout") else "参考程序没有输出")
+                        warnings.append(
+                            f"第 {q['no']} 题{tip}（放一个 {q['no']}.in 或手工填写期望输出），"
+                            f"已存为草稿")
+                    cur.execute(f"""INSERT INTO drills
+                        (account_id, uploader, course, type, title, stem, setup_sql, verify_sql,
+                         starter_code, input_data, expected_output, options_json, answer_json, hint,
+                         judge_mode, test_cases, status, published_at, paper_id, score)
+                        VALUES (%s,%s,'python','python',%s,%s,'','','',%s,%s,'[]','{{}}',%s,'output','',
+                                %s, CASE WHEN %s=1 THEN NOW() ELSE NULL END,%s,%s)""",
+                        (account["id"], account["display"], title, stem_text,
+                         py_input, expected, q.get("note", ""),
+                         1 if (publish and ready) else 0,
+                         1 if (publish and ready) else 0, paper_id, score))
+                else:
+                    # SQL 题：整库状态判分，答案作为「校验语句」不合适时改用查询校验
+                    verify = q["answer"]
+                    cur.execute(f"""INSERT INTO drills
+                        (account_id, uploader, course, type, title, stem, setup_sql, verify_sql,
+                         starter_code, input_data, expected_output, options_json, answer_json, hint,
+                         judge_mode, test_cases, status, published_at, paper_id, score)
+                        VALUES (%s,%s,'sql','sql',%s,%s,%s,%s,'','','','[]','{{}}',%s,%s,'',
+                                %s, CASE WHEN %s=1 THEN NOW() ELSE NULL END,%s,%s)""",
+                        (account["id"], account["display"], title, stem_text,
+                         data_sql, verify, q.get("note", ""), mode,
+                         1 if publish else 0, 1 if publish else 0, paper_id, score))
                 created.append({"id": cur.lastrowid, "no": q["no"], "title": title,
-                                "score": score})
+                                "score": score, "kind": q.get("kind") or "sql"})
                 existing.add(title)
             _sync_paper_status(cur, paper_id)
         conn.commit()
     finally:
         conn.close()
     return {"created": created, "duplicates": duplicates, "paperId": paper_id,
-            "paperTitle": paper_title,
+            "paperTitle": paper_title, "course": course, "warnings": warnings,
             "skipped": len(questions) - len(created) - len(duplicates)}
 
 

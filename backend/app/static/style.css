@@ -2164,3 +2164,61 @@ input[type="text"], input[type="password"], textarea, select, .CodeMirror,
   display: flex; align-items: center; justify-content: center;
   background: var(--bg);
 }
+
+/* ============ Python 题作答 ============ */
+.py-drill-pane { display: flex; flex-direction: column; }
+.py-drill-body {
+  flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center;
+  padding: 20px; overflow: auto;
+}
+.py-drill-card {
+  max-width: 520px; text-align: center;
+  display: flex; flex-direction: column; align-items: center; gap: 10px;
+  padding: 26px 24px; border: 1px solid var(--line); border-radius: 14px;
+  background: var(--panel);
+}
+.py-drill-ico {
+  width: 52px; height: 52px; border-radius: 14px;
+  background: var(--accent-weak); color: var(--accent);
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.py-drill-card h3 { margin: 0; font-size: 16px; }
+.py-drill-card p { margin: 0; font-size: 13px; line-height: 1.75; color: var(--muted); }
+.py-drill-act { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+.py-drill-result {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: center;
+  margin-top: 4px; padding: 8px 12px; border-radius: 8px;
+  background: var(--btn-bg); font-size: 12.5px; color: var(--muted);
+}
+.py-drill-result .badge.ok { color: var(--accent); border-color: var(--accent); background: var(--accent-weak); }
+.py-drill-result .badge.err { color: var(--err); border-color: var(--err); background: var(--err-weak); }
+
+/* Python 页顶部的「正在作答」条 */
+.py-drill-bar {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 8px 14px; background: var(--accent-weak);
+  border-bottom: 1px solid var(--line);
+}
+.py-drill-info { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.py-drill-tag {
+  flex: 0 0 auto; font-size: 11px; font-weight: 700; color: var(--accent);
+  border: 1px solid var(--accent); border-radius: 999px; padding: 0 8px;
+}
+.py-drill-title { font-size: 13px; font-weight: 600; color: var(--text); }
+.py-drill-stem {
+  flex: 1 1 240px; min-width: 0; font-size: 12px; color: var(--muted); line-height: 1.6;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.py-drill-file {
+  flex: 0 0 auto; font-size: 11px; color: var(--muted);
+  border: 1px solid var(--line-strong); border-radius: 999px; padding: 0 8px;
+}
+.py-drill-act { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+.py-drill-state { font-size: 12px; font-weight: 600; }
+.py-drill-state.ok { color: var(--accent); }
+.py-drill-state.err { color: var(--err); }
+@media (max-width: 919px) {
+  .py-drill-bar { padding: 8px 10px; }
+  .py-drill-stem { -webkit-line-clamp: 3; }
+  .py-drill-card { padding: 20px 16px; }
+}

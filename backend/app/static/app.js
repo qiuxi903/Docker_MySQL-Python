@@ -339,6 +339,9 @@ const App = {
       navMode: false,
       navLog: [],
       navLastQuery: "",
+      pyDrill: null,            // 正在 Python 编辑器里作答的题
+      pyDrillResult: null,
+      pyDrillBusy: false,
       drillOpenSeq: 0,
       drillResult: null,
       drillCode: "",
@@ -358,6 +361,12 @@ const App = {
         { value: "rows_only", label: "只比数据" },
         { value: "cell", label: "只比单值" },
         { value: "state", label: "校验指定查询" },
+      ],
+      pyJudgeOptions: [
+        { value: "output", label: "输出一致" },
+        { value: "contains", label: "输出包含" },
+        { value: "regex", label: "正则匹配" },
+        { value: "tests", label: "多组用例" },
       ],
       drillSandbox: { db: "", tables: [], loading: false },
       drillRunLog: [],
@@ -612,7 +621,8 @@ const App = {
   methods: {
     /* ---------- 基础 ---------- */
     kindLabel(kind) {
-      return { sql_select: "查询题", sql_dml: "修改/新增题", sql_ddl: "建对象题" }[kind] || kind;
+      return { sql_select: "查询题", sql_dml: "修改/新增题", sql_ddl: "建对象题",
+               python: "Python 题" }[kind] || kind;
     },
     toggleTheme() {
       this.theme = this.theme === "dark" ? "light" : "dark";
@@ -889,6 +899,77 @@ const App = {
     },
     onNavQuery(sql) {
       this.navLastQuery = String(sql || "");
+    },
+
+    /* ---------- Python 题：在完整的 Python 编辑器里作答 ---------- */
+    pyDrillFile(id) { return "题目_" + id + ".py"; },
+    async openPyDrill() {
+      const d = this.drillCurrent;
+      if (!d || d.type !== "python") return;
+      this.stashPyDrill();
+      this.pyDrill = d;
+      this.pyDrillResult = null;
+      this.drillResult = null;
+      this.drillRunLog = [];
+      this.switchView("py");
+      await this.$nextTick();
+      const name = this.pyDrillFile(d.id);
+      try {
+        // 每题一个专属文件：换题不串代码，也不动学生自己的文件
+        if (!this.pyFiles.some(f => f.name === name)) {
+          await this.api(`/api/pyfiles/${encodeURIComponent(name)}`,
+                         { method: "PUT", body: { content: "" } });
+          await this.refreshPyList();
+        }
+        if (this.$refs.cmPyRef && this.pyCurrent !== name) await this.openPyFile(name);
+        if (!this.pyOpenFiles.includes(name)) this.pyOpenFiles.push(name);
+      } catch (e) { this.toast(e.message); }
+      // 文件被清空或重建时，用浏览器里的本题草稿兜底
+      const ed = this.$refs.cmPyRef;
+      const draft = this.loadDrillDraft(d.id);
+      if (ed && this.pyCurrent === name && !ed.getValue().trim()
+          && draft && typeof draft.code === "string" && draft.code) {
+        ed.setValue(draft.code);
+        this.pyDirty.add(name);
+      }
+    },
+    stashPyDrill() {
+      const d = this.pyDrill;
+      const ed = this.$refs.cmPyRef;
+      if (!d || !ed) return;
+      try {
+        localStorage.setItem(this._drillDraftKey(d.id), JSON.stringify({ code: ed.getValue() }));
+      } catch (e) { /* 隐私模式下忽略 */ }
+    },
+    closePyDrill() {
+      this.stashPyDrill();
+      this.pyDrill = null;
+      this.pyDrillResult = null;
+      // 直接切回练习页并保留当前题目，不经过 switchView（它会回到清单）
+      this.view = "drills";
+      this.loadDrills(false);
+    },
+    async submitPyDrill() {
+      const d = this.pyDrill;
+      if (!d) return;
+      const code = (this.$refs.cmPyRef ? this.$refs.cmPyRef.getValue() : "").trim();
+      if (!code) { this.toast("先写点 Python 代码"); return; }
+      this.stashPyDrill();
+      this.pyDrillBusy = true;
+      try {
+        await this.flushPySave();
+        const r = await this.api(`/api/drills/${d.id}/submit`,
+                                { method: "POST", body: { answer_text: code } });
+        this.pyDrillResult = r;
+        this.drillResult = r;
+        this.toast(r.passed
+          ? `通过！${r.score != null ? r.score + "/" + r.maxScore + " 分" : ""}`
+          : (r.reason || "没通过，再想想"));
+        await this.loadDrills();
+        const fresh = this.drillList.find(x => x.id === d.id);
+        if (fresh) this.drillCurrent = Object.assign({}, this.drillCurrent, fresh);
+      } catch (e) { this.toast(e.message); }
+      finally { this.pyDrillBusy = false; }
     },
 
     async startDrill(d) {
