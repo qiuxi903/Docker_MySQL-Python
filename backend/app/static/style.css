@@ -2164,3 +2164,82 @@ input[type="text"], input[type="password"], textarea, select, .CodeMirror,
   display: flex; align-items: center; justify-content: center;
   background: var(--bg);
 }
+
+/* ============ 试卷规则 / 设置 / 本套统计 ============ */
+.paper-rules { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
+.drill-tries {
+  display: inline-flex; align-items: center; font-size: 11px; color: var(--muted);
+  border: 1px solid var(--line-strong); border-radius: 999px; padding: 1px 8px;
+  white-space: nowrap;
+}
+.drill-tries.out { color: var(--err); border-color: var(--err); background: var(--err-weak); }
+
+.mini-field { display: flex; flex-direction: column; gap: 6px; margin: 12px 0; font-size: 13px; color: var(--muted); }
+.mini-field > span { color: var(--text); font-weight: 600; }
+.mini-field input {
+  width: 100%; height: 38px; padding: 0 10px; border: 1px solid var(--line-strong);
+  border-radius: 8px; background: var(--panel); color: var(--text); font: inherit; font-size: 15px;
+}
+.mini-field em { font-style: normal; font-size: 11.5px; color: var(--muted); line-height: 1.5; }
+.mini-check { display: flex; align-items: center; gap: 8px; font-size: 13.5px; margin: 10px 0; cursor: pointer; }
+.mini-check input { width: 17px; height: 17px; accent-color: var(--accent); }
+.mini-note {
+  margin: 6px 0 0; padding: 8px 10px; border-radius: 8px; background: var(--btn-bg);
+  color: var(--muted); font-size: 12px; line-height: 1.6;
+}
+
+.paper-stats-page { max-width: 1180px; margin: 0 auto; padding: 0 16px 40px; }
+.paper-stats-body { display: flex; flex-direction: column; gap: 14px; }
+.stat-hero {
+  display: flex; align-items: center; gap: 22px; flex-wrap: wrap;
+  padding: 18px 20px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel);
+}
+.stat-hero-score { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.stat-hero-num { font-size: 38px; font-weight: 700; color: var(--accent); line-height: 1; }
+.stat-hero-den { font-size: 14px; color: var(--muted); }
+.stat-hero-tip { flex-basis: 100%; font-size: 11.5px; color: var(--muted); }
+.stat-kpis { display: flex; gap: 10px; flex-wrap: wrap; }
+.stat-kpi {
+  min-width: 84px; padding: 8px 12px; border-radius: 10px; text-align: center;
+  background: var(--panel-2); border: 1px solid var(--line);
+}
+.stat-kpi b { display: block; font-size: 18px; }
+.stat-kpi span { font-size: 11.5px; color: var(--muted); }
+.stat-list { display: flex; flex-direction: column; gap: 10px; }
+.stat-q { border: 1px solid var(--line); border-radius: 12px; background: var(--panel); padding: 14px 16px; }
+.stat-q.done { box-shadow: inset 3px 0 0 var(--accent); }
+.stat-q-h { display: flex; align-items: center; gap: 10px; }
+.stat-q-no { font-family: var(--mono, ui-monospace, monospace); font-size: 12px; color: var(--muted); }
+.stat-q-title {
+  font-size: 14px; font-weight: 600; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.stat-q-score { font-size: 13px; color: var(--muted); white-space: nowrap; }
+.stat-q-score b { color: var(--text); font-size: 16px; }
+.stat-q-meta { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 6px; font-size: 11.5px; color: var(--muted); }
+.stat-q-detail { margin-top: 10px; border-top: 1px dashed var(--line); padding-top: 10px; }
+.stat-q-detail summary { cursor: pointer; font-size: 12.5px; color: var(--accent); }
+.stat-ans { margin-top: 10px; }
+.stat-ans > b { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+.stat-ans .drill-out { margin: 0; max-height: 220px; overflow: auto; }
+.stat-case { margin: 8px 0; }
+.stat-case-l { font-size: 11.5px; color: var(--muted); }
+.stat-noref { margin-top: 10px; font-size: 12px; color: var(--muted); }
+.stat-hist { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
+.stat-hist-item {
+  font-size: 11px; padding: 2px 8px; border-radius: 999px;
+  background: var(--btn-bg); color: var(--muted);
+}
+.stat-hist-item.ok { color: var(--accent); background: var(--accent-weak); }
+.stat-q-empty { margin-top: 8px; font-size: 12px; color: var(--muted); }
+.stat-note { margin: 2px 0 0; font-size: 12px; color: var(--muted); }
+
+@media (max-width: 640px) {
+  .paper-stats-page { padding: 0 10px 30px; }
+  .stat-hero { gap: 14px; padding: 14px; }
+  .stat-hero-num { font-size: 32px; }
+  .stat-kpi { flex: 1 1 40%; }
+  .stat-q { padding: 12px; }
+  .stat-q-h { flex-wrap: wrap; }
+  .stat-q-title { white-space: normal; }
+}

@@ -27,7 +27,7 @@ html[data-theme="light"] body { background: #f6f8fa; }
 <link rel="stylesheet" href="/vendor/codemirror/codemirror.css">
 <link rel="stylesheet" href="/vendor/codemirror/addon/hint/show-hint.css">
 <link rel="stylesheet" href="/fonts/misans/misans.css">
-<link rel="stylesheet" href="/style.css?v=140">
+<link rel="stylesheet" href="/style.css?v=141">
   <link rel="stylesheet" href="/navicat.css?v=10">
 </head>
 <body>
@@ -359,9 +359,13 @@ html[data-theme="light"] body { background: #f6f8fa; }
             <span class="auth-title">{{ qTitle(paperCurrent.title) }}</span>
             <span class="spacer"></span>
             <button v-if="paperCurrent.mine && user && user.canPublish" class="btn mini ghost"
+                    @click="openPaperSettings(paperCurrent)"><e-icon name="shield" :size="12"></e-icon> 设置</button>
+            <button v-if="paperCurrent.mine && user && user.canPublish" class="btn mini ghost"
                     @click="renamePaper(paperCurrent)"><e-icon name="file-text" :size="12"></e-icon> 改名</button>
             <button v-if="paperCurrent.mine && user && user.canPublish" class="btn mini ghost"
                     @click="deletePaper(paperCurrent)"><e-icon name="trash" :size="12"></e-icon> 删除整套</button>
+            <button v-if="paperCurrent.triedCount" class="btn mini ghost"
+                    @click="openPaperStats(paperCurrent)"><e-icon name="target" :size="12"></e-icon> 统计</button>
             <div class="paper-score-box">
               <div class="ps-main"><b>{{ paperCurrent.myScore }}</b><span>/ {{ paperCurrent.totalScore }} 分</span></div>
               <div class="ps-sub">已通过 {{ paperCurrent.doneCount }}/{{ paperCurrent.questionCount }} 题</div>
@@ -370,6 +374,12 @@ html[data-theme="light"] body { background: #f6f8fa; }
 
           <div class="paper-detail-body">
             <p class="paper-desc" v-if="paperCurrent.description">{{ paperCurrent.description }}</p>
+            <div class="paper-rules">
+              <span class="badge tiny">{{ paperCurrent.maxAttempts ? '每题可交 ' + paperCurrent.maxAttempts + ' 次' : '不限交卷次数' }}</span>
+              <span class="badge tiny ok" v-if="paperCurrent.showAnswer">交卷后可见答案</span>
+              <span class="badge tiny" v-else>交卷后不显示答案</span>
+              <span class="badge tiny" v-if="paperCurrent.triedCount">已作答 {{ paperCurrent.triedCount }}/{{ paperCurrent.questionCount }} 题</span>
+            </div>
 
             <div class="paper-q-list">
               <button v-for="q in paperCurrent.questions" :key="q.id" class="paper-q"
@@ -394,7 +404,112 @@ html[data-theme="light"] body { background: #f6f8fa; }
           </div>
         </div>
 
-        <!-- ===== 3) 做题（与主页工作台完全一致） ===== -->
+        <!-- ===== 3) 本套统计：交卷后的作答详情与分数 ===== -->
+        <div v-else-if="drillView==='stats' && paperStats" class="paper-stats-page">
+          <header class="paper-top">
+            <button class="btn mini ghost" @click="backFromStats">
+              <e-icon name="chevron-right" :size="13" style="transform:rotate(180deg);display:inline-block"></e-icon>
+              返回{{ statsBack === 'do' ? '本题' : (paperCurrent ? '试卷' : '清单') }}
+            </button>
+            <span class="auth-title">本套统计 · {{ qTitle(paperStats.title) }}</span>
+            <span class="spacer"></span>
+            <span class="badge tiny">{{ paperStats.maxAttempts ? '每题可交 ' + paperStats.maxAttempts + ' 次' : '不限次数' }}</span>
+            <span class="badge tiny ok" v-if="paperStats.showAnswer">交卷后可见答案</span>
+            <span class="badge tiny" v-else>交卷后不显示答案</span>
+            <div class="paper-score-box">
+              <div class="ps-main"><b>{{ paperStats.myScore }}</b><span>/ {{ paperStats.totalScore }} 分</span></div>
+              <div class="ps-sub">已通过 {{ paperStats.doneCount }}/{{ paperStats.questionCount }} 题</div>
+            </div>
+          </header>
+
+          <div class="paper-stats-body">
+            <div class="stat-hero">
+              <div class="stat-hero-score">
+                <span class="stat-hero-num">{{ paperStats.myScore }}</span>
+                <span class="stat-hero-den">/ {{ paperStats.totalScore }} 分</span>
+                <span class="stat-hero-tip">本套得分</span>
+              </div>
+              <div class="stat-kpis">
+                <div class="stat-kpi"><b>{{ paperStats.doneCount }}</b><span>已通过</span></div>
+                <div class="stat-kpi"><b>{{ paperStats.triedCount }}</b><span>已作答</span></div>
+                <div class="stat-kpi"><b>{{ paperStats.questionCount - paperStats.triedCount }}</b><span>未作答</span></div>
+                <div class="stat-kpi"><b>{{ paperStats.maxAttempts || '不限' }}</b><span>每题可交次数</span></div>
+              </div>
+            </div>
+
+            <div class="stat-list">
+              <article v-for="q in paperStats.questions" :key="q.id" class="stat-q"
+                       :class="{done: q.passed}">
+                <header class="stat-q-h">
+                  <span class="stat-q-no">{{ String(q.no).padStart(2, '0') }}</span>
+                  <span class="stat-q-title">{{ qTitle(q.title) }}</span>
+                  <span class="badge tiny ok" v-if="q.passed">已通过</span>
+                  <span class="badge tiny err" v-else-if="q.attempts">未通过</span>
+                  <span class="badge tiny" v-else>未作答</span>
+                  <span class="spacer"></span>
+                  <span class="stat-q-score"><b>{{ q.passed ? q.score : 0 }}</b>/{{ q.score }} 分</span>
+                </header>
+                <div class="stat-q-meta">
+                  <span>{{ q.typeLabel }}</span>
+                  <span>交卷 {{ q.attempts }} 次<template v-if="paperStats.maxAttempts">（上限 {{ paperStats.maxAttempts }} 次）</template></span>
+                  <span v-if="q.lastAt">最近 {{ q.lastAt.slice(0, 16) }}</span>
+                </div>
+
+                <details class="stat-q-detail" v-if="q.attempts">
+                  <summary>查看作答详情<template v-if="q.ref">与参考答案</template></summary>
+                  <div class="stat-ans">
+                    <b>我的答案</b>
+                    <pre class="drill-out">{{ fmtAnswer(q.lastAnswer) }}</pre>
+                  </div>
+                  <div class="stat-ans" v-if="q.ref && q.ref.sql">
+                    <b>参考答案（SQL）</b>
+                    <pre class="drill-out">{{ q.ref.sql }}</pre>
+                  </div>
+                  <div class="stat-ans" v-if="q.ref && q.ref.output">
+                    <b>期望输出</b>
+                    <pre class="drill-out">{{ q.ref.output }}</pre>
+                  </div>
+                  <div class="stat-ans" v-if="q.ref && q.ref.cases && q.ref.cases.length">
+                    <b>测试用例</b>
+                    <div v-for="(c, ci) in q.ref.cases" :key="ci" class="stat-case">
+                      <span class="stat-case-l">输入</span>
+                      <pre class="drill-out">{{ c.input || '（无）' }}</pre>
+                      <span class="stat-case-l">期望</span>
+                      <div class="drill-out">{{ c.expected }}</div>
+                    </div>
+                  </div>
+                  <div class="stat-ans" v-if="q.ref && q.ref.values && q.ref.values.length">
+                    <b>正确答案</b>
+                    <pre class="drill-out">{{ q.ref.values.join(' / ') }}</pre>
+                  </div>
+                  <div class="stat-ans" v-if="q.ref && q.ref.keys && q.ref.keys.length">
+                    <b>正确选项</b>
+                    <pre class="drill-out">{{ q.ref.keys.join('、') }}</pre>
+                  </div>
+                  <div class="stat-ans" v-if="q.ref && q.ref.key">
+                    <b>正确答案</b>
+                    <pre class="drill-out">{{ q.ref.key }}</pre>
+                  </div>
+                  <div class="stat-noref" v-if="!q.ref && !paperStats.showAnswer">
+                    老师设置为交卷后不显示参考答案。
+                  </div>
+                  <div class="stat-hist" v-if="q.history && q.history.length">
+                    <span v-for="(h, hi) in q.history" :key="hi" class="stat-hist-item"
+                          :class="{ok: h.passed}">
+                      第 {{ hi + 1 }} 次 · {{ h.passed ? '通过' : '未通过' }} · {{ h.at.slice(5, 16) }}
+                    </span>
+                  </div>
+                </details>
+                <div class="stat-q-empty" v-else>还没有交过卷。</div>
+              </article>
+            </div>
+            <p class="stat-note" v-if="!paperStats.showAnswer">
+              本套试卷设置为交卷后不显示参考答案，这里只展示你的作答和分数。
+            </p>
+          </div>
+        </div>
+
+        <!-- ===== 4) 做题（与主页工作台完全一致） ===== -->
         <div v-else class="ws drills-ws" :class="{ 'nav-mode': navMode }">
           <div class="drawer-mask m-only" v-show="drawer==='drills'" @click="drawer=''"></div>
 
@@ -483,6 +598,10 @@ html[data-theme="light"] body { background: #f6f8fa; }
                   <span class="panel-title">{{ qTitle(drillCurrent.title) }}</span>
                   <span class="drill-pts-badge">{{ drillCurrent.score }} 分</span>
                   <span v-if="drillCurrent.passed" class="drill-passed"><e-icon name="check" :size="12"></e-icon> 已通过</span>
+                  <span v-if="drillTriesLeft !== null && !drillCurrent.mine"
+                        class="drill-tries" :class="{out: drillOutOfTries}">
+                    {{ drillOutOfTries ? '次数已用完' : '剩余 ' + drillTriesLeft + ' 次' }}
+                  </span>
                   <span class="spacer"></span>
                   <button v-if="drillCurrent.setupSql" class="btn mini ghost" @click="drillShowSetup=!drillShowSetup">
                     <e-icon name="database" :size="12"></e-icon> <span class="m-hide">{{ drillShowSetup ? '隐藏数据' : '题目数据' }}</span>
@@ -494,7 +613,7 @@ html[data-theme="light"] body { background: #f6f8fa; }
                     <button :class="{on: navMode}" @click="setNavMode(true)">Navicat</button>
                     <button :class="{on: !navMode}" @click="setNavMode(false)">SQL</button>
                   </span>
-                  <button class="btn run run-btn" :disabled="drillBusy" @click="submitDrill">
+                  <button class="btn run run-btn" :disabled="drillBusy || drillOutOfTries" @click="submitDrill">
                     <e-icon name="target" :size="13"></e-icon> 提交判分
                   </button>
                 </div>
@@ -528,6 +647,10 @@ html[data-theme="light"] body { background: #f6f8fa; }
                   <span class="panel-title">{{ qTitle(drillCurrent.title) }}</span>
                   <span class="drill-pts-badge">{{ drillCurrent.score }} 分</span>
                   <span v-if="drillCurrent.passed" class="drill-passed"><e-icon name="check" :size="12"></e-icon> 已通过</span>
+                  <span v-if="drillTriesLeft !== null && !drillCurrent.mine"
+                        class="drill-tries" :class="{out: drillOutOfTries}">
+                    {{ drillOutOfTries ? '次数已用完' : '剩余 ' + drillTriesLeft + ' 次' }}
+                  </span>
                   <span class="spacer"></span>
                   <span class="mode-switch" v-if="drillCurrent.type==='sql'">
                     <button :class="{on: navMode}" @click="setNavMode(true)">Navicat</button>
@@ -545,7 +668,7 @@ html[data-theme="light"] body { background: #f6f8fa; }
                           (drillCurrent.type==='sql' && !drillSandbox.db)" @click="runDrillOnly">
                     <e-icon name="play" :size="13"></e-icon> 运行
                   </button>
-                  <button class="btn run run-btn" :disabled="drillBusy" @click="submitDrill">
+                  <button class="btn run run-btn" :disabled="drillBusy || drillOutOfTries" @click="submitDrill">
                     <e-icon name="target" :size="13"></e-icon> 提交判分 <span class="kbd">Ctrl+↵</span>
                   </button>
                 </div>
@@ -658,6 +781,14 @@ html[data-theme="light"] body { background: #f6f8fa; }
                       <span class="dsl-item" v-if="drillResult.paper">
                         已通过 {{ drillResult.paper.doneCount }}/{{ drillResult.paper.questionCount }} 题
                       </span>
+                      <span class="dsl-item" v-if="drillResult.paper && drillResult.paper.showAnswer === false">
+                        交卷后不显示参考答案
+                      </span>
+                      <span class="spacer"></span>
+                      <button v-if="drillCurrent && drillCurrent.paperId" class="btn mini ghost"
+                              @click="openPaperStats()">
+                        <e-icon name="target" :size="12"></e-icon> 查看本套统计
+                      </button>
                     </div>
                     <template v-if="drillResult.kind==='sql' && drillResult.student">
                       <div class="drill-cmp">
@@ -1928,6 +2059,30 @@ INSERT INTO course VALUES (1,'数学');</pre>
     </div>
   </dialog>
 
+  <!-- ================= 试卷设置（出卷人） ================= -->
+  <dialog ref="paperSetDlg" class="mini-dlg paper-set-dlg"
+          @cancel.prevent="closePaperSettings" @click.self="closePaperSettings">
+    <div class="mini-title">试卷设置</div>
+    <p class="mini-text" v-if="paperCurrent">{{ qTitle(paperCurrent.title) }}</p>
+    <label class="mini-field">
+      <span>每题可交卷次数</span>
+      <input type="number" min="0" max="99" step="1" v-model.number="paperForm.maxAttempts">
+      <em>0 = 不限次数；填 1 表示每道题只能交一次</em>
+    </label>
+    <label class="mini-check">
+      <input type="checkbox" v-model="paperForm.showAnswer">
+      <span>交卷后允许学生查看答案</span>
+    </label>
+    <p class="mini-note" v-if="!paperForm.showAnswer">
+      关闭后，判分只显示通过与否和分数，不显示参考 SQL、期望输出或正确选项；统计页也只显示学生自己的作答。
+    </p>
+    <div class="mini-foot">
+      <span class="spacer"></span>
+      <button class="btn soft" @click="closePaperSettings">取消</button>
+      <button class="btn primary" :disabled="paperForm.busy" @click="savePaperSettings">保存设置</button>
+    </div>
+  </dialog>
+
   <!-- ================= 自制确认弹窗（原生 dialog） ================= -->
   <dialog ref="confirmDlg" class="mini-dlg" @cancel.prevent="confirmCancel" @click.self="confirmCancel">
     <div class="mini-title">{{ confirmBox.title }}</div>
@@ -2713,6 +2868,6 @@ INSERT INTO course VALUES (1,'数学');</pre>
 </script>
 
 <script src="/navicat.js?v=1"></script>
-<script src="/app.js?v=135"></script>
+<script src="/app.js?v=137"></script>
 </body>
 </html>

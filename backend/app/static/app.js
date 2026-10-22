@@ -327,6 +327,10 @@ const App = {
       drillView: "list",            // list 清单 / paper 试卷详情 / do 做题
       papers: [],
       paperCurrent: null,
+      paperForm: { id: 0, maxAttempts: 0, showAnswer: true, busy: false },
+      paperStats: null,
+      paperStatsBusy: false,
+      statsBack: "paper",
       papersBusy: false,
       drillTabs: [
         { value: "sql", label: "MySQL", icon: "database" },
@@ -516,6 +520,16 @@ const App = {
     drillCodeType() {
       const t = this.drillCurrent && this.drillCurrent.type;
       return t === "sql" || t === "python";
+    },
+    // 本套试卷给每道题限制的交卷次数（0=不限）；出卷人和管理员不限制
+    drillTriesLeft() {
+      const d = this.drillCurrent;
+      if (!d || !d.paperMaxAttempts) return null;
+      if (d.mine || (this.user && this.user.role === "admin")) return null;
+      return Math.max(0, d.paperMaxAttempts - (d.attempts || 0));
+    },
+    drillOutOfTries() {
+      return this.drillTriesLeft === 0;
     },
     draftCount() { return this.myQuestions.filter(q => !q.status).length; },
     // 题库广场：题目在前、旧资源条目在后，放进同一个网格里铺开（避免两排各自留空）
@@ -876,6 +890,73 @@ const App = {
       this.drillResult = null;
       this.drillDirty = false;
       this.refreshPaper();
+    },
+
+    /* ---------- 试卷设置（出卷人） ---------- */
+    openPaperSettings(p) {
+      if (!p || !p.mine || !this.user || !this.user.canPublish) return;
+      this.paperForm = { id: p.id, maxAttempts: p.maxAttempts || 0,
+                         showAnswer: p.showAnswer !== false, busy: false };
+      const d = this.$refs.paperSetDlg;
+      if (d && !d.open) { try { d.showModal(); } catch (e) { d.setAttribute("open", ""); } }
+    },
+    closePaperSettings() {
+      const d = this.$refs.paperSetDlg;
+      if (d && d.open) d.close();
+    },
+    async savePaperSettings() {
+      const f = this.paperForm;
+      if (!f.id || f.busy) return;
+      f.maxAttempts = Math.max(0, Math.min(99, parseInt(f.maxAttempts, 10) || 0));
+      f.busy = true;
+      try {
+        const r = await this.api(`/api/papers/${f.id}/settings`, {
+          method: "POST",
+          body: { maxAttempts: f.maxAttempts, showAnswer: !!f.showAnswer },
+        });
+        if (this.paperCurrent && this.paperCurrent.id === f.id) {
+          this.paperCurrent.maxAttempts = r.maxAttempts;
+          this.paperCurrent.showAnswer = r.showAnswer;
+        }
+        const p = this.papers.find(x => x.id === f.id);
+        if (p) { p.maxAttempts = r.maxAttempts; p.showAnswer = r.showAnswer; }
+        this.closePaperSettings();
+        this.toast("试卷设置已保存");
+      } catch (e) { this.toast(e.message); }
+      finally { f.busy = false; }
+    },
+
+    /* ---------- 本套统计（交卷后的作答详情与分数） ---------- */
+    async openPaperStats(p) {
+      const pid = (p && p.id) || (this.paperCurrent && this.paperCurrent.id) ||
+                  (this.drillCurrent && this.drillCurrent.paperId) || 0;
+      if (!pid || this.paperStatsBusy) return;
+      this.statsBack = this.drillView === "do" ? "do" : (this.paperCurrent ? "paper" : "list");
+      this.paperStatsBusy = true;
+      try {
+        this.paperStats = await this.api(`/api/papers/${pid}/stats`);
+        this.drillView = "stats";
+        window.scrollTo(0, 0);
+      } catch (e) { this.toast(e.message); }
+      finally { this.paperStatsBusy = false; }
+    },
+    backFromStats() {
+      if (this.statsBack === "do" && this.drillCurrent) {
+        this.drillView = "do";
+        return;
+      }
+      if (this.paperCurrent) {
+        this.drillView = "paper";
+        this.refreshPaper();
+      } else {
+        this.backToPapers();
+      }
+    },
+    fmtAnswer(a) {
+      if (a === null || a === undefined || a === "") return "（未作答）";
+      if (Array.isArray(a)) return a.join("、");
+      if (typeof a === "object") return JSON.stringify(a);
+      return String(a);
     },
 
     async deletePaper(p) {
@@ -1578,6 +1659,10 @@ const App = {
     async submitDrill() {
       const d = this.drillCurrent;
       if (!d || this.drillBusy) return;
+      if (this.drillOutOfTries) {
+        this.toast("本套试卷给这道题的答题次数已经用完");
+        return;
+      }
       let answer = "";
       if (d.type === "sql" && this.navMode) {
         // Navicat 模式：查询题交「最后一次运行的 SELECT」，

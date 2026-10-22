@@ -822,6 +822,48 @@ if mine:
     code, r = call(f"/api/papers/{card['id']}", token=tok_md)
     check("试卷：已发布学生可看", code == 200, str(r)[:100])
 
+    # ---- 试卷设置：每题可交卷次数 + 交卷后是否显示答案 ----
+    _, d0 = call(f"/api/drills/{qp_ids[0]}", token=tok_md)
+    used = int(d0.get("attempts") or 0)
+    check("试卷：默认不限次数、显示答案",
+          pd.get("maxAttempts") == 0 and pd.get("showAnswer") is True, str(pd)[:160])
+    code, r = call(f"/api/papers/{card['id']}/settings",
+                   {"maxAttempts": used + 1, "showAnswer": False}, token=tok_ad2)
+    check("试卷：出卷人可改设置",
+          code == 200 and r.get("maxAttempts") == used + 1 and r.get("showAnswer") is False,
+          str(r)[:120])
+    code, r = call(f"/api/papers/{card['id']}/settings",
+                   {"maxAttempts": 1, "showAnswer": False}, token=tok_md)
+    check("试卷：学生不能改设置", code == 400, f"{code} {str(r)[:100]}")
+    _, d0 = call(f"/api/drills/{qp_ids[0]}", token=tok_md)
+    check("试卷：设置下发到做题页",
+          d0.get("paperMaxAttempts") == used + 1 and d0.get("paperShowAnswer") is False,
+          str(d0)[:200])
+    code, r = call(f"/api/drills/{qp_ids[0]}/submit",
+                   {"answer_text": answers["-- 1"]}, token=tok_md)
+    check("试卷：关闭答案后判分不返回标准答案",
+          r.get("passed") is True and "expected" not in r and "cases" not in r, str(r)[:160])
+    code, r = call(f"/api/drills/{qp_ids[0]}/submit",
+                   {"answer_text": answers["-- 1"]}, token=tok_md)
+    check("试卷：超过交卷次数被拦",
+          code == 400 and "最多可以交卷" in str(r), f"{code} {str(r)[:120]}")
+    _, stats = call(f"/api/papers/{card['id']}/stats", token=tok_md)
+    stq = (stats.get("questions") or [{}])[0]
+    check("统计：交卷次数与我的答案",
+          stq.get("attempts") == used + 1 and stq.get("lastAnswer") == answers["-- 1"],
+          str(stq)[:200])
+    check("统计：关闭答案时不显示参考答案",
+          stq.get("ref") is None and stats.get("showAnswer") is False, str(stq)[:160])
+    call(f"/api/papers/{card['id']}/settings",
+         {"maxAttempts": 0, "showAnswer": True}, token=tok_ad2)
+    _, stats = call(f"/api/papers/{card['id']}/stats", token=tok_md)
+    stq = (stats.get("questions") or [{}])[0]
+    check("统计：允许后可看参考答案",
+          bool((stq.get("ref") or {}).get("sql")), str(stq.get("ref"))[:160])
+    check("统计：本套汇总分数",
+          stats.get("myScore") == 30 and stats.get("totalScore") == 30,
+          str({k: stats.get(k) for k in ("myScore", "totalScore")}))
+
 # 提交判分返回分值
 code, r = call(f"/api/drills/{qp_ids[0]}/submit",
                {"answer_text": answers["-- 1"]}, token=tok_md)

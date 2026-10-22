@@ -1051,11 +1051,34 @@ class PaperRenameBody(BaseModel):
     title: str = ""
 
 
+class PaperSettingsBody(BaseModel):
+    maxAttempts: int = 0
+    showAnswer: bool = True
+
+
 @app.post("/api/papers/{pid}/rename")
 def api_paper_rename(pid: int, b: PaperRenameBody, request: Request):
     a = acct(sess(request))
     try:
         return drills.rename_paper(a, pid, b.title)
+    except DrillError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/papers/{pid}/settings")
+def api_paper_settings(pid: int, b: PaperSettingsBody, request: Request):
+    a = acct(sess(request))
+    try:
+        return drills.update_paper_settings(a, pid, b.maxAttempts, b.showAnswer)
+    except DrillError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.get("/api/papers/{pid}/stats")
+def api_paper_stats(pid: int, request: Request):
+    a = acct(sess(request))
+    try:
+        return drills.paper_stats(a, pid)
     except DrillError as e:
         raise HTTPException(400, str(e))
 
