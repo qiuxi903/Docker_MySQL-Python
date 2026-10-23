@@ -124,6 +124,7 @@ class CodeBody(BaseModel):
     code: str
     db: str = ""
     filename: str = ""
+    projectId: int = 0
 
 
 class ShareBody(BaseModel):
@@ -477,6 +478,7 @@ def api_community_import(b: CommunityImportBody, request: Request):
 
 class CommunityOpenBody(BaseModel):
     id: int
+    projectId: int = 0
 
 
 @app.get("/api/community/{item_id}/detail")
@@ -502,25 +504,73 @@ def api_community_open(b: CommunityOpenBody, request: Request):
     a = acct(sess(request))
     try:
         filename, code = community.get_py_code(b.id)
-        final = sessions.pyfiles_unique_name(a["id"], filename)
-        sessions.pyfiles_save(a["id"], final, code)
-    except CommunityError as e:
+        pid = sessions.resolve_project(a["id"], b.projectId)
+        final = sessions.pyfiles_unique_name(a["id"], filename, None, pid)
+        sessions.pyfiles_save(a["id"], final, code, project_id=pid)
+    except (CommunityError, AuthError) as e:
         raise HTTPException(400, str(e))
-    return {"filename": final, "code": code}
+    return {"filename": final, "code": code, "projectId": pid}
 
 
 # ---------- Python 多文件 ----------
 
-@app.get("/api/pyfiles")
-def api_pyfiles(request: Request):
+class PyProjectBody(BaseModel):
+    name: str = ""
+
+
+@app.get("/api/pyprojects")
+def api_pyprojects(request: Request):
     a = acct(sess(request))
-    return {"files": sessions.pyfiles_list(a["id"])}
+    try:
+        return {"projects": sessions.pyprojects_list(a["id"])}
+    except AuthError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/pyprojects")
+def api_pyproject_create(b: PyProjectBody, request: Request):
+    a = acct(sess(request))
+    try:
+        return sessions.pyprojects_create(a["id"], b.name)
+    except AuthError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/pyprojects/{pid}/rename")
+def api_pyproject_rename(pid: int, b: PyProjectBody, request: Request):
+    a = acct(sess(request))
+    try:
+        return sessions.pyprojects_rename(a["id"], pid, b.name)
+    except AuthError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.delete("/api/pyprojects/{pid}")
+def api_pyproject_delete(pid: int, request: Request):
+    a = acct(sess(request))
+    try:
+        return sessions.pyprojects_delete(a["id"], pid)
+    except AuthError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.get("/api/pyfiles")
+def api_pyfiles(request: Request, projectId: int = 0):
+    a = acct(sess(request))
+    try:
+        return {"files": sessions.pyfiles_list(a["id"], projectId)}
+    except AuthError as e:
+        raise HTTPException(400, str(e))
 
 
 @app.post("/api/pyfiles/upload")
-async def api_pyfiles_upload(request: Request, files: list[UploadFile] = File(...)):
+async def api_pyfiles_upload(request: Request, files: list[UploadFile] = File(...),
+                             projectId: int = Form(0)):
     a = acct(sess(request))
-    current = sessions.pyfiles_list(a["id"])
+    try:
+        current = sessions.pyfiles_list(a["id"], projectId)
+    except AuthError as e:
+        raise HTTPException(400, str(e))
     if len(current) + len(files) > sessions.PYFILE_MAX_COUNT:
         raise HTTPException(400, f"文件数量超过上限（{sessions.PYFILE_MAX_COUNT} 个）")
 
@@ -542,21 +592,24 @@ async def api_pyfiles_upload(request: Request, files: list[UploadFile] = File(..
     saved = []
     existing = {f["name"].casefold() for f in current}
     for name, content in uploads:
-        final = sessions.pyfiles_unique_name(a["id"], name, existing)
+        final = sessions.pyfiles_unique_name(a["id"], name, existing, projectId)
         # 上传的文件是临时文件：刷新页面或退出登录时自动删除
-        sessions.pyfiles_save(a["id"], final, content, uploaded=True)
+        sessions.pyfiles_save(a["id"], final, content, uploaded=True, project_id=projectId)
         existing.add(final.casefold())
         saved.append({"name": final, "size": len(content.encode("utf-8"))})
     return {"files": saved}
 
 
 @app.get("/api/pyfiles/{name}")
-def api_pyfile_get(name: str, request: Request):
+def api_pyfile_get(name: str, request: Request, projectId: int = 0):
     a = acct(sess(request))
     name = sessions.normalize_pyfile_name(name)
     if not name:
         raise HTTPException(400, "文件名不合法")
-    f = sessions.pyfiles_get(a["id"], name)
+    try:
+        f = sessions.pyfiles_get(a["id"], name, projectId)
+    except AuthError as e:
+        raise HTTPException(400, str(e))
     if f is None:
         raise HTTPException(404, "文件不存在")
     return f
@@ -567,24 +620,31 @@ class PyfileSaveBody(BaseModel):
 
 
 @app.put("/api/pyfiles/{name}")
-def api_pyfile_save(name: str, b: PyfileSaveBody, request: Request):
+def api_pyfile_save(name: str, b: PyfileSaveBody, request: Request, projectId: int = 0):
     a = acct(sess(request))
     name = sessions.normalize_pyfile_name(name)
     if not name:
         raise HTTPException(400, "文件名不合法")
     if len(b.content.encode("utf-8")) > C.CODE_MAX:
         raise HTTPException(400, "文件超过 256KB 上限")
-    if len(sessions.pyfiles_list(a["id"])) >= sessions.PYFILE_MAX_COUNT \
-            and not sessions.pyfiles_get(a["id"], name):
+    try:
+        current = sessions.pyfiles_list(a["id"], projectId)
+        exists = sessions.pyfiles_get(a["id"], name, projectId)
+    except AuthError as e:
+        raise HTTPException(400, str(e))
+    if len(current) >= sessions.PYFILE_MAX_COUNT and not exists:
         raise HTTPException(400, f"文件数量超过上限（{sessions.PYFILE_MAX_COUNT} 个）")
-    sessions.pyfiles_save(a["id"], name, b.content)
+    sessions.pyfiles_save(a["id"], name, b.content, project_id=projectId)
     return {"name": name, "size": len(b.content.encode("utf-8"))}
 
 
 @app.delete("/api/pyfiles/{name}")
-def api_pyfile_delete(name: str, request: Request):
+def api_pyfile_delete(name: str, request: Request, projectId: int = 0):
     a = acct(sess(request))
-    sessions.pyfiles_delete(a["id"], name)
+    try:
+        sessions.pyfiles_delete(a["id"], name, projectId)
+    except AuthError as e:
+        raise HTTPException(400, str(e))
     return {"ok": True}
 
 
@@ -596,6 +656,7 @@ class QuestionBody(BaseModel):
     note: str = ""
     db: str = ""
     py: list[str] = []
+    pyp: int = 0
     publish: bool = False
 
 
@@ -620,7 +681,8 @@ def api_questions_save(b: QuestionBody, request: Request):
     _need_publish_perm(a)
     try:
         return community.question_save(a, qid=b.id or None, title=b.title, note=b.note,
-                                       db_name=b.db, py_names=b.py, publish=b.publish)
+                                       db_name=b.db, py_names=b.py, publish=b.publish,
+                                       py_project_id=b.pyp)
     except CommunityError as e:
         raise HTTPException(400, str(e))
 
@@ -661,8 +723,9 @@ def api_question_delete(qid: int, request: Request):
 def api_question_import(qid: int, b: QuestionBody, request: Request):
     a = acct(sess(request))
     try:
-        return community.question_import(a, qid, new_db_name=b.db.strip())
-    except CommunityError as e:
+        return community.question_import(a, qid, new_db_name=b.db.strip(),
+                                         py_project_id=b.pyp)
+    except (CommunityError, AuthError) as e:
         raise HTTPException(400, str(e))
 
 
@@ -795,9 +858,13 @@ def api_pyrun_start(b: CodeBody, request: Request):
     target = b.db.strip() or a["db_name"]
     if target not in sessions.owned_dbs(a["id"]):
         raise HTTPException(403, f"数据库 {target} 不在你的名下")
-    files = sessions.pyfiles_contents(a["id"])
-    if b.filename in files:
-        files[b.filename] = b.code
+    try:
+        files = sessions.pyfiles_contents(a["id"], b.projectId)
+        if b.filename:
+            sessions.resolve_project(a["id"], b.projectId)
+            files[b.filename] = b.code
+    except AuthError as e:
+        raise HTTPException(400, str(e))
     d = _pyrun_forward("POST", "/start", {
         "code": b.code,
         "files": files,

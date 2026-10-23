@@ -376,6 +376,62 @@ check("读取py文件", d.get("content") == "print(1)", str(d)[:150])
 code, d = call("/api/pyfiles/demo.py", token=tok1, method="DELETE")
 check("删除py文件", code == 200, str(d)[:150])
 
+print("== 8b2. Python 项目（按项目隔离） ==")
+code, d = call("/api/pyprojects", token=tok1)
+check("Python 项目：默认项目自动创建",
+      code == 200 and len(d.get("projects") or []) >= 1, str(d)[:160])
+base_pid = d["projects"][0]["id"]
+code, d = call(f"/api/pyfiles?projectId={base_pid}", token=tok1)
+check("Python 项目：默认项目里有 main.py",
+      code == 200 and any(f["name"] == "main.py" for f in d.get("files") or []),
+      str(d)[:160])
+code, pa = call("/api/pyprojects", {"name": "项目A"}, token=tok1)
+check("Python 项目：可以新建", code == 200 and pa.get("id"), str(pa)[:120])
+pid_a = pa["id"]
+code, pb = call("/api/pyprojects", {"name": "项目B"}, token=tok1)
+pid_b = pb["id"]
+call(f"/api/pyfiles/main.py?projectId={pid_a}", {"content": "print('A')\n"}, tok1, method="PUT")
+_time.sleep(1.1)
+call(f"/api/pyfiles/helper.py?projectId={pid_a}", {"content": "x = 1\n"}, tok1, method="PUT")
+call(f"/api/pyfiles/main.py?projectId={pid_b}", {"content": "print('B')\n"}, tok1, method="PUT")
+code, fa = call(f"/api/pyfiles?projectId={pid_a}", token=tok1)
+code, fb = call(f"/api/pyfiles?projectId={pid_b}", token=tok1)
+check("Python 项目：同名文件互不影响",
+      [f["name"] for f in fa["files"]][:2] == ["helper.py", "main.py"]
+      and [f["name"] for f in fb["files"]] == ["main.py"], str(fa)[:160])
+check("Python 项目：文件按修改时间倒序",
+      [f["name"] for f in fa["files"]] == ["helper.py", "main.py"],
+      str([(f["name"], f["updatedAt"]) for f in fa["files"]]))
+code, ra = call("/api/pyrun/start",
+                {"code": "import helper\nprint(helper.x)", "db": db1, "projectId": pid_a},
+                token=tok1)
+st = wait_job(ra.get("job", ""), tok1)
+check("Python 项目：运行能 import 本项目的文件",
+      st.get("exit") == 0 and "1" in (st.get("out") or ""), str(st)[:200])
+code, rb = call("/api/pyrun/start",
+                {"code": "import helper\nprint(helper.x)", "db": db1, "projectId": pid_b},
+                token=tok1)
+st = wait_job(rb.get("job", ""), tok1)
+check("Python 项目：不同项目不能互相 import",
+      "No module named" in (st.get("err") or ""), str(st)[:260])
+code, d = call(f"/api/pyprojects/{pid_b}/rename", {"name": "项目B改"}, token=tok1)
+check("Python 项目：可以改名", code == 200 and d.get("name") == "项目B改", str(d)[:100])
+# 上限 10 个
+_, now = call("/api/pyprojects", token=tok1)
+fill = []
+for i in range(10 - len(now.get("projects") or [])):
+    code, p = call("/api/pyprojects", {"name": f"填充{i}"}, token=tok1)
+    if code == 200:
+        fill.append(p["id"])
+code, d = call("/api/pyprojects", {"name": "超出"}, token=tok1)
+check("Python 项目：最多 10 个", code == 400 and "10" in str(d), f"{code} {str(d)[:120]}")
+for pid in [pid_a, pid_b] + fill:
+    call(f"/api/pyprojects/{pid}", token=tok1, method="DELETE")
+_, now = call("/api/pyprojects", token=tok1)
+check("Python 项目：删除后清理文件",
+      len(now.get("projects") or []) == 1 and now["projects"][0]["id"] == base_pid,
+      str(now)[:160])
+
 print("== 8c. 上传的临时 py 文件 ==")
 body, ct = multipart("files", "temp_up.py", "print('temp')\n")
 code, d = call("/api/pyfiles/upload", raw=body, ctype=ct, token=tok1)

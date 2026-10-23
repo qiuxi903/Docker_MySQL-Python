@@ -825,13 +825,17 @@ def _capture_tables(account: dict, db_name: str, max_rows: int = QUESTION_PREVIE
     return out
 
 
-def _snapshot_py(account_id: int, names: list[str]) -> tuple[list[dict], str]:
-    """把账号下的 py 文件按名字快照成 [{name, content}]，返回 (列表, JSON)。"""
+def _snapshot_py(account_id: int, names: list[str],
+                 project_id: int = 0) -> tuple[list[dict], str]:
+    """把指定项目里的 py 文件按名字快照成 [{name, content}]，返回 (列表, JSON)。"""
     from . import sessions as _sessions
 
     if not names:
         return [], ""
-    allfiles = _sessions.pyfiles_contents(account_id)
+    try:
+        allfiles = _sessions.pyfiles_contents(account_id, project_id)
+    except Exception:
+        raise CommunityError("Python 项目不存在了，请重新选择")
     files = []
     for n in names:
         if n not in allfiles:
@@ -871,7 +875,8 @@ def _question_card(r) -> dict:
 
 
 def question_save(account: dict, *, qid: int | None, title: str, note: str,
-                  db_name: str, py_names: list[str], publish: bool) -> dict:
+                  db_name: str, py_names: list[str], publish: bool,
+                  py_project_id: int = 0) -> dict:
     """新建或更新题目（草稿）。db_name / py_names 为空表示不含该部分。"""
     title = (title or "").strip()[:QUESTION_TITLE_MAX]
     if not title:
@@ -881,7 +886,7 @@ def question_save(account: dict, *, qid: int | None, title: str, note: str,
     if db_sql:
         tables_json = json.dumps(_capture_tables(account, (db_name or "").strip()),
                                  ensure_ascii=False)
-    py_files, py_json = _snapshot_py(account["id"], py_names or [])
+    py_files, py_json = _snapshot_py(account["id"], py_names or [], py_project_id)
     if publish and not db_sql and not py_files:
         raise CommunityError("题目至少要包含一个数据库（MySQL 部分）或一个 Python 文件")
 
@@ -1068,7 +1073,8 @@ def question_delete(account: dict, qid: int):
         conn.close()
 
 
-def question_import(account: dict, qid: int, new_db_name: str = "") -> dict:
+def question_import(account: dict, qid: int, new_db_name: str = "",
+                    py_project_id: int = 0) -> dict:
     """一键导入整套：MySQL 部分建成独立新库，Python 部分加进自己的文件列表。"""
     from . import sessions as _sessions
     from .sqlrun import run_sql
@@ -1096,11 +1102,14 @@ def question_import(account: dict, qid: int, new_db_name: str = "") -> dict:
         result["tables"] = parse_script_tables(sql)
     if r[1]:
         files = json.loads(_unpack(r[1]).decode("utf-8"))
-        existing = {f["name"].casefold() for f in _sessions.pyfiles_list(account["id"])}
+        existing = {f["name"].casefold()
+                    for f in _sessions.pyfiles_list(account["id"], py_project_id)}
         saved = []
         for f in files:
-            final = _sessions.pyfiles_unique_name(account["id"], f.get("name") or "file.py", existing)
-            _sessions.pyfiles_save(account["id"], final, f.get("content") or "")
+            final = _sessions.pyfiles_unique_name(account["id"], f.get("name") or "file.py",
+                                                  existing, py_project_id)
+            _sessions.pyfiles_save(account["id"], final, f.get("content") or "",
+                                   project_id=py_project_id)
             existing.add(final.casefold())
             saved.append(final)
         result["pyFiles"] = saved

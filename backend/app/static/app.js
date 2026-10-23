@@ -283,6 +283,8 @@ const App = {
       sqlInit: "",
       pyInit: "",
       pyFiles: [],
+      pyProjects: [],
+      pyProjectId: 0,
       pyOpenFiles: [],
       pyCurrent: "main.py",
       pySaveTimer: null,
@@ -527,6 +529,10 @@ const App = {
     adminAllChecked() {
       const ids = this.adminList.filter(u => u.role !== "admin").map(u => u.id);
       return ids.length > 0 && ids.every(id => this.adminChecked.includes(id));
+    },
+    pyProjectName() {
+      const p = this.pyProjects.find(x => x.id === this.pyProjectId);
+      return p ? p.name : "";
     },
     drillCodeType() {
       const t = this.drillCurrent && this.drillCurrent.type;
@@ -2276,13 +2282,15 @@ const App = {
       if (this.pyCurrent) this.pyDirty.add(this.pyCurrent);
       // 每次输入都自动保存（250ms 微合并，连打字也不会丢最后一次）
       clearTimeout(this.pySaveTimer);
+      const name = this.pyCurrent;
+      const pid = this.pyProjectId;
+      const content = this.$refs.cmPyRef ? this.$refs.cmPyRef.getValue() : null;
+      if (!name || content === null) return;
       this.pySaveTimer = setTimeout(async () => {
-        const content = this.$refs.cmPyRef ? this.$refs.cmPyRef.getValue() : null;
-        if (content === null || !this.pyCurrent) return;
         try {
-          await this.api(`/api/pyfiles/${encodeURIComponent(this.pyCurrent)}`,
+          await this.api(`/api/pyfiles/${encodeURIComponent(name)}?projectId=${pid}`,
                          { method: "PUT", body: { content } });
-          this.pyDirty.delete(this.pyCurrent);
+          this.pyDirty.delete(name);
         } catch (e) {}
       }, 250);
     },
@@ -2354,48 +2362,131 @@ const App = {
       if (r) r(false);
     },
 
-    /* ---------- Python 多文件 ---------- */
+    /* ---------- Python 多项目 / 多文件 ---------- */
+    pyProjectKey() {
+      const who = (this.user && this.user.name) || "?";
+      return "lab_py_project:" + who;
+    },
+    pyUrl(name) {
+      const base = "/api/pyfiles" + (name ? "/" + encodeURIComponent(name) : "");
+      return base + "?projectId=" + (this.pyProjectId || 0);
+    },
+    async loadPyProjects() {
+      const d = await this.api("/api/pyprojects");
+      this.pyProjects = d.projects || [];
+      if (!this.pyProjects.some(p => p.id === this.pyProjectId)) {
+        this.pyProjectId = this.pyProjects[0] ? this.pyProjects[0].id : 0;
+      }
+      return this.pyProjects;
+    },
     async initPyFiles() {
       await this.$nextTick();
       try {
-        let d = await this.api("/api/pyfiles");
-        const draft = localStorage.getItem("lab_py_draft");
-        if (!d.files.length && draft) {
-          await this.api("/api/pyfiles/main.py", { method: "PUT", body: { content: draft } });
-          localStorage.removeItem("lab_py_draft");
-          d = await this.api("/api/pyfiles");
+        await this.loadPyProjects();
+        let pid = 0;
+        try { pid = parseInt(localStorage.getItem(this.pyProjectKey()) || "0", 10) || 0; } catch (e) {}
+        if (!this.pyProjects.some(p => p.id === pid)) {
+          pid = this.pyProjects[0] ? this.pyProjects[0].id : 0;
         }
-        this.pyFiles = d.files;
-        this.pyCurrent = this.pyFiles[0] ? this.pyFiles[0].name : "main.py";
-        this.pyOpenFiles = this.pyCurrent ? [this.pyCurrent] : [];
-        const f = await this.api(`/api/pyfiles/${encodeURIComponent(this.pyCurrent)}`);
-        if (this.$refs.cmPyRef) this.$refs.cmPyRef.setValue(f.content);
-        this.$nextTick(() => { if (this.$refs.cmPyRef) this.$refs.cmPyRef.refresh(); });
+        // 旧版草稿：默认项目的 main.py 还是空的时候恢复一次
+        const draft = localStorage.getItem("lab_py_draft");
+        if (draft && pid) {
+          this.pyProjectId = pid;
+          try {
+            const main = await this.api(this.pyUrl("main.py"));
+            if (!String(main.content || "").trim()) {
+              await this.api(this.pyUrl("main.py"), { method: "PUT", body: { content: draft } });
+            }
+            localStorage.removeItem("lab_py_draft");
+          } catch (e) {}
+        }
+        await this.switchPyProject(pid, true);
       } catch (e) { /* 列表加载失败时编辑器仍可用 */ }
     },
-
+    async switchPyProject(pid, initial = false) {
+      if (!pid) return;
+      if (!initial && pid === this.pyProjectId) return;
+      if (!initial && this.pyCurrent) {
+        if (!await this.ensurePySaved(this.pyCurrent)) return;
+      }
+      this.pyProjectId = pid;
+      try { localStorage.setItem(this.pyProjectKey(), String(pid)); } catch (e) {}
+      this.pyOpenFiles = [];
+      this.pyCurrent = "";
+      this.pyFiles = [];
+      this.pyDirty.clear();
+      if (this.$refs.cmPyRef) this.$refs.cmPyRef.setValue("");
+      try {
+        const d = await this.api(this.pyUrl());
+        this.pyFiles = d.files || [];
+        const f = this.pyFiles[0];
+        if (f) await this.openPyFile(f.name);
+        this.$nextTick(() => { if (this.$refs.cmPyRef) this.$refs.cmPyRef.refresh(); });
+      } catch (e) { this.toast(e.message); }
+      this.loadPyProjects().catch(() => {});
+    },
+    async newPyProject() {
+      if (this.pyProjects.length >= 10) { this.toast("最多创建 10 个项目"); return; }
+      const name = await this.askText("新建 Python 项目", "项目名称（最多 24 个字）", "");
+      if (name === null) return;
+      if (!String(name).trim()) return;
+      try {
+        const p = await this.api("/api/pyprojects", { method: "POST", body: { name } });
+        await this.loadPyProjects();
+        await this.switchPyProject(p.id);
+        this.toast(`已创建项目「${p.name}」`);
+      } catch (e) { this.toast(e.message); }
+    },
+    async renamePyProject(pj) {
+      if (!pj) return;
+      const name = await this.askText("重命名项目", "项目名称（最多 24 个字）", pj.name);
+      if (name === null) return;
+      const nm = String(name || "").trim();
+      if (!nm || nm === pj.name) return;
+      try {
+        await this.api(`/api/pyprojects/${pj.id}/rename`, { method: "POST", body: { name: nm } });
+        await this.loadPyProjects();
+        this.toast("项目已改名");
+      } catch (e) { this.toast(e.message); }
+    },
+    async deletePyProject(pj) {
+      if (!pj) return;
+      if (!await this.askConfirm("删除项目",
+          `将删除「${pj.name}」及其中 ${pj.fileCount} 个 Python 文件，无法恢复。确定吗？`, true)) return;
+      try {
+        await this.api(`/api/pyprojects/${pj.id}`, { method: "DELETE" });
+        if (this.pyProjectId === pj.id) {
+          this.pyProjectId = 0;
+          this.pyCurrent = "";
+          this.pyOpenFiles = [];
+          this.pyFiles = [];
+          if (this.$refs.cmPyRef) this.$refs.cmPyRef.setValue("");
+        }
+        await this.loadPyProjects();
+        const next = this.pyProjects.find(p => p.id === this.pyProjectId) || this.pyProjects[0];
+        if (next) await this.switchPyProject(next.id);
+        this.toast("项目已删除");
+      } catch (e) { this.toast(e.message); }
+    },
     async refreshPyList() {
       try {
-        const d = await this.api("/api/pyfiles");
-        this.pyFiles = d.files;
+        const d = await this.api(this.pyUrl());
+        this.pyFiles = d.files || [];
       } catch (e) {}
     },
-
     async flushPySave() {
       if (this.pySaveTimer) { clearTimeout(this.pySaveTimer); this.pySaveTimer = null; }
       const name = this.pyCurrent;
       const content = this.$refs.cmPyRef ? this.$refs.cmPyRef.getValue() : null;
       if (content === null || !name) return;
-      await this.api(`/api/pyfiles/${encodeURIComponent(name)}`, { method: "PUT", body: { content } });
+      await this.api(this.pyUrl(name), { method: "PUT", body: { content } });
       this.pyDirty.delete(name);
     },
-
     // 切走前把当前文件落盘；保存失败才留在原文件（平时每次输入都已自动保存）
     async ensurePySaved(name) {
       try { await this.flushPySave(); return true; }
       catch (e) { this.toast(e.message); return false; }
     },
-
     // 编辑器上方的小胶囊提示（如「已切换到 b.py」），1.6 秒自动消失
     showPyCapsule(text) {
       this.pyCapsule = text;
@@ -2410,19 +2501,17 @@ const App = {
         if (el) { el.classList.remove("show"); this._popHide(el); }
       }, 1600);
     },
-
     async openPyFile(name) {
       if (name === this.pyCurrent) return;
       if (!await this.ensurePySaved(this.pyCurrent)) return;
       try {
-        const f = await this.api(`/api/pyfiles/${encodeURIComponent(name)}`);
+        const f = await this.api(this.pyUrl(name));
         this.pyCurrent = f.name;
         if (!this.pyOpenFiles.includes(f.name)) this.pyOpenFiles.push(f.name);
         if (this.$refs.cmPyRef) this.$refs.cmPyRef.setValue(f.content);
         this.showPyCapsule("已切换到 " + f.name);
       } catch (e) { this.toast(e.message); }
     },
-
     async closePyTab(name) {
       const index = this.pyOpenFiles.indexOf(name);
       if (index < 0) return;
@@ -2438,7 +2527,6 @@ const App = {
         await this.openPyFile(next);
       }
     },
-
     async uploadPyFiles(ev) {
       const files = Array.from(ev.target.files || []);
       ev.target.value = "";
@@ -2452,8 +2540,10 @@ const App = {
         await this.flushPySave();
         const form = new FormData();
         for (const file of files) form.append("files", file);
+        form.append("projectId", String(this.pyProjectId || 0));
         const result = await this.api("/api/pyfiles/upload", { method: "POST", form });
         await this.refreshPyList();
+        await this.loadPyProjects().catch(() => {});
         this.pyOpenFiles = Array.from(new Set([...this.pyOpenFiles, ...result.files.map(f => f.name)]));
         const last = result.files[result.files.length - 1];
         if (last) await this.openPyFile(last.name);
@@ -2461,8 +2551,8 @@ const App = {
       } catch (e) { this.toast(e.message); }
       finally { this.busy = false; }
     },
-
     async newPyFile() {
+      if (!this.pyProjectId) { this.toast("先创建一个项目"); return; }
       const name = await this.askText("新建 Python 文件", "文件名（可省略 .py 后缀）", "");
       if (!name) return;
       const final = name.toLowerCase().endsWith(".py") ? name : name + ".py";
@@ -2471,7 +2561,7 @@ const App = {
         await this.flushPySave();
         let exists = true;
         try {
-          await this.api(`/api/pyfiles/${encodeURIComponent(final)}`);
+          await this.api(this.pyUrl(final));
         } catch (e) {
           if (e.status !== 404) throw e;
           exists = false;
@@ -2481,9 +2571,9 @@ const App = {
           await this.openPyFile(final);
           return;
         }
-        await this.api(`/api/pyfiles/${encodeURIComponent(final)}`,
-                       { method: "PUT", body: { content: "" } });
+        await this.api(this.pyUrl(final), { method: "PUT", body: { content: "" } });
         await this.refreshPyList();
+        await this.loadPyProjects().catch(() => {});
         if (!this.pyOpenFiles.includes(final)) this.pyOpenFiles.push(final);
         this.pyCurrent = final;
         if (this.$refs.cmPyRef) this.$refs.cmPyRef.setValue("");
@@ -2491,7 +2581,6 @@ const App = {
       } catch (e) { this.toast(e.message); }
       finally { this.busy = false; }
     },
-
     async deletePyFile(name) {
       // 临时文件（上传的）删除不需要确认，本来刷新就没了
       const isTemp = (this.pyFiles.find(f => f.name === name) || {}).uploaded;
@@ -2502,19 +2591,15 @@ const App = {
           this.pySaveTimer = null;
         }
         this.pyDirty.delete(name);
-        await this.api(`/api/pyfiles/${encodeURIComponent(name)}`, { method: "DELETE" });
+        await this.api(this.pyUrl(name), { method: "DELETE" });
         await this.refreshPyList();
+        await this.loadPyProjects().catch(() => {});
         this.pyOpenFiles = this.pyOpenFiles.filter(f => f !== name);
         if (this.pyCurrent === name) {
-          this.pyCurrent = this.pyFiles[0] ? this.pyFiles[0].name : "main.py";
-          if (!this.pyOpenFiles.includes(this.pyCurrent)) this.pyOpenFiles.push(this.pyCurrent);
-          try {
-            const f = await this.api(`/api/pyfiles/${encodeURIComponent(this.pyCurrent)}`);
-            if (this.$refs.cmPyRef) this.$refs.cmPyRef.setValue(f.content);
-          } catch (e) {
-            await this.api("/api/pyfiles/main.py", { method: "PUT", body: { content: "" } });
-            if (this.$refs.cmPyRef) this.$refs.cmPyRef.setValue("");
-          }
+          this.pyCurrent = "";
+          if (this.$refs.cmPyRef) this.$refs.cmPyRef.setValue("");
+          const next = this.pyFiles[0];
+          if (next) await this.openPyFile(next.name);
         }
         this.toast(`已删除 ${name}`);
       } catch (e) { this.toast(e.message); }
@@ -2875,7 +2960,8 @@ const App = {
       try {
         await this.flushPySave();
         const d = await this.api("/api/pyrun/start", {
-          method: "POST", body: { code, filename: this.pyCurrent, db: this.selectedDb }
+          method: "POST", body: { code, filename: this.pyCurrent, db: this.selectedDb,
+                                  projectId: this.pyProjectId }
         });
         this.pyJob = d.job;
         this.pyConsole[0].job = d.job;
@@ -3004,7 +3090,7 @@ const App = {
         const r = await this.api("/api/questions/save", {
           method: "POST",
           body: { id: this.qForm.id, title: this.qForm.title, note: this.qForm.note,
-                  db: this.qForm.db, py, publish },
+                  db: this.qForm.db, py, pyp: this.pyProjectId, publish },
         });
         this.closeQuestionEditor();
         this.toast(publish ? "题目已发布到题库广场" : "已存为草稿，可随时回来编辑再发布");
@@ -3040,7 +3126,13 @@ const App = {
         `导入「${q.title}」？\nMySQL 部分会建成你自己的独立数据库${q.pyCount ? "，Python 文件会加进你的文件列表" : ""}。`)) return;
       this.busy = true;
       try {
-        const r = await this.api(`/api/questions/${q.id}/import`, { method: "POST", body: { db: "" } });
+        const r = await this.api(`/api/questions/${q.id}/import`, {
+          method: "POST", body: { db: "", pyp: this.pyProjectId },
+        });
+        if (r.pyFiles && r.pyFiles.length) {
+          await this.refreshPyList();
+          await this.loadPyProjects().catch(() => {});
+        }
         const bits = [];
         if (r.db) bits.push(`数据库 ${r.db}${r.tables && r.tables.length ? "（" + r.tables.length + " 张表）" : ""}`);
         if (r.pyFiles && r.pyFiles.length) bits.push(`${r.pyFiles.length} 个 Python 文件`);
@@ -3180,12 +3272,15 @@ const App = {
     async openPyItem(it) {
       try {
         await this.flushPySave();
-        const d = await this.api("/api/community/open", { method: "POST", body: { id: it.id } });
+        const d = await this.api("/api/community/open", {
+          method: "POST", body: { id: it.id, projectId: this.pyProjectId },
+        });
+        if (d.projectId && d.projectId !== this.pyProjectId) await this.switchPyProject(d.projectId);
         await this.refreshPyList();
         this.switchView("py");
         this.pyCurrent = d.filename;
         if (!this.pyOpenFiles.includes(d.filename)) this.pyOpenFiles.push(d.filename);
-        const f = await this.api(`/api/pyfiles/${encodeURIComponent(d.filename)}`);
+        const f = await this.api(this.pyUrl(d.filename));
         if (this.$refs.cmPyRef) this.$refs.cmPyRef.setValue(f.content);
         this.toast(`已保存为文件 ${d.filename}，点 ▶ 运行 试试`);
       } catch (e) { this.toast(e.message); }

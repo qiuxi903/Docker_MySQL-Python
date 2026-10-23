@@ -27,7 +27,7 @@ html[data-theme="light"] body { background: #f6f8fa; }
 <link rel="stylesheet" href="/vendor/codemirror/codemirror.css">
 <link rel="stylesheet" href="/vendor/codemirror/addon/hint/show-hint.css">
 <link rel="stylesheet" href="/fonts/misans/misans.css">
-<link rel="stylesheet" href="/style.css?v=146">
+<link rel="stylesheet" href="/style.css?v=147">
   <link rel="stylesheet" href="/navicat.css?v=10">
 </head>
 <body>
@@ -196,25 +196,48 @@ html[data-theme="light"] body { background: #f6f8fa; }
         <div class="drawer-mask m-only" v-show="drawer==='py'" @click="drawer=''"></div>
         <aside class="side drawer" :class="{open: drawer==='py'}">
           <div class="side-h">
-            <span class="panel-title">Python 文件</span>
+            <span class="panel-title">Python 项目</span>
             <span class="spacer"></span>
-            <button class="icon-btn" title="新建文件" @click="newPyFile"><e-icon name="plus" :size="14"></e-icon></button>
+            <button class="icon-btn" title="新建项目" :disabled="pyProjects.length>=10"
+                    @click="newPyProject"><e-icon name="plus" :size="14"></e-icon></button>
             <button class="icon-btn m-only" title="关闭" @click="drawer=''"><e-icon name="x" :size="15"></e-icon></button>
           </div>
-          <div class="tblist">
-            <button v-for="f in pyFiles" :key="f.name" class="tbrow" :class="{sel: pyCurrent===f.name}"
-                    @click="openPyFile(f.name)">
-              <span class="tb-ico"><e-icon name="code" :size="13"></e-icon></span>
-              <span class="tbname">{{ f.name }}<span v-if="f.uploaded" class="badge tiny temp-badge">临时</span></span>
-              <span class="tbrows">{{ fmtSize(f.size) }}</span>
-              <span class="row-x" @click.stop="deletePyFile(f.name)" title="删除"><e-icon name="x" :size="11"></e-icon></span>
+          <div class="tblist pyproj-list">
+            <div v-for="pj in pyProjects" :key="pj.id" class="pyproj" :class="{on: pyProjectId===pj.id}">
+              <div class="pyproj-h" @click="switchPyProject(pj.id)">
+                <span class="pyproj-chev">
+                  <e-icon :name="pyProjectId===pj.id ? 'chevron-down' : 'chevron-right'" :size="12"></e-icon>
+                </span>
+                <span class="tb-ico"><e-icon name="folder-open" :size="13"></e-icon></span>
+                <span class="pyproj-name">{{ pj.name }}</span>
+                <span class="pyproj-count">{{ pj.fileCount }}</span>
+                <span class="spacer"></span>
+                <span class="pyproj-actions" v-if="pyProjectId===pj.id">
+                  <button class="row-x" title="重命名项目" @click.stop="renamePyProject(pj)"><e-icon name="file-text" :size="11"></e-icon></button>
+                  <button class="row-x" title="删除项目" @click.stop="deletePyProject(pj)"><e-icon name="trash" :size="11"></e-icon></button>
+                </span>
+              </div>
+              <div class="pyproj-files" v-if="pyProjectId===pj.id">
+                <button v-for="f in pyFiles" :key="f.name" class="tbrow" :class="{sel: pyCurrent===f.name}"
+                        @click="openPyFile(f.name)">
+                  <span class="tb-ico"><e-icon name="code" :size="13"></e-icon></span>
+                  <span class="tbname">{{ f.name }}<span v-if="f.uploaded" class="badge tiny temp-badge">临时</span></span>
+                  <span class="tbrows">{{ fmtSize(f.size) }}</span>
+                  <span class="row-x" @click.stop="deletePyFile(f.name)" title="删除"><e-icon name="x" :size="11"></e-icon></span>
+                </button>
+                <div v-if="!pyFiles.length" class="tbempty">这个项目还没有文件</div>
+              </div>
+            </div>
+            <button v-if="pyProjects.length<10" class="tbrow pyproj-new" @click="newPyProject">
+              <e-icon name="plus" :size="13"></e-icon> 新建项目
             </button>
+            <p v-else class="tip" style="padding:8px 10px;margin:0">每人最多 10 个项目</p>
           </div>
           <div class="side-f">
             <button class="btn soft block" @click="newPyFile"><e-icon name="plus" :size="14"></e-icon> 新建文件</button>
-            <button class="btn soft block" @click="$refs.pyUploadFileEl.click()"><e-icon name="upload" :size="14"></e-icon> 上传 Python 文件</button>
+            <button class="btn soft block" @click="$refs.pyUploadFileEl.click()"><e-icon name="upload" :size="14"></e-icon> 上传到当前项目</button>
             <input type="file" ref="pyUploadFileEl" hidden accept=".py,text/x-python,text/plain" multiple @change="uploadPyFiles">
-            <p class="tip" style="margin:2px 0 0">上传的文件是临时的，刷新或退出登录会自动删除。</p>
+            <p class="tip" style="margin:2px 0 0">不同项目的文件互不 import；文件按最近修改排序。上传的文件是临时的，刷新或退出登录会自动删除。</p>
           </div>
         </aside>
 
@@ -222,7 +245,7 @@ html[data-theme="light"] body { background: #f6f8fa; }
           <section class="panel editor-pane">
             <div class="panel-h">
               <button class="btn soft m-only" @click="drawer='py'"><e-icon name="menu" :size="14"></e-icon> 文件</button>
-              <span class="panel-title mono">{{ pyCurrent || "Python 编辑器" }}</span>
+              <span class="panel-title mono">{{ pyProjectName || "Python 编辑器" }}<template v-if="pyCurrent"> / {{ pyCurrent }}</template></span>
               <span class="spacer"></span>
               <button class="btn mini ghost" @click="clearPy"><e-icon name="x" :size="13"></e-icon> 清空</button>
               <button class="btn run run-btn" @click="runPy"><e-icon name="play" :size="13"></e-icon> 运行 <span class="kbd">Ctrl+↵</span></button>
@@ -2944,6 +2967,6 @@ INSERT INTO course VALUES (1,'数学');</pre>
 </script>
 
 <script src="/navicat.js?v=1"></script>
-<script src="/app.js?v=153"></script>
+<script src="/app.js?v=155"></script>
 </body>
 </html>

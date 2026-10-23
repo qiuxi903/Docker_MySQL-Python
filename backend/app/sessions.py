@@ -95,19 +95,60 @@ def _init_meta():
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             """)
             cur.execute(f"""
+                CREATE TABLE IF NOT EXISTS {q_ident(C.META_DB)}.py_projects (
+                    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                    account_id BIGINT NOT NULL,
+                    name VARCHAR(32) NOT NULL,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE KEY uq_account_name (account_id, name),
+                    KEY idx_account (account_id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+            cur.execute(f"""
                 CREATE TABLE IF NOT EXISTS {q_ident(C.META_DB)}.py_files (
+                    project_id BIGINT NOT NULL,
                     account_id BIGINT NOT NULL,
                     name VARCHAR(64) NOT NULL,
                     content MEDIUMTEXT,
                     uploaded TINYINT NOT NULL DEFAULT 0,
                     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    PRIMARY KEY (account_id, name)
+                    PRIMARY KEY (project_id, name),
+                    KEY idx_account (account_id)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             """)
-            # 老库补列（已存在则忽略）
+            # 老库升级：补 project_id 列
+            try:
+                cur.execute(f"ALTER TABLE {q_ident(C.META_DB)}.py_files "
+                            "ADD COLUMN project_id BIGINT NOT NULL DEFAULT 0")
+            except Exception:
+                pass
             try:
                 cur.execute(f"ALTER TABLE {q_ident(C.META_DB)}.py_files "
                             "ADD COLUMN uploaded TINYINT NOT NULL DEFAULT 0")
+            except Exception:
+                pass
+            # 把还没有项目的老文件放进各自的「默认项目」
+            cur.execute(f"""SELECT DISTINCT account_id FROM {q_ident(C.META_DB)}.py_files
+                             WHERE project_id=0""")
+            for (acc_id,) in cur.fetchall():
+                cur.execute(f"""SELECT id FROM {q_ident(C.META_DB)}.py_projects
+                                 WHERE account_id=%s ORDER BY id LIMIT 1""", (acc_id,))
+                prow = cur.fetchone()
+                if prow:
+                    pid = int(prow[0])
+                else:
+                    cur.execute(f"""INSERT INTO {q_ident(C.META_DB)}.py_projects
+                                    (account_id, name) VALUES (%s,'默认项目')""", (acc_id,))
+                    pid = int(cur.lastrowid)
+                cur.execute(f"""UPDATE {q_ident(C.META_DB)}.py_files SET project_id=%s
+                                 WHERE account_id=%s AND project_id=0""", (pid, acc_id))
+            # 主键从 (account_id,name) 改为 (project_id,name)，不同项目可以同名
+            try:
+                cur.execute(f"""ALTER TABLE {q_ident(C.META_DB)}.py_files
+                                DROP PRIMARY KEY,
+                                ADD PRIMARY KEY (project_id, name),
+                                ADD KEY idx_account (account_id)""")
             except Exception:
                 pass
             # 以前版本给新账号预置过一段示例代码；现在编辑器一律空白，
@@ -322,6 +363,8 @@ def clear_imported_tables(account_id: int, db_name: str):
 _PYFILE_RE = re.compile(r"^[\w\u4e00-\u9fff\-]{1,40}\.py$", re.I)
 PYFILE_MAX = 256 * 1024
 PYFILE_MAX_COUNT = 30
+PYPROJECT_MAX = 10
+PYPROJECT_NAME_MAX = 24
 
 # 新账号的 main.py 只建一个空文件：编辑器不预填任何命令，全部由学生自己输入。
 PY_MAIN_SEED = ""
@@ -345,33 +388,183 @@ def normalize_pyfile_name(name: str) -> str | None:
     return n if _PYFILE_RE.match(n) else None
 
 
-def pyfiles_list(account_id: int) -> list[dict]:
+def normalize_pyproject_name(name: str) -> str | None:
+    s = re.sub(r"\s+", " ", str(name or "")).strip()
+    if not s or len(s) > PYPROJECT_NAME_MAX:
+        return None
+    return s
+
+
+def _project_row(cur, account_id: int, project_id: int | None = None):
+    """取项目（不传则取第一个；没有就建默认项目），并校验归属。"""
+    if project_id:
+        cur.execute("SELECT id, name FROM py_projects WHERE id=%s AND account_id=%s",
+                    (project_id, account_id))
+        row = cur.fetchone()
+        if not row:
+            raise AuthError("Python 项目不存在")
+        return row
+    cur.execute("SELECT id, name FROM py_projects WHERE account_id=%s ORDER BY id LIMIT 1",
+                (account_id,))
+    row = cur.fetchone()
+    if row:
+        return row
+    try:
+        cur.execute("INSERT INTO py_projects (account_id, name) VALUES (%s,'默认项目')",
+                    (account_id,))
+        return (cur.lastrowid, "默认项目")
+    except Exception:
+        cur.execute("SELECT id, name FROM py_projects WHERE account_id=%s ORDER BY id LIMIT 1",
+                    (account_id,))
+        row = cur.fetchone()
+        if not row:
+            raise AuthError("Python 项目初始化失败")
+        return row
+
+
+def ensure_default_project(account_id: int) -> dict:
+    conn = root_conn(C.META_DB)
+    try:
+        with conn.cursor() as cur:
+            row = _project_row(cur, account_id)
+            return {"id": int(row[0]), "name": row[1]}
+    finally:
+        conn.close()
+
+
+def resolve_project(account_id: int, project_id: int | None = None) -> int:
+    conn = root_conn(C.META_DB)
+    try:
+        with conn.cursor() as cur:
+            return int(_project_row(cur, account_id, project_id)[0])
+    finally:
+        conn.close()
+
+
+def pyprojects_list(account_id: int) -> list[dict]:
+    conn = root_conn(C.META_DB)
+    out = []
+    try:
+        with conn.cursor() as cur:
+            _project_row(cur, account_id)     # 至少保证有一个项目
+            cur.execute("""SELECT p.id, p.name, p.created_at, COUNT(f.name),
+                                  COALESCE(MAX(f.updated_at), p.created_at)
+                             FROM py_projects p
+                             LEFT JOIN py_files f ON f.project_id=p.id
+                            WHERE p.account_id=%s
+                            GROUP BY p.id
+                            ORDER BY p.id ASC""", (account_id,))
+            for pid, name, created, cnt, updated in cur.fetchall():
+                out.append({"id": int(pid), "name": name or "未命名项目",
+                            "fileCount": int(cnt or 0),
+                            "createdAt": str(created), "updatedAt": str(updated)})
+    finally:
+        conn.close()
+    return out
+
+
+def pyprojects_create(account_id: int, name: str) -> dict:
+    nm = normalize_pyproject_name(name)
+    if not nm:
+        raise AuthError(f"项目名称不能为空，且最多 {PYPROJECT_NAME_MAX} 个字")
+    conn = root_conn(C.META_DB)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) FROM py_projects WHERE account_id=%s", (account_id,))
+            if int(cur.fetchone()[0]) >= PYPROJECT_MAX:
+                raise AuthError(f"最多创建 {PYPROJECT_MAX} 个项目")
+            cur.execute("SELECT id FROM py_projects WHERE account_id=%s AND name=%s",
+                        (account_id, nm))
+            if cur.fetchone():
+                raise AuthError("已经有同名项目了")
+            cur.execute("INSERT INTO py_projects (account_id, name) VALUES (%s,%s)",
+                        (account_id, nm))
+            pid = int(cur.lastrowid)
+            cur.execute("""INSERT INTO py_files (project_id, account_id, name, content)
+                           VALUES (%s,%s,'main.py',%s)""", (pid, account_id, PY_MAIN_SEED))
+    finally:
+        conn.close()
+    return {"id": pid, "name": nm, "fileCount": 1}
+
+
+def pyprojects_rename(account_id: int, project_id: int, name: str) -> dict:
+    nm = normalize_pyproject_name(name)
+    if not nm:
+        raise AuthError(f"项目名称不能为空，且最多 {PYPROJECT_NAME_MAX} 个字")
+    conn = root_conn(C.META_DB)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM py_projects WHERE id=%s AND account_id=%s",
+                        (project_id, account_id))
+            if not cur.fetchone():
+                raise AuthError("Python 项目不存在")
+            cur.execute("""SELECT id FROM py_projects
+                            WHERE account_id=%s AND name=%s AND id<>%s""",
+                        (account_id, nm, project_id))
+            if cur.fetchone():
+                raise AuthError("已经有同名项目了")
+            cur.execute("UPDATE py_projects SET name=%s, updated_at=NOW() WHERE id=%s",
+                        (nm, project_id))
+    finally:
+        conn.close()
+    return {"id": project_id, "name": nm}
+
+
+def pyprojects_delete(account_id: int, project_id: int) -> dict:
+    conn = root_conn(C.META_DB)
+    row = None
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM py_projects WHERE id=%s AND account_id=%s",
+                        (project_id, account_id))
+            if not cur.fetchone():
+                raise AuthError("Python 项目不存在")
+            cur.execute("DELETE FROM py_files WHERE project_id=%s AND account_id=%s",
+                        (project_id, account_id))
+            cur.execute("DELETE FROM py_projects WHERE id=%s", (project_id,))
+            cur.execute("SELECT id, name FROM py_projects WHERE account_id=%s ORDER BY id LIMIT 1",
+                        (account_id,))
+            row = cur.fetchone()
+            if not row:
+                cur.execute("INSERT INTO py_projects (account_id, name) VALUES (%s,'默认项目')",
+                            (account_id,))
+                row = (cur.lastrowid, "默认项目")
+    finally:
+        conn.close()
+    return {"ok": True, "nextProjectId": int(row[0]), "nextProjectName": row[1]}
+
+
+def pyfiles_list(account_id: int, project_id: int | None = None) -> list[dict]:
     conn = root_conn(C.META_DB)
     result = []
     try:
         with conn.cursor() as cur:
+            pid = int(_project_row(cur, account_id, project_id)[0])
             cur.execute("""SELECT name, content, updated_at, uploaded FROM py_files
-                           WHERE account_id=%s ORDER BY name='main.py' DESC, name ASC""",
-                        (account_id,))
+                           WHERE project_id=%s
+                           ORDER BY updated_at DESC, name ASC""", (pid,))
             rows = cur.fetchall()
             if not rows:
-                cur.execute("INSERT INTO py_files (account_id, name, content) VALUES (%s,'main.py',%s)",
-                            (account_id, PY_MAIN_SEED))
+                cur.execute("""INSERT IGNORE INTO py_files
+                               (project_id, account_id, name, content)
+                               VALUES (%s,%s,'main.py',%s)""", (pid, account_id, PY_MAIN_SEED))
                 rows = [("main.py", PY_MAIN_SEED, "", 0)]
             for name, content, updated_at, uploaded in rows:
                 result.append({"name": name, "size": len((content or "").encode("utf-8")),
-                               "updatedAt": str(updated_at), "uploaded": bool(uploaded)})
+                               "updatedAt": str(updated_at), "uploaded": bool(uploaded),
+                               "projectId": pid})
     finally:
         conn.close()
     return result
 
 
-def pyfiles_get(account_id: int, name: str) -> dict | None:
+def pyfiles_get(account_id: int, name: str, project_id: int | None = None) -> dict | None:
     conn = root_conn(C.META_DB)
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT content, updated_at FROM py_files WHERE account_id=%s AND name=%s",
-                        (account_id, name))
+            pid = int(_project_row(cur, account_id, project_id)[0])
+            cur.execute("""SELECT content, updated_at FROM py_files
+                            WHERE project_id=%s AND name=%s""", (pid, name))
             row = cur.fetchone()
     finally:
         conn.close()
@@ -380,53 +573,64 @@ def pyfiles_get(account_id: int, name: str) -> dict | None:
     return {"name": name, "content": row[0] or "", "updatedAt": str(row[1])}
 
 
-def pyfiles_contents(account_id: int) -> dict[str, str]:
+def pyfiles_contents(account_id: int, project_id: int | None = None) -> dict[str, str]:
     conn = root_conn(C.META_DB)
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT name, content FROM py_files WHERE account_id=%s", (account_id,))
+            pid = int(_project_row(cur, account_id, project_id)[0])
+            cur.execute("SELECT name, content FROM py_files WHERE project_id=%s", (pid,))
             return {name: content or "" for name, content in cur.fetchall()}
     finally:
         conn.close()
 
 
-def pyfiles_save(account_id: int, name: str, content: str, uploaded: bool = False):
+def pyfiles_save(account_id: int, name: str, content: str, uploaded: bool = False,
+                 project_id: int | None = None):
     conn = root_conn(C.META_DB)
     try:
         with conn.cursor() as cur:
+            pid = int(_project_row(cur, account_id, project_id)[0])
             # 更新已有文件时不改动 uploaded 标记：编辑上传的临时文件不会把它变成永久文件
-            cur.execute("""INSERT INTO py_files (account_id, name, content, uploaded) VALUES (%s,%s,%s,%s)
+            cur.execute("""INSERT INTO py_files
+                           (project_id, account_id, name, content, uploaded)
+                           VALUES (%s,%s,%s,%s,%s)
                            ON DUPLICATE KEY UPDATE content=VALUES(content),
                            updated_at=CURRENT_TIMESTAMP""",
-                        (account_id, name, content, 1 if uploaded else 0))
+                        (pid, account_id, name, content, 1 if uploaded else 0))
     finally:
         conn.close()
 
 
-def pyfiles_delete_uploaded(account_id: int) -> int:
-    """删除该账号所有「上传的临时 py 文件」，返回删除数量。"""
+def pyfiles_delete_uploaded(account_id: int, project_id: int | None = None) -> int:
+    """删除临时 py 文件；传项目只清该项目，否则清该账号所有项目。"""
     conn = root_conn(C.META_DB)
     try:
         with conn.cursor() as cur:
-            cur.execute("DELETE FROM py_files WHERE account_id=%s AND uploaded=1", (account_id,))
+            if project_id:
+                pid = int(_project_row(cur, account_id, project_id)[0])
+                cur.execute("DELETE FROM py_files WHERE project_id=%s AND uploaded=1", (pid,))
+            else:
+                cur.execute("DELETE FROM py_files WHERE account_id=%s AND uploaded=1", (account_id,))
             return cur.rowcount
     finally:
         conn.close()
 
 
-def pyfiles_delete(account_id: int, name: str):
+def pyfiles_delete(account_id: int, name: str, project_id: int | None = None):
     conn = root_conn(C.META_DB)
     try:
         with conn.cursor() as cur:
-            cur.execute("DELETE FROM py_files WHERE account_id=%s AND name=%s", (account_id, name))
+            pid = int(_project_row(cur, account_id, project_id)[0])
+            cur.execute("DELETE FROM py_files WHERE project_id=%s AND name=%s", (pid, name))
     finally:
         conn.close()
 
 
-def pyfiles_unique_name(account_id: int, base: str, existing: set[str] | None = None) -> str:
+def pyfiles_unique_name(account_id: int, base: str, existing: set[str] | None = None,
+                        project_id: int | None = None) -> str:
     name = normalize_pyfile_name(base) or "main.py"
     if existing is None:
-        existing = {f["name"].casefold() for f in pyfiles_list(account_id)}
+        existing = {f["name"].casefold() for f in pyfiles_list(account_id, project_id)}
     if name.casefold() not in existing:
         return name
     stem = name[:-3]
@@ -814,6 +1018,8 @@ def cleanup_pass():
         try:
             c = root_conn(C.META_DB)
             with c.cursor() as cur:
+                cur.execute("DELETE FROM py_files WHERE account_id=%s", (account_id,))
+                cur.execute("DELETE FROM py_projects WHERE account_id=%s", (account_id,))
                 cur.execute("DELETE FROM sessions WHERE account_id=%s", (account_id,))
                 cur.execute("DELETE FROM accounts WHERE id=%s", (account_id,))
             c.close()
@@ -896,6 +1102,8 @@ def admin_delete_user(account_id: int):
                 raise AuthError("不能删除管理员账号")
             cur.execute("SELECT db_name FROM dbs WHERE account_id=%s AND primary_db=0", (account_id,))
             extra_dbs = [r[0] for r in cur.fetchall()]
+            cur.execute("DELETE FROM py_files WHERE account_id=%s", (account_id,))
+            cur.execute("DELETE FROM py_projects WHERE account_id=%s", (account_id,))
             cur.execute("DELETE FROM sessions WHERE account_id=%s", (account_id,))
             cur.execute("DELETE FROM dbs WHERE account_id=%s", (account_id,))
             cur.execute("DELETE FROM accounts WHERE id=%s", (account_id,))

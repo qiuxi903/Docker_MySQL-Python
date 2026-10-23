@@ -34,7 +34,7 @@ Docker_MySQL-Python/
 │     ├─ main.py               # FastAPI 入口：全部 API 路由 + 静态托管 + IP 限流
 │     ├─ config.py             # 全部配置项（环境变量 → C 类，含默认值）
 │     ├─ auth.py               # 注册/登录：用户名与密码策略、弱口令与保留名拦截、PBKDF2 哈希
-│     ├─ sessions.py           # 会话 token、独立库开通、MySQL 账号授权、定时清理、Python 多文件
+│     ├─ sessions.py           # 会话 token、独立库开通、MySQL 账号授权、定时清理、Python 项目/多文件
 │     ├─ db.py                 # root / 受限用户两种连接、标识符安全转义
 │     ├─ sqlrun.py             # SQL 执行器：无分号智能分行、超时看门狗、行数上限、错误友好化
 │     ├─ importer.py           # CSV / Excel / SQL 脚本导入、列类型推断、源文件存档
@@ -393,7 +393,11 @@ CodeMirror 编辑器 + 下方结果网格（结果 / 消息两个页签）+ 状�
 - **容器级加固**：runner 容器只读根文件系统、`tmpfs /tmp`、进程数上限 96、内存上限 768MB、位于 internal 网络**无外网**、不对外暴露端口。
 - **预置助手**（无需 import）：`query(sql)` 查询、`query_dicts(sql)` 字典查询、`execute(sql)` 增删改（自动 commit）、`get_conn()` 原生 pymysql 连接（已填好自己库的地址账号）。也支持手写 `import pymysql`。
 - **空白起步**：新账号的 `main.py` 是空文件，不预置任何代码或示例命令，学生自己写。
-- **多文件**：最多 30 个 `.py`，支持新建和批量上传；重名文件自动加序号，不覆盖原文件。已打开文件显示在编辑器标签栏，可切换和关闭；**每次输入都自动保存**（切换时若还在保存中会先落盘再切，并在屏幕顶部弹出悬浮胶囊提示「已切换到 xx」）。运行时同一账号目录中的文件可互相 `import`，例如 `import helper`。
+- **按项目组织**：每个账号最多 **10 个 Python 项目**，左侧按项目展开文件；每个项目独立一个工作区，最多 30 个 `.py`。同一个文件名可以同时存在于不同项目（例如两个项目各有一个 `main.py`），互不覆盖。
+- **项目隔离**：运行时只把**当前项目**的文件放进沙箱，`import` 看不到其他项目的文件；在 A 项目 `import helper`，B 项目同名文件不会生效。项目可以新建、重命名、删除（删除会连同文件一起删除，至少保留一个默认项目）。
+- **文件按修改时间排序**：项目内文件列表按 `updated_at` 倒序，最近改过的在最上面；切换项目会重置标签栏并打开该项目最近修改的文件。
+- **多文件**：支持新建和批量上传；重名文件自动加序号，不覆盖原文件。已打开文件显示在编辑器标签栏，可切换和关闭；**每次输入都自动保存**（切换时若还在保存中会先落盘再切，并在屏幕顶部弹出悬浮胶囊提示「已切换到 xx」）。
+- **出题/题库**：出题工作台的 Python 部分取当前项目的文件；从题库导入整套题时，Python 文件也保存到当前项目。
 - **文件来源分两种**：新建的文件保存在服务器，换设备登录不丢；**上传的文件是临时的**（列表里带「临时」标记），刷新页面或退出登录即自动删除，防止把同学发来的代码长期留在公共机房电脑上。
 - **无图形界面**：沙箱是纯命令行环境，没有 Tk / X 显示服务，`tkinter` / `turtle` / `PyQt` / `pygame` 等图形库不可用（学生代码里别用），用 `print` 输出结果；页面上已有相应提示。
 - 报错时过滤沙箱内部栈帧，只显示与学生代码相关的 traceback。
@@ -473,8 +477,10 @@ CodeMirror 编辑器 + 下方结果网格（结果 / 消息两个页签）+ 状�
 | GET | `/api/community/{id}/download` | 下载资源文件 |
 | DELETE | `/api/community/{id}` | 删除资源（管理员/上传者） |
 | POST | `/api/community/open` | 打开题库里的 .py 到编辑器 |
-| GET/PUT/DELETE | `/api/pyfiles[/{name}]` | Python 多文件列表 / 读写 / 删除 |
-| POST | `/api/pyfiles/upload` | 批量上传 .py 文件（重名自动加序号，不覆盖；临时文件） |
+| GET/POST | `/api/pyprojects` | Python 项目列表 / 新建（每人最多 10 个） |
+| POST | `/api/pyprojects/{id}/rename` · DELETE `/api/pyprojects/{id}` | 项目改名 / 删除（连同文件） |
+| GET/PUT/DELETE | `/api/pyfiles[/{name}]?projectId=` | 当前项目的文件列表 / 读写 / 删除（不传项目用默认项目） |
+| POST | `/api/pyfiles/upload` | 批量上传 .py 到指定项目（重名自动加序号；临时文件） |
 | POST | `/api/pyfiles/clear-uploaded` | 删除当前账号所有上传的临时 py 文件 |
 | GET | `/api/questions/mine` | 我的题目（草稿 + 已发布） |
 | POST | `/api/questions/save` | 新建 / 保存题目草稿（含快照 MySQL 与 Python 部分） |
@@ -483,7 +489,7 @@ CodeMirror 编辑器 + 下方结果网格（结果 / 消息两个页签）+ 状�
 | DELETE | `/api/questions/{id}` | 删除题目（本人或管理员） |
 | POST | `/api/questions/{id}/import` | 一键导入整套（建库 + 加文件） |
 | GET | `/api/questions/{id}/download` | 下载题目 zip（.sql + .py） |
-| POST | `/api/pyrun/start` | 提交 Python 代码 → 作业 id |
+| POST | `/api/pyrun/start` | 提交 Python 代码 → 作业 id（只加载 `projectId` 对应项目的文件） |
 | POST | `/api/pyrun/input` | 向运行中程序写 stdin |
 | GET | `/api/pyrun/status/{job}` | 轮询输出 / 状态 |
 | GET | `/api/source/{table}[/download]` | 表的源文件存档查看 / 下载 |
@@ -653,7 +659,7 @@ python tests/smoke_test.py http://其他地址  # 也可以指定
 ```
 
 - `local_test.py`（111 项）：SQL 语句切分、无分号多行聚合、导入解析、密码策略、题目包 zip 解包（含 GBK 文件名 / 坏包 / 超大文件 / 无关文件过滤）、沙箱执行引擎（正常输出 / 报错 / 死循环 / input 交互）等纯逻辑。
-- `smoke_test.py`（258 项）：注册 → 建库 → SQL → 导入三种格式 → 题库 / 素材包 → Python 运行与连库 → 隔离与权限 → 管理员与用户系统 → 弱密码拦截 → 练习判分（多种判分模式）→ 出题数据导入 → 题目包 zip 导入、试卷卡片与得分、整卷交卷（按套限次 / 答案可见 / 暂停计时 / 异常续做上限）与按次统计、Navicat 库结构接口与图形建表判分的全流程。
+- `smoke_test.py`（268 项）：注册 → 建库 → SQL → 导入三种格式 → 题库 / 素材包 → Python 运行与连库 → 隔离与权限 → 管理员与用户系统 → 弱密码拦截 → 练习判分（多种判分模式）→ 出题数据导入 → 题目包 zip 导入、试卷卡片与得分、整卷交卷（按套限次 / 答案可见 / 暂停计时 / 异常续做上限）与按次统计、Python 项目隔离与上限、Navicat 库结构接口与图形建表判分的全流程。
 
 ## 十、安全模型
 

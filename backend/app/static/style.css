@@ -2291,3 +2291,28 @@ input[type="text"], input[type="password"], textarea, select, .CodeMirror,
   animation: pdbPulse 1.2s ease-in-out infinite;
 }
 @keyframes pdbPulse { 0%, 100% { opacity: 1; } 50% { opacity: .2; } }
+
+/* ============ Python 项目分组 ============ */
+.pyproj-list { padding-bottom: 4px; }
+.pyproj { border-bottom: 1px solid var(--line); }
+.pyproj-h {
+  display: flex; align-items: center; gap: 6px; padding: 8px 10px; cursor: pointer;
+}
+.pyproj-h:hover { background: var(--btn-bg); }
+.pyproj.on > .pyproj-h { background: var(--accent-weak); }
+.pyproj-chev { display: inline-flex; align-items: center; width: 14px; color: var(--muted); }
+.pyproj.on .pyproj-chev { color: var(--accent); }
+.pyproj-name {
+  flex: 1; min-width: 0; font-size: 13px; font-weight: 600;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.pyproj-count {
+  flex: 0 0 auto; font-size: 10.5px; color: var(--muted);
+  background: var(--btn-bg); border-radius: 999px; padding: 0 6px;
+}
+.pyproj-actions { display: flex; align-items: center; gap: 2px; flex: 0 0 auto; }
+.pyproj-actions .row-x { width: 20px; height: 20px; }
+.pyproj-files { padding: 0 0 4px; }
+.pyproj-files .tbrow { padding-left: 30px; }
+.pyproj-files .tbname { font-weight: 400; }
+.pyproj-new { justify-content: center; gap: 6px; color: var(--accent); font-weight: 500; }
