@@ -340,6 +340,7 @@ const App = {
       paperNow: Date.now(),
       paperAutoSubmitting: false,
       paperAutoRetryAt: 0,
+      paperActive: false,      // 已经进入这套卷子的作答（哪怕一题没写）
       papersBusy: false,
       drillTabs: [
         { value: "sql", label: "MySQL", icon: "database" },
@@ -845,6 +846,7 @@ const App = {
       }
       this.flushDrillDraft();
       this.stashPaperNav();
+      this.setPaperActive(false);
       try { await this.api("/api/logout", { method: "POST" }); } catch (e) {}
       this.token = "";
       this.user = null;
@@ -857,6 +859,7 @@ const App = {
       if (!await this.confirmLeaveDrill()) return;
       this.flushDrillDraft();
       this.stashPaperNav();
+      if (this.paperCurrent) this.setPaperActive(false);
       this.view = v;
       this.drawer = "";
       if (v === "community" && !this.community.length) this.loadCommunity();
@@ -909,6 +912,7 @@ const App = {
       if (!await this.confirmLeaveDrill()) return;
       this.flushDrillDraft();
       this.stashPaperNav();
+      this.setPaperActive(false);
       this.drillView = "list";
       this.paperCurrent = null;
       this.drillCurrent = null;
@@ -928,6 +932,7 @@ const App = {
         this.paperCurrent = await this.api(`/api/papers/${p.id}`);
         this.paperDeadline = 0;
         this.paperLimitMinutes = this.paperCurrent.timeLimitMinutes || 0;
+        this.loadPaperActive(p.id);
         this.loadPaperNav(p.id);
         this.paperAnswers = {};
         this.syncPaperAnswers();
@@ -949,6 +954,7 @@ const App = {
       if (!await this.confirmLeaveDrill()) return;
       this.flushDrillDraft();
       this.stashPaperNav();
+      this.setPaperActive(false);
       this.drillView = "paper";
       this.drillCurrent = null;
       this.drillResult = null;
@@ -1081,6 +1087,23 @@ const App = {
         const raw = localStorage.getItem(this._paperNavKey(pid));
         this.paperNav = raw ? (JSON.parse(raw) || {}) : {};
       } catch (e) { this.paperNav = {}; }
+    },
+    _paperActiveKey(pid) {
+      const who = (this.user && this.user.name) || "?";
+      return "lab_paper_active:" + who + ":" + pid;
+    },
+    loadPaperActive(pid) {
+      try { this.paperActive = localStorage.getItem(this._paperActiveKey(pid)) === "1"; }
+      catch (e) { this.paperActive = false; }
+    },
+    setPaperActive(on) {
+      this.paperActive = !!on;
+      const pid = this.paperCurrent && this.paperCurrent.id;
+      if (!pid) return;
+      try {
+        if (on) localStorage.setItem(this._paperActiveKey(pid), "1");
+        else localStorage.removeItem(this._paperActiveKey(pid));
+      } catch (e) {}
     },
     savePaperNav() {
       const pid = this.paperCurrent && this.paperCurrent.id;
@@ -1277,6 +1300,7 @@ const App = {
         this.drillView = "stats";
         this.clearPaperDrafts();
         this.clearPaperTimer();
+        this.setPaperActive(false);
         this.refreshPaper();
         await this.loadPapers();
         this.toast(auto
@@ -1307,7 +1331,10 @@ const App = {
       // 切题前先把上一题的草稿和 Navicat 操作落盘
       this.flushDrillDraft();
       this.stashPaperNav();
-      if (this.paperCurrent) await this.ensurePaperSession();
+      if (this.paperCurrent) {
+        this.setPaperActive(true);
+        await this.ensurePaperSession();
+      }
       this.drillView = "do";
       window.scrollTo(0, 0);
       await this.openDrill(d);
@@ -1390,7 +1417,7 @@ const App = {
       if (this.view !== "drills") return true;
       if (this.drillView === "do" && this.drillCurrent) {
         if (this.paperCurrent) {
-          if (!this.paperHasUnsubmitted()) return true;
+          if (!this.paperActive && !this.paperHasUnsubmitted()) return true;
           const timer = this.paperDeadline ? "限时还在继续计时。" : "";
           this._leavePrompted = true;
           return await this.askConfirm(
@@ -1407,7 +1434,8 @@ const App = {
           true, "离开", "继续做题");
       }
       // 试卷详情：还有没交卷的草稿时，返回清单/切换页面也提醒
-      if (this.drillView === "paper" && this.paperCurrent && this.paperHasSavedDrafts()) {
+      if (this.drillView === "paper" && this.paperCurrent &&
+          (this.paperActive || this.paperHasSavedDrafts())) {
         const timer = this.paperDeadline ? "限时还在继续计时。" : "";
         this._leavePrompted = true;
         return await this.askConfirm(
@@ -1421,10 +1449,10 @@ const App = {
     onBeforeUnload(e) {
       let dirty = false;
       if (this.view === "drills" && this.drillView === "do" && this.drillCurrent) {
-        dirty = this.paperCurrent ? this.paperHasUnsubmitted()
+        dirty = this.paperCurrent ? (this.paperActive || this.paperHasUnsubmitted())
                                   : (this.drillDirty && this.drillHasAnswer());
       } else if (this.view === "drills" && this.drillView === "paper" && this.paperCurrent) {
-        dirty = this.paperHasSavedDrafts();
+        dirty = this.paperActive || this.paperHasSavedDrafts();
       } else if (this.view === "sql") {
         const sql = this.$refs.cmSqlRef ? this.$refs.cmSqlRef.getValue() : "";
         dirty = !!sql.trim();
