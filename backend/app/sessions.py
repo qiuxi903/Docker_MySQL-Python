@@ -75,6 +75,7 @@ def _init_meta():
                     db_name VARCHAR(64) NOT NULL,
                     primary_db TINYINT(1) NOT NULL DEFAULT 0,
                     origin VARCHAR(16) NOT NULL DEFAULT 'own',
+                    setup_sig VARCHAR(64) NOT NULL DEFAULT '',
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                     PRIMARY KEY (db_name),
                     KEY idx_account (account_id)
@@ -83,6 +84,11 @@ def _init_meta():
             try:  # 旧库升级：补 origin 列
                 cur.execute(f"ALTER TABLE {q_ident(C.META_DB)}.dbs "
                             "ADD COLUMN origin VARCHAR(16) NOT NULL DEFAULT 'own'")
+            except Exception:
+                pass
+            try:  # 题目初始化 SQL 的版本指纹，老师改题后沙箱自动重建
+                cur.execute(f"ALTER TABLE {q_ident(C.META_DB)}.dbs "
+                            "ADD COLUMN setup_sig VARCHAR(64) NOT NULL DEFAULT ''")
             except Exception:
                 pass
             cur.execute(f"""

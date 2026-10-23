@@ -1838,6 +1838,13 @@ const App = {
         const r = await this.api("/api/author/qpack/create", { method: "POST",
           body: { package: this.qpack, publish: true, judge } });
         const dup = (r.duplicates || []).length;
+        const warns = r.warnings || [];
+        if (warns.length) {
+          await this.askConfirm(
+            "创建完成，有提醒",
+            warns.slice(0, 4).join("；") + (warns.length > 4 ? "…" : ""),
+            false, "知道了", "关闭");
+        }
         this.toast(dup
           ? `已创建 ${r.created.length} 道题，跳过 ${dup} 道重复题`
           : `已创建 ${r.created.length} 道题并发布`);

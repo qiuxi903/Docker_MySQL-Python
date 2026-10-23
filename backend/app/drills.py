@@ -13,6 +13,7 @@
 防作弊：verify_sql / expected_output / answer_json 只在「出题人 / 管理员」的接口里下发，
 学生做题时拿不到标准答案；提交判分后才返回对照结果。
 """
+import hashlib
 import io
 import json
 import os
@@ -1580,6 +1581,9 @@ def create_from_package(account: dict, pkg: dict, publish: bool = True,
     created = []
     duplicates = []
     warnings = []
+    # 有些卷子是连续实验：后面的题依赖前面题改动过的表结构/数据。
+    # 逐题验证参考答案，前面的答案会累加到 cum_sql，供后面的题当初始数据。
+    cum_sql = data_sql
     conn = root_conn(C.COMMUNITY_DB)
     try:
         with conn.cursor() as cur:
@@ -1600,6 +1604,11 @@ def create_from_package(account: dict, pkg: dict, publish: bool = True,
                 title = f"{q['no']}. " + " ".join((q.get("text") or "").split())[:60]
                 if title in existing:
                     duplicates.append({"no": q["no"], "title": title})
+                    # 重复导入时，这套卷子里已有的题也可能被后面的新题依赖
+                    if q.get("kind") in ("sql_dml", "sql_ddl"):
+                        add = f"\n\n-- 第 {q['no']} 题参考答案\n" + q["answer"] + "\n"
+                        if len(cum_sql) + len(add) <= SETUP_TEXT_MAX:
+                            cum_sql += add
                     continue
                 score = int(q.get("score") or SCORE_DEFAULT)
                 score = max(SCORE_MIN, min(SCORE_MAX, score))
@@ -1638,6 +1647,44 @@ def create_from_package(account: dict, pkg: dict, publish: bool = True,
                          1 if (publish and ready) else 0,
                          1 if (publish and ready) else 0, paper_id, score))
                 else:
+                    # SQL 题：先在临时库里把参考答案跑一遍，答案本身报错就存草稿并提醒。
+                    # 先在本题自己的初始数据上跑；失败且前面题改过数据时，再试一次
+                    # 「原始数据 + 前面题的答案」，这样连续实验卷也能自动接上。
+                    ref = q["answer"]
+
+                    def _ref_err(setup):
+                        try:
+                            tr = try_sql(account, setup, ref)
+                            return (tr.get("error") or "").strip()
+                        except Exception as e:
+                            return str(e)[:200]
+
+                    ref_error = _ref_err(data_sql)
+                    setup_sql = data_sql
+                    used_prior = False
+                    if ref_error and cum_sql.strip() and cum_sql != data_sql:
+                        cum_err = _ref_err(cum_sql)
+                        if not cum_err:
+                            setup_sql = cum_sql
+                            ref_error = ""
+                            used_prior = True
+                        else:
+                            ref_error = cum_err or ref_error
+                    publish_one = publish
+                    if ref_error:
+                        publish_one = False
+                        warnings.append(
+                            f"第 {q['no']} 题的参考答案在题目数据上执行失败，已存为草稿："
+                            f"{ref_error[:180]}")
+                    elif used_prior:
+                        warnings.append(
+                            f"第 {q['no']} 题依赖前面题目的结果，已自动把前面题的答案"
+                            f"并入本题初始数据")
+                    # 把本题的改表/改数据答案累加给后面的题
+                    if not ref_error and q.get("kind") in ("sql_dml", "sql_ddl"):
+                        add = f"\n\n-- 第 {q['no']} 题参考答案\n" + ref + "\n"
+                        if len(cum_sql) + len(add) <= SETUP_TEXT_MAX:
+                            cum_sql += add
                     # SQL 题：整库状态判分，答案作为「校验语句」不合适时改用查询校验
                     verify = q["answer"]
                     cur.execute(f"""INSERT INTO drills
@@ -1647,8 +1694,8 @@ def create_from_package(account: dict, pkg: dict, publish: bool = True,
                         VALUES (%s,%s,'sql','sql',%s,%s,%s,%s,'','','','[]','{{}}',%s,%s,'',
                                 %s, CASE WHEN %s=1 THEN NOW() ELSE NULL END,%s,%s)""",
                         (account["id"], account["display"], title, stem_text,
-                         data_sql, verify, q.get("note", ""), mode,
-                         1 if publish else 0, 1 if publish else 0, paper_id, score))
+                         setup_sql, verify, q.get("note", ""), mode,
+                         1 if publish_one else 0, 1 if publish_one else 0, paper_id, score))
                 created.append({"id": cur.lastrowid, "no": q["no"], "title": title,
                                 "score": score, "kind": q.get("kind") or "sql"})
                 existing.add(title)
@@ -1682,16 +1729,26 @@ def ensure_sandbox(account: dict, drill_id: int, reset: bool = False) -> dict:
 
     db = _sandbox_name(account["id"], drill_id)
     owner = False
+    old_sig = ""
     conn = root_conn(C.META_DB)
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT account_id FROM dbs WHERE db_name=%s", (db,))
+            cur.execute("SELECT account_id, setup_sig FROM dbs WHERE db_name=%s", (db,))
             row = cur.fetchone()
             owner = bool(row) and row[0] == account["id"]
+            old_sig = (row[1] or "") if row else ""
     finally:
         conn.close()
 
     setup = (full.get("setupSql") or "").strip()
+    setup_sig = hashlib.sha1(setup.encode("utf-8")).hexdigest() if setup else ""
+    # 老师改过题目数据：旧沙箱自动作废重建
+    if owner and setup and old_sig != setup_sig:
+        try:
+            sessions.drop_user_db(account, db)
+        except Exception:
+            pass
+        owner = False
     if reset and owner:
         try:
             sessions.drop_user_db(account, db)
@@ -1724,6 +1781,14 @@ def ensure_sandbox(account: dict, drill_id: int, reset: bool = False) -> dict:
                 err = _first_error(r.get("results"))
                 if err:
                     raise DrillError("题目的初始化 SQL 有问题，请联系出题老师：" + err)
+                conn = root_conn(C.META_DB)
+                try:
+                    with conn.cursor() as cur:
+                        cur.execute("""UPDATE dbs SET setup_sig=%s
+                                        WHERE db_name=%s AND account_id=%s""",
+                                    (setup_sig, db, account["id"]))
+                finally:
+                    conn.close()
             except DrillError:
                 try:
                     sessions.drop_user_db(account, db)

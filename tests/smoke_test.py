@@ -808,6 +808,20 @@ check("题目包：建表题用整库状态判分",
 check("题目包：查询题用结果集判分",
       pkg["questions"][2].get("judgeMode") == "result", str(pkg["questions"][2]))
 
+# 答案里有子查询的 DELETE/INSERT 仍是改数据题，不能因为出现 SELECT 就判成查询题
+sub_buf = io.BytesIO()
+with zipfile.ZipFile(sub_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+    zf.writestr("stem.txt", f"【题  干】\n删除好友 {QP_TAG}\n\n1. 删除编号 10005 的好友 Jose {QP_TAG}。\n")
+    zf.writestr("answer.txt", " -- 1\n"
+                "DELETE FROM t_friendship WHERE uid=10005\n"
+                "AND fid IN (SELECT fid FROM t_user WHERE nickname='Jose');\n")
+sub_body, sub_ct = multipart_files([("subquery.zip", sub_buf.getvalue())])
+code, sub_pkg = call("/api/author/qpack/parse", raw=sub_body, ctype=sub_ct, token=tok_ad2)
+check("题目包：DELETE 带子查询仍按改数据判分",
+      code == 200 and (sub_pkg.get("questions") or [{}])[0].get("kind") == "sql_dml" and
+      (sub_pkg.get("questions") or [{}])[0].get("judgeMode") == "dbstate",
+      str(sub_pkg)[:250])
+
 # 损坏的 zip 给出可读错误
 bad_body, bad_ct = multipart_files([("坏包.zip", b"this is not a zip")])
 code, r = call("/api/author/qpack/parse", raw=bad_body, ctype=bad_ct, token=tok_ad2)

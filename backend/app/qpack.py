@@ -389,13 +389,22 @@ def parse_answers(ans_text: str) -> dict[int, str]:
 
 def guess_type(question_text: str, answer_sql: str) -> str:
     """按答案和题干猜题型：改/建对象 vs 查询。"""
-    ans = (answer_sql or "").upper()
+    ans = (answer_sql or "")
     q = question_text or ""
-    if re.search(r"\b(CREATE|ALTER|DROP)\s+(TABLE|VIEW|TRIGGER|PROCEDURE|FUNCTION|INDEX|DATABASE)\b", ans):
-        return "sql_ddl"
-    if re.search(r"\b(INSERT|UPDATE|DELETE)\b", ans) and "SELECT" not in ans.split("INSERT")[0]:
-        return "sql_dml"
-    if re.search(r"\bSELECT\b", ans):
+    # 不能简单看“答案里有没有 SELECT”：DELETE ... WHERE id IN (SELECT ...)
+    # 和 INSERT ... SELECT 都是改数据题。去掉注释和字符串后，看最先出现的关键字。
+    code = re.sub(r"/\*.*?\*/", " ", ans, flags=re.S)
+    code = re.sub(r"--[^\n]*", " ", code)
+    code = re.sub(r"#[^\n]*", " ", code)
+    code = re.sub(r"'(?:[^'\\]|\\.)*'|\"(?:[^\"\\]|\\.)*\"", "''", code)
+    m = re.search(r"\b(CREATE|ALTER|DROP|TRUNCATE|RENAME|INSERT|UPDATE|DELETE|REPLACE|SELECT)\b",
+                  code, re.I)
+    if m:
+        kw = m.group(1).upper()
+        if kw in ("CREATE", "ALTER", "DROP", "TRUNCATE", "RENAME"):
+            return "sql_ddl"
+        if kw in ("INSERT", "UPDATE", "DELETE", "REPLACE"):
+            return "sql_dml"
         return "sql_select"
     # 题干里明确"创建一个.../删除.../修改..."也算改数据题
     if re.search(r"(创建|新建|添加|插入|删除|修改|更新|建立)", q):
