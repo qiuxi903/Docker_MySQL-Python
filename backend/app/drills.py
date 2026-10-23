@@ -2420,19 +2420,18 @@ def submit(account: dict, did: int, answer) -> dict:
 
 
 def start_paper(account: dict, pid: int) -> dict:
-    """开始 / 继续一次整卷作答，返回限时信息（限时从第一次开始计时，刷新不重置）。"""
+    """开始 / 继续一次整卷作答：返回已用时和限时信息（刷新不重置）。"""
     p, used = _paper_cfg(account, pid)
     mine = p[1] == account["id"]
     limit = int(p[7] or 0)
     max_attempts = int(p[5] or 0)
-    out = {"limitMinutes": 0, "secondsLeft": 0, "startedAt": "",
-           "attemptsUsed": used, "maxAttempts": max_attempts, "expired": False}
-    if mine or account.get("role") == "admin":
-        limit = 0
+    out = {"limitMinutes": 0, "secondsLeft": 0, "elapsedSeconds": 0,
+           "startedAt": "", "attemptsUsed": used, "maxAttempts": max_attempts,
+           "expired": False}
     if max_attempts > 0 and used >= max_attempts:
-        limit = 0
-    if limit <= 0:
         return out
+    if mine or account.get("role") == "admin":
+        limit = 0          # 出卷人 / 管理员试做：只统计用时，不限时
     conn = root_conn(C.COMMUNITY_DB)
     try:
         with conn.cursor() as cur:
@@ -2445,22 +2444,26 @@ def start_paper(account: dict, pid: int) -> dict:
                                (paper_id, account_id, limit_minutes)
                                VALUES (%s,%s,%s)""", (pid, account["id"], limit))
                 conn.commit()
-            elif int(row[1] or 0) <= 0:
-                return out
-            cur.execute("""SELECT TIMESTAMPDIFF(SECOND, NOW(),
-                              DATE_ADD(started_at, INTERVAL limit_minutes MINUTE)),
-                              started_at, limit_minutes
+            cur.execute("""SELECT started_at, limit_minutes,
+                                  TIMESTAMPDIFF(SECOND, started_at, NOW()),
+                                  TIMESTAMPDIFF(SECOND, NOW(),
+                                    DATE_ADD(started_at, INTERVAL limit_minutes MINUTE))
                              FROM drill_paper_sessions
                             WHERE account_id=%s AND paper_id=%s""",
                         (account["id"], pid))
-            sec, started, sess_limit = cur.fetchone()
+            started, sess_limit, elapsed, sec_left = cur.fetchone()
     finally:
         conn.close()
-    sec = int(sec or 0)
-    out.update({"limitMinutes": int(sess_limit or 0),
-                "secondsLeft": max(0, sec),
-                "startedAt": str(started) if started else "",
-                "expired": sec <= 0})
+    sess_limit = int(sess_limit or 0)
+    if mine or account.get("role") == "admin":
+        sess_limit = 0
+    out.update({
+        "limitMinutes": sess_limit,
+        "secondsLeft": max(0, int(sec_left or 0)) if sess_limit > 0 else 0,
+        "elapsedSeconds": max(0, int(elapsed or 0)),
+        "startedAt": str(started) if started else "",
+        "expired": sess_limit > 0 and int(sec_left or 0) <= 0,
+    })
     return out
 
 
@@ -2533,6 +2536,9 @@ def submit_paper(account: dict, pid: int, answers: dict, auto: bool = False) -> 
         sec_left = int(sess[2] or 0)
     elif limit_minutes > 0:
         sec_left = limit_minutes * 60
+    if mine or account.get("role") == "admin":
+        limit_minutes = 0
+        sec_left = None
     expired = limit_minutes > 0 and sec_left is not None and sec_left <= 0
     if answered_n == 0 and not expired:
         raise DrillError("还没有作答，先做几道题再交卷")

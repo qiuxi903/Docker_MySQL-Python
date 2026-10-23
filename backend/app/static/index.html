@@ -616,6 +616,7 @@ html[data-theme="light"] body { background: #f6f8fa; }
                     :class="{out: paperOutOfTries}">
                 {{ paperOutOfTries ? '交卷次数已用完' : '剩余 ' + paperTriesLeft + ' 次' }}
               </span>
+              <span v-if="paperElapsedSeconds !== null" class="pdb-stat">用时 {{ paperElapsedText }}</span>
               <span v-if="paperSecondsLeft !== null" class="pdb-stat"
                     :class="{out: paperTimeLow}">剩余 {{ paperTimeText }}</span>
               <span class="spacer"></span>
@@ -2918,6 +2919,6 @@ INSERT INTO course VALUES (1,'数学');</pre>
 </script>
 
 <script src="/navicat.js?v=1"></script>
-<script src="/app.js?v=148"></script>
+<script src="/app.js?v=149"></script>
 </body>
 </html>

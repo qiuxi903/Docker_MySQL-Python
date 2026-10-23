@@ -336,6 +336,7 @@ const App = {
       paperAnswers: {},        // 本次作答：题目 id -> 是否已写答案
       paperNav: {},            // 本题 Navicat 操作缓存：题目 id -> {log, query, mode}
       paperLimitMinutes: 0,    // 本套限时（分钟）
+      paperStartAt: 0,         // 本次作答开始时间戳（本地换算）
       paperDeadline: 0,        // 本次作答截止时间戳
       paperNow: Date.now(),
       paperAutoSubmitting: false,
@@ -547,6 +548,19 @@ const App = {
     },
     paperTimeText() {
       const s = this.paperSecondsLeft;
+      if (s === null) return "";
+      const h = Math.floor(s / 3600);
+      const m = Math.floor((s % 3600) / 60);
+      const sec = s % 60;
+      const pad = n => String(n).padStart(2, "0");
+      return h ? `${h}:${pad(m)}:${pad(sec)}` : `${m}:${pad(sec)}`;
+    },
+    paperElapsedSeconds() {
+      if (!this.paperStartAt) return null;
+      return Math.max(0, Math.floor((this.paperNow - this.paperStartAt) / 1000));
+    },
+    paperElapsedText() {
+      const s = this.paperElapsedSeconds;
       if (s === null) return "";
       const h = Math.floor(s / 3600);
       const m = Math.floor((s % 3600) / 60);
@@ -931,6 +945,7 @@ const App = {
       try {
         this.paperCurrent = await this.api(`/api/papers/${p.id}`);
         this.paperDeadline = 0;
+        this.paperStartAt = 0;
         this.paperLimitMinutes = this.paperCurrent.timeLimitMinutes || 0;
         this.loadPaperActive(p.id);
         this.loadPaperNav(p.id);
@@ -992,6 +1007,7 @@ const App = {
           this.paperCurrent.showAnswer = r.showAnswer;
           this.paperCurrent.timeLimitMinutes = r.timeLimitMinutes;
           this.paperDeadline = 0;
+          this.paperStartAt = 0;
           this.paperLimitMinutes = r.timeLimitMinutes;
         }
         const p = this.papers.find(x => x.id === f.id);
@@ -1231,9 +1247,10 @@ const App = {
       try {
         const r = await this.api(`/api/papers/${this.paperCurrent.id}/start`, { method: "POST" });
         this.paperLimitMinutes = r.limitMinutes || 0;
+        this.paperNow = Date.now();
+        this.paperStartAt = this.paperNow - Math.max(0, r.elapsedSeconds || 0) * 1000;
         if (r.limitMinutes > 0) {
-          this.paperDeadline = Date.now() + Math.max(0, r.secondsLeft || 0) * 1000;
-          this.paperNow = Date.now();
+          this.paperDeadline = this.paperNow + Math.max(0, r.secondsLeft || 0) * 1000;
         } else {
           this.paperDeadline = 0;
         }
@@ -1241,6 +1258,7 @@ const App = {
     },
     clearPaperTimer() {
       this.paperDeadline = 0;
+      this.paperStartAt = 0;
       this.paperLimitMinutes = 0;
       this.paperAutoRetryAt = 0;
       this.paperAutoSubmitting = false;
