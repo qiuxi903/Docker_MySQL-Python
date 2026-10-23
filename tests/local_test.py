@@ -241,10 +241,29 @@ check("zip：超大文件被拒", ok)
 
 print("== 6. Python 沙箱执行引擎（交互式作业） ==")
 from runner import server as runner_server
+import atexit
+import shutil
 import time as _t
 
 NL = chr(10)   # 换行
 CR = chr(13)   # 回车（Windows 输出带 CR）
+
+
+@atexit.register
+def _cleanup_test_jobs():
+    """本地测试会直接调用 runner.start_job；进程退出后清理子进程和 temp 目录，
+    否则死循环/等待输入的作业会留下 pyrun_* 目录和 Python 进程。"""
+    for job in list(runner_server.jobs.values()):
+        try:
+            if job.proc.poll() is None:
+                job.proc.kill()
+                job.proc.wait(timeout=3)
+        except Exception:
+            pass
+        try:
+            shutil.rmtree(job.td, ignore_errors=True)
+        except Exception:
+            pass
 
 
 def run_code(code, tries=40):
