@@ -215,6 +215,16 @@ const CmEditor = {
     }
     if (this.value) this.cm.setValue(this.value);
     this.cm.on("change", () => this.$emit("change", this.cm.getValue()));
+    // 网页字体或样式晚到时，CodeMirror 会沿用首次测量的行号栏宽度，
+    // 字体一变宽行号就挤进正文；下一帧和字体加载完成后各重测一次。
+    const refreshGutter = () => {
+      const cm = this.cm;
+      if (cm && cm.getWrapperElement().isConnected) cm.refresh();
+    };
+    requestAnimationFrame(refreshGutter);
+    if (document.fonts && document.fonts.ready) {
+      document.fonts.ready.then(refreshGutter).catch(() => {});
+    }
   },
   watch: {
     // 父组件异步拿到内容后要同步进来（编辑器可能在数据到达前就已挂载）
