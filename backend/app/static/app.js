@@ -538,7 +538,7 @@ const App = {
       return Object.values(this.paperAnswers || {}).filter(Boolean).length;
     },
     paperSecondsLeft() {
-      if (!this.paperDeadline) return null;
+      if (!this.paperDeadline || !this.paperLimitMinutes) return null;
       return Math.max(0, Math.ceil((this.paperDeadline - this.paperNow) / 1000));
     },
     paperTimeLow() {
@@ -991,6 +991,8 @@ const App = {
           this.paperCurrent.maxAttempts = r.maxAttempts;
           this.paperCurrent.showAnswer = r.showAnswer;
           this.paperCurrent.timeLimitMinutes = r.timeLimitMinutes;
+          this.paperDeadline = 0;
+          this.paperLimitMinutes = r.timeLimitMinutes;
         }
         const p = this.papers.find(x => x.id === f.id);
         if (p) {
@@ -1226,7 +1228,6 @@ const App = {
     },
     async ensurePaperSession() {
       if (!this.paperCurrent) return;
-      if (this.paperDeadline) return;
       try {
         const r = await this.api(`/api/papers/${this.paperCurrent.id}/start`, { method: "POST" });
         this.paperLimitMinutes = r.limitMinutes || 0;
@@ -1333,7 +1334,7 @@ const App = {
       this.stashPaperNav();
       if (this.paperCurrent) {
         this.setPaperActive(true);
-        await this.ensurePaperSession();
+        if (this.drillView !== "do") await this.ensurePaperSession();
       }
       this.drillView = "do";
       window.scrollTo(0, 0);
