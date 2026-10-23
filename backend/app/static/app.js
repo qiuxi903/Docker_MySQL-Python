@@ -392,7 +392,7 @@ const App = {
         { value: "regex", label: "正则匹配" },
         { value: "tests", label: "多组用例" },
       ],
-      drillSandbox: { db: "", tables: [], loading: false },
+      drillSandbox: { db: "", tables: [], loading: false, error: "" },
       drillRunLog: [],
       drillMulti: [],
       dq: { id: 0, course: "sql", type: "sql", typeLabel: "", title: "", stem: "", hint: "",
@@ -1604,7 +1604,7 @@ const App = {
       this.drillRunLog = [];
       this.navLog = [];
       this.navLastQuery = "";
-      this.drillSandbox = { db: "", tables: [], loading: false };
+      this.drillSandbox = { db: "", tables: [], loading: false, error: "" };
       try {
         const det = await this.api(`/api/drills/${d.id}`);
         if (seq !== this.drillOpenSeq) return;
@@ -1640,10 +1640,10 @@ const App = {
             const sb = await this.api(`/api/drills/${det.id}/sandbox`,
                                       { method: "POST", body: { reset: false } });
             if (seq !== this.drillOpenSeq) return;
-            this.drillSandbox = { db: sb.db, tables: sb.tables || [], loading: false };
+            this.drillSandbox = { db: sb.db, tables: sb.tables || [], loading: false, error: "" };
           } catch (e) {
             if (seq !== this.drillOpenSeq) return;
-            this.drillSandbox = { db: "", tables: [], loading: false };
+            this.drillSandbox = { db: "", tables: [], loading: false, error: e.message };
             this.toast(e.message);
           }
         }
@@ -1684,6 +1684,20 @@ const App = {
       }
     },
 
+    async retryDrillSandbox() {
+      if (!this.drillCurrent) return;
+      this.drillSandbox = { db: "", tables: [], loading: true, error: "" };
+      try {
+        const sb = await this.api(`/api/drills/${this.drillCurrent.id}/sandbox`,
+                                  { method: "POST", body: { reset: true } });
+        this.drillSandbox = { db: sb.db, tables: sb.tables || [], loading: false, error: "" };
+        if (this.$refs.navPanel) this.$refs.navPanel.reload();
+        this.toast("题目数据库已重新准备好");
+      } catch (e) {
+        this.drillSandbox = { db: "", tables: [], loading: false, error: e.message };
+        this.toast(e.message);
+      }
+    },
     async resetSandbox() {
       if (!this.drillCurrent) return;
       if (!await this.askConfirm("重置本题数据",
@@ -1691,7 +1705,7 @@ const App = {
       try {
         const sb = await this.api(`/api/drills/${this.drillCurrent.id}/sandbox`,
                                   { method: "POST", body: { reset: true } });
-        this.drillSandbox = { db: sb.db, tables: sb.tables || [], loading: false };
+        this.drillSandbox = { db: sb.db, tables: sb.tables || [], loading: false, error: "" };
         this.drillRunLog = [];
         // 图形界面的操作记录也要清掉，否则重放会把已还原的改动又算进去
         this.navLog = [];

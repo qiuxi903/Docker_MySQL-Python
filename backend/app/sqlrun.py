@@ -277,7 +277,7 @@ def _short(stmt: str, limit: int = 120) -> str:
 
 def run_sql(db_name: str, mysql_user: str, mysql_pass: str, sql: str,
             owned_dbs: list[str] | None = None, batch: bool = False,
-            timeout: float | None = None) -> dict:
+            timeout: float | None = None, max_statements: int | None = None) -> dict:
     """在学生自己的库上执行（可能多条）SQL，逐条返回结果。
 
     batch=True 用于「题目初始化 / 标准答案」这类内部脚本：整批放在一个事务里提交，
@@ -287,8 +287,10 @@ def run_sql(db_name: str, mysql_user: str, mysql_pass: str, sql: str,
     stmts = prepare_statements(sql)
     if not stmts:
         raise SqlError("没有可执行的 SQL 语句")
-    if len(stmts) > 200:
-        raise SqlError("一次最多执行 200 条语句")
+    # 学生手写的 SQL 保持 200 条上限；题目初始化/标准答案这类内部批量脚本放宽
+    limit_n = max_statements if max_statements is not None else (100000 if batch else 200)
+    if len(stmts) > limit_n:
+        raise SqlError(f"一次最多执行 {limit_n} 条语句")
 
     results: list[dict] = []
     killed = threading.Event()

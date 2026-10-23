@@ -1691,25 +1691,51 @@ def ensure_sandbox(account: dict, drill_id: int, reset: bool = False) -> dict:
     finally:
         conn.close()
 
+    setup = (full.get("setupSql") or "").strip()
     if reset and owner:
         try:
             sessions.drop_user_db(account, db)
         except Exception:
             pass
         owner = False
+    # 上一次初始化失败会留下一个空沙箱；发现有库没表时自动重建
+    if owner and setup:
+        try:
+            existing = sqlrun.list_tables(db, account["mysql_user"], account["mysql_pass"])
+        except Exception:
+            existing = []
+        if not existing:
+            try:
+                sessions.drop_user_db(account, db)
+            except Exception:
+                pass
+            owner = False
     if not owner:
         try:
             sessions.create_user_db(account, db, origin="drill")
         except Exception:
             # 并发/残留：已存在同名库时直接复用
             pass
-        setup = (full.get("setupSql") or "").strip()
         if setup:
-            r = sqlrun.run_sql(db, account["mysql_user"], account["mysql_pass"],
-                               setup, owned_dbs=[db], batch=True, timeout=SETUP_TIMEOUT)
-            err = _first_error(r.get("results"))
-            if err:
-                raise DrillError("题目的初始化 SQL 有问题，请联系出题老师：" + err)
+            try:
+                r = sqlrun.run_sql(db, account["mysql_user"], account["mysql_pass"],
+                                   setup, owned_dbs=[db], batch=True,
+                                   timeout=SETUP_TIMEOUT, max_statements=100000)
+                err = _first_error(r.get("results"))
+                if err:
+                    raise DrillError("题目的初始化 SQL 有问题，请联系出题老师：" + err)
+            except DrillError:
+                try:
+                    sessions.drop_user_db(account, db)
+                except Exception:
+                    pass
+                raise
+            except Exception as e:
+                try:
+                    sessions.drop_user_db(account, db)
+                except Exception:
+                    pass
+                raise DrillError("题目的初始化 SQL 执行失败：" + str(e)[:300])
     tables = sqlrun.list_tables(db, account["mysql_user"], account["mysql_pass"])
     return {"db": db, "tables": tables}
 
@@ -2084,10 +2110,12 @@ def judge_sql(account: dict, dr: dict, answer: str) -> dict:
             except Exception:
                 pass
 
-    def run(db, sql):
+    def run(db, sql, cap=None):
         # 判分脚本（初始化 + 标准答案 + 学生答案）整批提交，慢盘上也不会一条一条 fsync
+        # 初始化/标准答案可以很多条；学生答案仍限制 200 条，防止提交巨型脚本
         out = sqlrun.run_sql(db, account["mysql_user"], account["mysql_pass"],
-                             sql, owned_dbs=[db], batch=True, timeout=SETUP_TIMEOUT)
+                             sql, owned_dbs=[db], batch=True, timeout=SETUP_TIMEOUT,
+                             max_statements=(cap or 100000))
         results = out.get("results") or []
         return results, _first_error(results), _last_rows(results)
 
@@ -2099,7 +2127,7 @@ def judge_sql(account: dict, dr: dict, answer: str) -> dict:
             if e:
                 raise DrillError("题目的初始化 SQL 有问题，请联系出题老师：" + e)
 
-        st_results, st_err, student = run(db, answer)
+        st_results, st_err, student = run(db, answer, 200)
         if st_err:
             return {"passed": False, "kind": "sql", "mode": mode,
                     "reason": "你的 SQL 执行出错：" + st_err,
@@ -2435,6 +2463,8 @@ def submit(account: dict, did: int, answer) -> dict:
     mine = full["account_id"] == account["id"]
     if not full["status"] and not (mine or account.get("role") == "admin"):
         raise DrillError("这题还没发布")
+    if full["type"] in ("sql", "python") and isinstance(answer, str)             and len(answer.encode("utf-8")) > C.CODE_MAX:
+        raise DrillError("作答内容超过 256KB 上限")
     pid = int(full.get("paperId") or 0)
     show_answer = True
     if pid:
@@ -2696,6 +2726,8 @@ def submit_paper(account: dict, pid: int, answers: dict, auto: bool = False) -> 
                           "score": 0, "maxScore": qscore, "reason": "未作答",
                           "answer": None, "ms": 0})
             continue
+        if isinstance(ans, str) and len(ans.encode("utf-8")) > C.CODE_MAX:
+            raise DrillError(f"第 {i} 题的作答超过 256KB 上限")
         res = _judge_one(account, dr, ans, show_answer)
         answered_n += 1
         if res["passed"]:
