@@ -123,14 +123,20 @@ body {
 }
 .mini-dlg {
   width: min(420px, 94vw); background: var(--panel); color: var(--text);
-  border-radius: 12px; padding: 18px 18px 14px;
+  border-radius: 12px; padding: 20px 22px 16px;
   box-shadow: 0 16px 48px rgba(1, 8, 24, .3);
   animation: dlgIn .15s ease;
 }
-.mini-title { font-size: 15px; font-weight: 600; margin-bottom: 10px; }
+.mini-title { font-size: 15px; font-weight: 600; margin-bottom: 12px; }
 .mini-text { font-size: 13.5px; line-height: 1.6; color: var(--text); margin: 0 0 6px; }
-.mini-foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
-.mini-dlg input[type="text"] { width: 100%; }
+.mini-foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+/* 标签和输入框之间留出呼吸感，输入框内文字也别贴着边框 */
+.mini-dlg label.f { margin-bottom: 8px; }
+.mini-dlg input[type="text"] { width: 100%; padding: 8px 14px; }
+/* 通用 dialog 规则会给直系 input 再加 22px 左右外边距，mini 弹窗自己已有内边距，
+   叠加后输入框右边框会贴住弹窗边缘，这里清零让它左右对称 */
+dialog.mini-dlg > label.f,
+dialog.mini-dlg > input[type="text"] { margin-left: 0; margin-right: 0; }
 
 /* ============ 自建下拉选择（替代原生 select） ============ */
 .xsel { position: relative; min-width: 0; }
