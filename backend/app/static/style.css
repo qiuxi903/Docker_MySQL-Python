@@ -414,13 +414,14 @@ main { flex: 1; min-height: 0; position: relative; }
 /* 代码不要贴着边框：四周留出呼吸空间；占位说明允许换行，窄屏不被截断 */
 .CodeMirror-lines { padding: 12px 0; }
 .CodeMirror pre.CodeMirror-line,
-.CodeMirror pre.CodeMirror-line-like { padding: 0 16px; }
+.CodeMirror pre.CodeMirror-line-like { padding: 0 18px; }
 .CodeMirror .CodeMirror-placeholder {
   white-space: pre-wrap !important; overflow-wrap: anywhere; line-height: 1.7;
 }
 .CodeMirror-gutters { background: var(--panel-2); border-right: 1px solid var(--line); }
 [data-theme="dark"] .CodeMirror-gutters { background: var(--con-head); border-right-color: var(--con-line); }
-.CodeMirror-linenumber { color: #8c959f; }
+/* 行号和正文之间留足间距，避免部署后字体变化时看起来挤在一起 */
+.CodeMirror-linenumber { padding: 0 10px 0 8px; color: #8c959f; }
 [data-theme="dark"] .CodeMirror-linenumber { color: #6e7681; }
 .CodeMirror-activeline-background { background: var(--row-hover); }
 .CodeMirror-cursor { border-left: 2px solid var(--accent); }
