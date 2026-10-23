@@ -27,7 +27,7 @@ html[data-theme="light"] body { background: #f6f8fa; }
 <link rel="stylesheet" href="/vendor/codemirror/codemirror.css">
 <link rel="stylesheet" href="/vendor/codemirror/addon/hint/show-hint.css">
 <link rel="stylesheet" href="/fonts/misans/misans.css">
-<link rel="stylesheet" href="/style.css?v=145">
+<link rel="stylesheet" href="/style.css?v=146">
   <link rel="stylesheet" href="/navicat.css?v=10">
 </head>
 <body>
@@ -616,7 +616,10 @@ html[data-theme="light"] body { background: #f6f8fa; }
                     :class="{out: paperOutOfTries}">
                 {{ paperOutOfTries ? '交卷次数已用完' : '剩余 ' + paperTriesLeft + ' 次' }}
               </span>
-              <span v-if="paperElapsedSeconds !== null" class="pdb-stat">用时 {{ paperElapsedText }}</span>
+              <span v-if="paperElapsedSeconds !== null" class="pdb-clock" title="本次作答已用时">
+                <e-icon name="clock" :size="12"></e-icon> 用时 <b>{{ paperElapsedText }}</b>
+                <i class="pdb-live"></i>
+              </span>
               <span v-if="paperSecondsLeft !== null" class="pdb-stat"
                     :class="{out: paperTimeLow}">剩余 {{ paperTimeText }}</span>
               <span class="spacer"></span>
@@ -2919,6 +2922,6 @@ INSERT INTO course VALUES (1,'数学');</pre>
 </script>
 
 <script src="/navicat.js?v=1"></script>
-<script src="/app.js?v=149"></script>
+<script src="/app.js?v=150"></script>
 </body>
 </html>

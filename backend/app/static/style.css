@@ -2278,3 +2278,16 @@ input[type="text"], input[type="password"], textarea, select, .CodeMirror,
   .pdb-title { flex: 1 1 100%; order: -1; white-space: normal; }
 }
 .stat-attempt .stat-timeout { color: var(--err); opacity: 1; font-weight: 600; }
+/* 做题计时：始终可见的跑表 */
+.pdb-clock {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 2px 10px; border-radius: 999px;
+  background: var(--accent-weak); color: var(--accent);
+  font-size: 12px; font-weight: 600; white-space: nowrap;
+}
+.pdb-clock b { font-variant-numeric: tabular-nums; font-size: 12.5px; }
+.pdb-live {
+  width: 6px; height: 6px; border-radius: 50%; background: currentColor;
+  animation: pdbPulse 1.2s ease-in-out infinite;
+}
+@keyframes pdbPulse { 0%, 100% { opacity: 1; } 50% { opacity: .2; } }
