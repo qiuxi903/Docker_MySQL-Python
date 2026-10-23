@@ -825,6 +825,13 @@ const App = {
     async logout() {
       if (this.view === "drills" && this.drillView === "do") {
         if (!await this.confirmLeaveDrill()) return;
+        if (!this._leavePrompted) {
+          if (!await this.askConfirm(
+              "退出登录",
+              "正在做题，退出登录后本次作答不会交卷（限时试卷会继续计时）。确定退出吗？",
+              true, "退出登录", "取消")) return;
+        }
+        this._leavePrompted = false;
       }
       if (!await this.confirmLeaveWorkspace()) return;
       if (this.view === "drills" && this.drillView !== "do") {
@@ -1379,11 +1386,13 @@ const App = {
     },
     // 离开做题页前的防误触：整套卷子还没交卷先确认
     async confirmLeaveDrill() {
+      this._leavePrompted = false;
       if (this.view !== "drills") return true;
       if (this.drillView === "do" && this.drillCurrent) {
         if (this.paperCurrent) {
           if (!this.paperHasUnsubmitted()) return true;
           const timer = this.paperDeadline ? "限时还在继续计时。" : "";
+          this._leavePrompted = true;
           return await this.askConfirm(
             "试卷还没有交卷",
             "本套试卷还没有交卷，离开后已写的内容会保留为草稿，但本次作答不会计入成绩。" +
@@ -1391,6 +1400,7 @@ const App = {
             true, "离开", "继续做题");
         }
         if (!this.drillDirty || !this.drillHasAnswer()) return true;
+        this._leavePrompted = true;
         return await this.askConfirm(
           "题目还没有提交",
           "当前作答还没有交卷，离开后已写的内容会保留为草稿，但本次作答不会计入成绩。确定要离开吗？",
@@ -1399,6 +1409,7 @@ const App = {
       // 试卷详情：还有没交卷的草稿时，返回清单/切换页面也提醒
       if (this.drillView === "paper" && this.paperCurrent && this.paperHasSavedDrafts()) {
         const timer = this.paperDeadline ? "限时还在继续计时。" : "";
+        this._leavePrompted = true;
         return await this.askConfirm(
           "试卷还没有交卷",
           "本套试卷还有没交卷的作答，离开后草稿会保留，但本次作答不会计入成绩。" +
