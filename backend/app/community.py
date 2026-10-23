@@ -1104,6 +1104,10 @@ def question_import(account: dict, qid: int, new_db_name: str = "",
         files = json.loads(_unpack(r[1]).decode("utf-8"))
         existing = {f["name"].casefold()
                     for f in _sessions.pyfiles_list(account["id"], py_project_id)}
+        if len(existing) + len(files) > _sessions.PYFILE_MAX_COUNT:
+            raise CommunityError(
+                f"当前项目的 Python 文件超过上限（{_sessions.PYFILE_MAX_COUNT} 个），"
+                "请清理后再导入")
         saved = []
         for f in files:
             final = _sessions.pyfiles_unique_name(account["id"], f.get("name") or "file.py",

@@ -505,6 +505,8 @@ def api_community_open(b: CommunityOpenBody, request: Request):
     try:
         filename, code = community.get_py_code(b.id)
         pid = sessions.resolve_project(a["id"], b.projectId)
+        if len(sessions.pyfiles_list(a["id"], pid)) >= sessions.PYFILE_MAX_COUNT:
+            raise HTTPException(400, f"当前项目文件已满（{sessions.PYFILE_MAX_COUNT} 个），请先清理")
         final = sessions.pyfiles_unique_name(a["id"], filename, None, pid)
         sessions.pyfiles_save(a["id"], final, code, project_id=pid)
     except (CommunityError, AuthError) as e:

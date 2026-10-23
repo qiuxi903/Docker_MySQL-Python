@@ -854,7 +854,10 @@ const App = {
       this.checkPendingShare();
       // 上传的临时 py 文件按需求"每次刷新即删"：进应用时先清一次
       this.api("/api/pyfiles/clear-uploaded", { method: "POST" })
-        .then(() => this.refreshPyList()).catch(() => {});
+        .then(() => {
+          this.refreshPyList();
+          this.loadPyProjects().catch(() => {});
+        }).catch(() => {});
     },
 
     async logout() {
@@ -3287,6 +3290,7 @@ const App = {
         });
         if (d.projectId && d.projectId !== this.pyProjectId) await this.switchPyProject(d.projectId);
         await this.refreshPyList();
+        await this.loadPyProjects().catch(() => {});
         this.switchView("py");
         this.pyCurrent = d.filename;
         if (!this.pyOpenFiles.includes(d.filename)) this.pyOpenFiles.push(d.filename);

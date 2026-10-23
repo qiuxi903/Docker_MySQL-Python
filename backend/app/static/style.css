@@ -2352,3 +2352,15 @@ input[type="text"], input[type="password"], textarea, select, .CodeMirror,
   .tbrow .row-x { opacity: 1; }
 }
 .pyproj-files.folded .pyproj-files-inner { padding-bottom: 0; }
+
+/* 统一的小图标按钮：去掉浏览器默认按钮的 3D 外观 */
+.row-x {
+  border: 0; background: transparent; appearance: none; -webkit-appearance: none;
+  font: inherit; cursor: pointer;
+}
+.pyproj-actions .row-x {
+  width: 22px; height: 22px; border-radius: 5px; color: var(--muted);
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.pyproj-actions .row-x:hover { background: var(--btn-hover); color: var(--text); }
+.pyproj-actions .row-x[title="删除项目"]:hover { color: var(--err); background: var(--err-weak); }

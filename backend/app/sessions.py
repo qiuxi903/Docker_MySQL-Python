@@ -389,7 +389,8 @@ def normalize_pyfile_name(name: str) -> str | None:
 
 
 def normalize_pyproject_name(name: str) -> str | None:
-    s = re.sub(r"\s+", " ", str(name or "")).strip()
+    s = re.sub(r"[\x00-\x1f\x7f]", "", str(name or ""))
+    s = re.sub(r"\s+", " ", s).strip()
     if not s or len(s) > PYPROJECT_NAME_MAX:
         return None
     return s
@@ -480,7 +481,8 @@ def pyprojects_create(account_id: int, name: str) -> dict:
             cur.execute("INSERT INTO py_projects (account_id, name) VALUES (%s,%s)",
                         (account_id, nm))
             pid = int(cur.lastrowid)
-            cur.execute("""INSERT INTO py_files (project_id, account_id, name, content)
+            cur.execute("""INSERT IGNORE INTO py_files
+                           (project_id, account_id, name, content)
                            VALUES (%s,%s,'main.py',%s)""", (pid, account_id, PY_MAIN_SEED))
     finally:
         conn.close()
@@ -548,7 +550,10 @@ def pyfiles_list(account_id: int, project_id: int | None = None) -> list[dict]:
                 cur.execute("""INSERT IGNORE INTO py_files
                                (project_id, account_id, name, content)
                                VALUES (%s,%s,'main.py',%s)""", (pid, account_id, PY_MAIN_SEED))
-                rows = [("main.py", PY_MAIN_SEED, "", 0)]
+                cur.execute("""SELECT name, content, updated_at, uploaded FROM py_files
+                               WHERE project_id=%s
+                               ORDER BY updated_at DESC, name ASC""", (pid,))
+                rows = cur.fetchall()
             for name, content, updated_at, uploaded in rows:
                 result.append({"name": name, "size": len((content or "").encode("utf-8")),
                                "updatedAt": str(updated_at), "uploaded": bool(uploaded),
