@@ -918,6 +918,29 @@ li.CodeMirror-hint-active { background: var(--accent); color: #fff; }
 .drill-data-h {
   font-size: 11.5px; font-weight: 600; color: var(--muted); margin-bottom: 2px;
 }
+/* 做题时的数据库说明：固定在题目上方，默认展开，可收起；内容长时内部滚动 */
+.drill-schema {
+  flex: 0 0 auto; margin: 8px 10px 0; border: 1px solid var(--line);
+  border-radius: 8px; background: var(--panel-2); overflow: hidden;
+}
+.drill-schema-h {
+  width: 100%; display: flex; align-items: center; gap: 7px;
+  padding: 7px 10px; border: 0; background: transparent; cursor: pointer;
+  color: var(--text); font: inherit; font-size: 12px; text-align: left;
+}
+.drill-schema-h:hover { background: var(--btn-hover); }
+.ds-h-t { flex: 0 0 auto; font-weight: 600; }
+.ds-preview {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--muted); font-size: 11.5px;
+}
+.ds-note { flex: 0 0 auto; color: var(--muted); font-size: 10.5px; }
+.drill-schema-b {
+  max-height: 18vh; overflow: auto; padding: 8px 12px 10px;
+  border-top: 1px dashed var(--line);
+  white-space: pre-wrap; word-break: break-word;
+  font-size: 12.5px; line-height: 1.7; color: var(--text);
+}
 .drill-obj { padding: 0 !important; overflow: auto; }
 .drill-obj-box { padding: 18px; display: flex; flex-direction: column; gap: 10px; max-width: 620px; }
 .drill-obj-box .drill-stem { margin: 0 0 4px; }
@@ -1832,6 +1855,8 @@ dialog > .u-table { width: calc(100% - 44px); }
   .drills-ws .editor-host .CodeMirror { height: 46vh; }
   .drills-ws .console { max-height: 42vh; }
   .drill-paper { max-height: 26vh; }
+  .drill-schema { margin: 6px 8px 0; }
+  .drill-schema-b { max-height: 22vh; font-size: 12px; }
   .drill-obj-box { padding: 14px; }
 
   /* 练习清单：手机上一列卡片，顶栏可换行 */

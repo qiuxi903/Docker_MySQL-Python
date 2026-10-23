@@ -346,6 +346,7 @@ const App = {
       paperAutoSubmitting: false,
       paperAutoRetryAt: 0,
       paperActive: false,      // 已经进入这套卷子的作答（哪怕一题没写）
+      paperDescOpen: true,     // 做题时「数据库说明」默认展开，始终放在题目上方
       paperAllowPause: true,   // 本卷是否允许中途退出并暂停计时
       paperMaxResumes: 3,      // 不允许中途退出时，异常退出可续做次数
       paperResumeCount: 0,
@@ -551,6 +552,11 @@ const App = {
     },
     paperAnsweredCount() {
       return Object.values(this.paperAnswers || {}).filter(Boolean).length;
+    },
+    // 数据库说明收起后，标题栏留一句摘要，避免完全看不到
+    paperDescPreview() {
+      const s = (this.paperCurrent && this.paperCurrent.description) || "";
+      return s.split("\n").map(x => x.trim()).filter(Boolean).join(" ").slice(0, 110);
     },
     paperSecondsLeft() {
       if (!this.paperDeadline || !this.paperLimitMinutes) return null;
@@ -967,6 +973,7 @@ const App = {
       }
       try {
         this.paperCurrent = await this.api(`/api/papers/${p.id}`);
+        this.paperDescOpen = true;
         this.paperDeadline = 0;
         this.paperStartAt = 0;
         this.paperLimitMinutes = this.paperCurrent.timeLimitMinutes || 0;
@@ -1344,6 +1351,7 @@ const App = {
     },
     startPaper() {
       if (!this.paperCurrent || !this.paperCurrent.questions.length) return;
+      this.paperDescOpen = true;
       const qs = this.paperCurrent.questions;
       const first = qs.find(q => !q.passed) || qs[0];
       this.startDrill(first);

@@ -27,7 +27,7 @@ html[data-theme="light"] body { background: #f6f8fa; }
 <link rel="stylesheet" href="/vendor/codemirror/codemirror.css">
 <link rel="stylesheet" href="/vendor/codemirror/addon/hint/show-hint.css">
 <link rel="stylesheet" href="/fonts/misans/misans.css">
-<link rel="stylesheet" href="/style.css?v=150">
+<link rel="stylesheet" href="/style.css?v=151">
   <link rel="stylesheet" href="/navicat.css?v=10">
 </head>
 <body>
@@ -675,6 +675,22 @@ html[data-theme="light"] body { background: #f6f8fa; }
                 <e-icon name="target" :size="13"></e-icon> 提交本题
               </button>
             </div>
+
+            <!-- 数据库/表结构说明：做题期间始终固定在题目上方，可收起 -->
+            <div v-if="paperCurrent && paperCurrent.description" class="drill-schema">
+              <button class="drill-schema-h" type="button"
+                      :title="paperDescOpen ? '收起数据库说明' : '展开数据库说明'"
+                      @click="paperDescOpen = !paperDescOpen">
+                <e-icon name="database" :size="13"></e-icon>
+                <span class="ds-h-t">数据库说明</span>
+                <span v-if="!paperDescOpen" class="ds-preview">{{ paperDescPreview }}</span>
+                <span class="spacer"></span>
+                <span class="ds-note m-hide">表结构 / 字段</span>
+                <e-icon :name="paperDescOpen ? 'chevron-down' : 'chevron-right'" :size="12"></e-icon>
+              </button>
+              <div v-show="paperDescOpen" class="drill-schema-b">{{ paperCurrent.description }}</div>
+            </div>
+
             <template v-if="!drillCurrent">
               <div class="drill-blank">
                 <template v-if="drillLoading">
@@ -2979,6 +2995,6 @@ INSERT INTO course VALUES (1,'数学');</pre>
 </script>
 
 <script src="/navicat.js?v=1"></script>
-<script src="/app.js?v=160"></script>
+<script src="/app.js?v=161"></script>
 </body>
 </html>
