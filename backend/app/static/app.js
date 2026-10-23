@@ -823,8 +823,19 @@ const App = {
     },
 
     async logout() {
-      if (!await this.confirmLeaveDrill()) return;
+      if (this.view === "drills" && this.drillView === "do") {
+        if (!await this.confirmLeaveDrill()) return;
+      }
       if (!await this.confirmLeaveWorkspace()) return;
+      if (this.view === "drills" && this.drillView !== "do") {
+        const hasDrafts = this.drillView === "paper" && this.paperCurrent &&
+                          this.paperHasSavedDrafts();
+        const timer = this.paperDeadline ? "限时还在继续计时。" : "";
+        const text = hasDrafts
+          ? "本套试卷还有没交卷的作答。" + timer + "退出登录后草稿会保留，重新登录可以继续。确定退出吗？"
+          : "确定要退出登录吗？未交卷的草稿会保留，正在计时的试卷会继续计时。";
+        if (!await this.askConfirm("退出登录", text, true, "退出登录", "取消")) return;
+      }
       this.flushDrillDraft();
       this.stashPaperNav();
       try { await this.api("/api/logout", { method: "POST" }); } catch (e) {}
@@ -1113,6 +1124,12 @@ const App = {
       }
       return false;
     },
+    paperHasSavedDrafts() {
+      for (const q of this.drillSideList) {
+        if (q && q.id && this.hasSavedAnswer(q.id)) return true;
+      }
+      return false;
+    },
     // 按题型把「这道题的答案」取出来；整卷交卷时逐题收集
     answerForDrill(q, saved) {
       const draft = (saved && saved.draft) || {};
@@ -1362,25 +1379,41 @@ const App = {
     },
     // 离开做题页前的防误触：整套卷子还没交卷先确认
     async confirmLeaveDrill() {
-      if (this.view !== "drills" || this.drillView !== "do" || !this.drillCurrent) return true;
-      if (this.paperCurrent) {
-        if (!this.paperHasUnsubmitted()) return true;
+      if (this.view !== "drills") return true;
+      if (this.drillView === "do" && this.drillCurrent) {
+        if (this.paperCurrent) {
+          if (!this.paperHasUnsubmitted()) return true;
+          const timer = this.paperDeadline ? "限时还在继续计时。" : "";
+          return await this.askConfirm(
+            "试卷还没有交卷",
+            "本套试卷还没有交卷，离开后已写的内容会保留为草稿，但本次作答不会计入成绩。" +
+            timer + "确定要离开吗？",
+            true, "离开", "继续做题");
+        }
+        if (!this.drillDirty || !this.drillHasAnswer()) return true;
         return await this.askConfirm(
-          "试卷还没有交卷",
-          "本套试卷还没有交卷，离开后已写的内容会保留为草稿，但本次作答不会计入成绩。确定要离开吗？",
+          "题目还没有提交",
+          "当前作答还没有交卷，离开后已写的内容会保留为草稿，但本次作答不会计入成绩。确定要离开吗？",
           true, "离开", "继续做题");
       }
-      if (!this.drillDirty || !this.drillHasAnswer()) return true;
-      return await this.askConfirm(
-        "题目还没有提交",
-        "当前作答还没有交卷，离开后已写的内容会保留为草稿，但本次作答不会计入成绩。确定要离开吗？",
-        true, "离开", "继续做题");
+      // 试卷详情：还有没交卷的草稿时，返回清单/切换页面也提醒
+      if (this.drillView === "paper" && this.paperCurrent && this.paperHasSavedDrafts()) {
+        const timer = this.paperDeadline ? "限时还在继续计时。" : "";
+        return await this.askConfirm(
+          "试卷还没有交卷",
+          "本套试卷还有没交卷的作答，离开后草稿会保留，但本次作答不会计入成绩。" +
+          timer + "确定要离开吗？",
+          true, "离开", "留在试卷");
+      }
+      return true;
     },
     onBeforeUnload(e) {
       let dirty = false;
       if (this.view === "drills" && this.drillView === "do" && this.drillCurrent) {
         dirty = this.paperCurrent ? this.paperHasUnsubmitted()
                                   : (this.drillDirty && this.drillHasAnswer());
+      } else if (this.view === "drills" && this.drillView === "paper" && this.paperCurrent) {
+        dirty = this.paperHasSavedDrafts();
       } else if (this.view === "sql") {
         const sql = this.$refs.cmSqlRef ? this.$refs.cmSqlRef.getValue() : "";
         dirty = !!sql.trim();
