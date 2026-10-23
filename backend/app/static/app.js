@@ -328,7 +328,8 @@ const App = {
       papers: [],
       paperCurrent: null,
       paperForm: { id: 0, maxAttempts: 0, showAnswer: true,
-                   timeLimitMinutes: 0, busy: false },
+                   timeLimitMinutes: 0, allowPause: true, maxResumes: 3,
+                   busy: false },
       paperStats: null,
       paperStatsBusy: false,
       statsBack: "paper",
@@ -342,6 +343,12 @@ const App = {
       paperAutoSubmitting: false,
       paperAutoRetryAt: 0,
       paperActive: false,      // 已经进入这套卷子的作答（哪怕一题没写）
+      paperAllowPause: true,   // 本卷是否允许中途退出并暂停计时
+      paperMaxResumes: 3,      // 不允许中途退出时，异常退出可续做次数
+      paperResumeCount: 0,
+      paperResumeBlocked: false,
+      pageVisitId: "v" + Math.random().toString(36).slice(2) + Date.now().toString(36),
+      _lastHeartbeat: 0,
       papersBusy: false,
       drillTabs: [
         { value: "sql", label: "MySQL", icon: "database" },
@@ -654,6 +661,12 @@ const App = {
     setInterval(() => {
       this.paperNow = Date.now();
       this.checkPaperTimeout();
+      if (this.paperAllowPause && this.drillView === "do" && this.paperCurrent
+          && this.paperStartAt && Date.now() - this._lastHeartbeat > 15000) {
+        this._lastHeartbeat = Date.now();
+        this.api(`/api/papers/${this.paperCurrent.id}/heartbeat`, { method: "POST" })
+          .catch(() => {});
+      }
     }, 1000);
     // 分享链接：/s/码 或 #/s/码（进站即记录，登录后自动弹出）
     const m = location.pathname.match(/^\/s\/([A-Za-z0-9]{4,})/) ||
@@ -838,29 +851,25 @@ const App = {
     },
 
     async logout() {
-      if (this.view === "drills" && this.drillView === "do") {
-        if (!await this.confirmLeaveDrill()) return;
+      if (this.view === "drills") {
+        if (!await this.confirmLeaveDrill(true)) return;
+        if (this.paperAllowPause && this.paperCurrent) {
+          await this.pausePaper(this.drillView === "do");
+        }
         if (!this._leavePrompted) {
-          if (!await this.askConfirm(
-              "退出登录",
-              "正在做题，退出登录后本次作答不会交卷（限时试卷会继续计时）。确定退出吗？",
-              true, "退出登录", "取消")) return;
+          const hasDrafts = this.drillView === "paper" && this.paperCurrent &&
+                            this.paperHasSavedDrafts();
+          const timer = this.paperDeadline ? "限时还在继续计时。" : "";
+          const text = hasDrafts
+            ? "本套试卷还有没交卷的作答。" + timer + "退出登录后草稿会保留，重新登录可以继续。确定退出吗？"
+            : "确定要退出登录吗？未交卷的草稿会保留，正在计时的试卷会继续计时。";
+          if (!await this.askConfirm("退出登录", text, true, "退出登录", "取消")) return;
         }
         this._leavePrompted = false;
       }
       if (!await this.confirmLeaveWorkspace()) return;
-      if (this.view === "drills" && this.drillView !== "do") {
-        const hasDrafts = this.drillView === "paper" && this.paperCurrent &&
-                          this.paperHasSavedDrafts();
-        const timer = this.paperDeadline ? "限时还在继续计时。" : "";
-        const text = hasDrafts
-          ? "本套试卷还有没交卷的作答。" + timer + "退出登录后草稿会保留，重新登录可以继续。确定退出吗？"
-          : "确定要退出登录吗？未交卷的草稿会保留，正在计时的试卷会继续计时。";
-        if (!await this.askConfirm("退出登录", text, true, "退出登录", "取消")) return;
-      }
       this.flushDrillDraft();
       this.stashPaperNav();
-      this.setPaperActive(false);
       try { await this.api("/api/logout", { method: "POST" }); } catch (e) {}
       this.token = "";
       this.user = null;
@@ -870,10 +879,12 @@ const App = {
     },
 
     async switchView(v) {
-      if (!await this.confirmLeaveDrill()) return;
+      if (!await this.confirmLeaveDrill(true)) return;
       this.flushDrillDraft();
       this.stashPaperNav();
-      if (this.paperCurrent) this.setPaperActive(false);
+      if (this.paperCurrent && this.paperAllowPause) {
+        await this.pausePaper(this.drillView === "do");
+      }
       this.view = v;
       this.drawer = "";
       if (v === "community" && !this.community.length) this.loadCommunity();
@@ -923,10 +934,12 @@ const App = {
     },
 
     async backToPapers() {
-      if (!await this.confirmLeaveDrill()) return;
+      if (!await this.confirmLeaveDrill(true)) return;
       this.flushDrillDraft();
       this.stashPaperNav();
-      this.setPaperActive(false);
+      if (this.paperCurrent && this.paperAllowPause) {
+        await this.pausePaper(this.drillView === "do");
+      }
       this.drillView = "list";
       this.paperCurrent = null;
       this.drillCurrent = null;
@@ -947,6 +960,9 @@ const App = {
         this.paperDeadline = 0;
         this.paperStartAt = 0;
         this.paperLimitMinutes = this.paperCurrent.timeLimitMinutes || 0;
+        this.paperAllowPause = this.paperCurrent.allowPause !== false;
+        this.paperMaxResumes = this.paperCurrent.maxResumes || 3;
+        this.paperResumeBlocked = false;
         this.loadPaperActive(p.id);
         this.loadPaperNav(p.id);
         this.paperAnswers = {};
@@ -966,10 +982,10 @@ const App = {
     },
 
     async backToPaper() {
-      if (!await this.confirmLeaveDrill()) return;
+      if (!await this.confirmLeaveDrill(false)) return;
       this.flushDrillDraft();
       this.stashPaperNav();
-      this.setPaperActive(false);
+      if (this.paperCurrent && this.paperAllowPause) await this.pausePaper(true);
       this.drillView = "paper";
       this.drillCurrent = null;
       this.drillResult = null;
@@ -982,7 +998,9 @@ const App = {
       if (!p || !p.mine || !this.user || !this.user.canPublish) return;
       this.paperForm = { id: p.id, maxAttempts: p.maxAttempts || 0,
                          showAnswer: p.showAnswer !== false,
-                         timeLimitMinutes: p.timeLimitMinutes || 0, busy: false };
+                         timeLimitMinutes: p.timeLimitMinutes || 0,
+                         allowPause: p.allowPause !== false,
+                         maxResumes: p.maxResumes || 3, busy: false };
       const d = this.$refs.paperSetDlg;
       if (d && !d.open) { try { d.showModal(); } catch (e) { d.setAttribute("open", ""); } }
     },
@@ -995,17 +1013,23 @@ const App = {
       if (!f.id || f.busy) return;
       f.maxAttempts = Math.max(0, Math.min(99, parseInt(f.maxAttempts, 10) || 0));
       f.timeLimitMinutes = Math.max(0, Math.min(1440, parseInt(f.timeLimitMinutes, 10) || 0));
+      f.maxResumes = Math.max(1, Math.min(5, parseInt(f.maxResumes, 10) || 3));
       f.busy = true;
       try {
         const r = await this.api(`/api/papers/${f.id}/settings`, {
           method: "POST",
           body: { maxAttempts: f.maxAttempts, showAnswer: !!f.showAnswer,
-                  timeLimitMinutes: f.timeLimitMinutes },
+                  timeLimitMinutes: f.timeLimitMinutes,
+                  allowPause: !!f.allowPause, maxResumes: f.maxResumes },
         });
         if (this.paperCurrent && this.paperCurrent.id === f.id) {
           this.paperCurrent.maxAttempts = r.maxAttempts;
           this.paperCurrent.showAnswer = r.showAnswer;
           this.paperCurrent.timeLimitMinutes = r.timeLimitMinutes;
+          this.paperCurrent.allowPause = r.allowPause;
+          this.paperCurrent.maxResumes = r.maxResumes;
+          this.paperAllowPause = r.allowPause;
+          this.paperMaxResumes = r.maxResumes;
           this.paperDeadline = 0;
           this.paperStartAt = 0;
           this.paperLimitMinutes = r.timeLimitMinutes;
@@ -1015,6 +1039,8 @@ const App = {
           p.maxAttempts = r.maxAttempts;
           p.showAnswer = r.showAnswer;
           p.timeLimitMinutes = r.timeLimitMinutes;
+          p.allowPause = r.allowPause;
+          p.maxResumes = r.maxResumes;
         }
         this.closePaperSettings();
         this.toast("试卷设置已保存");
@@ -1243,10 +1269,16 @@ const App = {
       this.navLastQuery = "";
     },
     async ensurePaperSession() {
-      if (!this.paperCurrent) return;
+      if (!this.paperCurrent) return null;
       try {
-        const r = await this.api(`/api/papers/${this.paperCurrent.id}/start`, { method: "POST" });
+        const r = await this.api(`/api/papers/${this.paperCurrent.id}/start`, {
+          method: "POST", body: { visitId: this.pageVisitId },
+        });
         this.paperLimitMinutes = r.limitMinutes || 0;
+        this.paperAllowPause = r.allowPause !== false;
+        this.paperMaxResumes = r.maxResumes || 3;
+        this.paperResumeCount = r.resumeCount || 0;
+        this.paperResumeBlocked = !!r.resumeBlocked;
         this.paperNow = Date.now();
         this.paperStartAt = this.paperNow - Math.max(0, r.elapsedSeconds || 0) * 1000;
         if (r.limitMinutes > 0) {
@@ -1254,7 +1286,21 @@ const App = {
         } else {
           this.paperDeadline = 0;
         }
-      } catch (e) { /* 限时接口失败不阻塞做题 */ }
+        this._lastHeartbeat = Date.now();
+        return r;
+      } catch (e) {
+        this.toast(e.message);
+        return null;
+      }
+    },
+    async pausePaper(active = true) {
+      if (!this.paperCurrent || !this.paperAllowPause) return;
+      try {
+        await this.api(`/api/papers/${this.paperCurrent.id}/pause`, {
+          method: "POST", body: { active: !!active },
+        });
+      } catch (e) { /* 暂停失败就让心跳兜底 */ }
+      this.clearPaperTimer();
     },
     clearPaperTimer() {
       this.paperDeadline = 0;
@@ -1264,7 +1310,9 @@ const App = {
       this.paperAutoSubmitting = false;
     },
     checkPaperTimeout() {
-      if (this.view !== "drills" || this.drillView !== "do" || !this.paperCurrent) return;
+      if (this.view !== "drills" || !this.paperCurrent) return;
+      // 不允许中途退出的卷子，在试卷详情页计时也继续，到点同样自动交卷
+      if (this.drillView !== "do" && this.drillView !== "paper") return;
       if (!this.paperDeadline || this.paperSecondsLeft > 0) return;
       if (this.paperBusy || this.paperAutoSubmitting) return;
       if (Date.now() < this.paperAutoRetryAt) return;
@@ -1290,16 +1338,16 @@ const App = {
       const first = qs.find(q => !q.passed) || qs[0];
       this.startDrill(first);
     },
-    async submitPaper(auto = false) {
+    async submitPaper(auto = false, keepView = false, reason = "") {
       const p = this.paperCurrent;
-      if (!p || this.paperBusy) return;
+      if (!p || this.paperBusy) return false;
       if (this.paperOutOfTries) {
         if (!auto) this.toast("本套试卷的交卷次数已经用完");
-        return;
+        return false;
       }
       const answers = this.collectPaperAnswers();
       const n = Object.keys(answers).length;
-      if (!auto && !n) { this.toast("先作答至少一道题再交卷"); return; }
+      if (!auto && !n) { this.toast("先作答至少一道题再交卷"); return false; }
       const total = this.drillSideList.length;
       const left = total - n;
       this.paperBusy = true;
@@ -1309,26 +1357,30 @@ const App = {
               "确认交卷",
               `本套共 ${total} 题，已作答 ${n} 题${left ? `，还有 ${left} 题未作答` : ""}。` +
               "请检查好再交卷，交卷后会统一判分并记录本次成绩。",
-              false, "确认交卷", "再检查一下")) return;
+              false, "确认交卷", "再检查一下")) return false;
         }
         const r = await this.api(`/api/papers/${p.id}/submit`, {
           method: "POST", body: { answers, auto: !!auto },
         });
         this.paperStats = r;
-        this.statsBack = "paper";
-        this.drillView = "stats";
+        if (!keepView) {
+          this.statsBack = "paper";
+          this.drillView = "stats";
+        }
         this.clearPaperDrafts();
         this.clearPaperTimer();
         this.setPaperActive(false);
+        this.paperResumeBlocked = false;
         this.refreshPaper();
         await this.loadPapers();
-        this.toast(auto
-          ? `时间到，已自动交卷：${r.myScore}/${r.totalScore} 分`
-          : `交卷成功：${r.myScore}/${r.totalScore} 分`);
-        window.scrollTo(0, 0);
+        const label = reason || (auto ? "时间到，已自动交卷" : "交卷成功");
+        this.toast(`${label}：${r.myScore}/${r.totalScore} 分`);
+        if (!keepView) window.scrollTo(0, 0);
+        return true;
       } catch (e) {
         if (auto) this.paperAutoRetryAt = Date.now() + 5000;
         this.toast(e.message);
+        return false;
       } finally { this.paperBusy = false; }
     },
     viewAttempt(a) {
@@ -1350,13 +1402,17 @@ const App = {
       // 切题前先把上一题的草稿和 Navicat 操作落盘
       this.flushDrillDraft();
       this.stashPaperNav();
+      let sess = null;
       if (this.paperCurrent) {
         this.setPaperActive(true);
-        if (this.drillView !== "do") await this.ensurePaperSession();
+        if (this.drillView !== "do") sess = await this.ensurePaperSession();
       }
       this.drillView = "do";
       window.scrollTo(0, 0);
       await this.openDrill(d);
+      if (sess && sess.resumeBlocked) {
+        await this.submitPaper(true, false, "非正常退出续做次数已用完，已自动交卷");
+      }
     },
 
     // ---------- 每题草稿（学生自己的输入，不是默认内容） ----------
@@ -1431,37 +1487,54 @@ const App = {
       return true;
     },
     // 离开做题页前的防误触：整套卷子还没交卷先确认
-    async confirmLeaveDrill() {
+    async confirmLeaveDrill(finalExit = true) {
       this._leavePrompted = false;
       if (this.view !== "drills") return true;
-      if (this.drillView === "do" && this.drillCurrent) {
-        if (this.paperCurrent) {
-          if (!this.paperActive && !this.paperHasUnsubmitted()) return true;
-          const timer = this.paperDeadline ? "限时还在继续计时。" : "";
+      const inPaperDo = this.drillView === "do" && this.drillCurrent && this.paperCurrent;
+      const inPaperDetail = this.drillView === "paper" && this.paperCurrent;
+      if (inPaperDo || inPaperDetail) {
+        const activeAttempt = this.paperActive || this.paperHasSavedDrafts() ||
+                              (inPaperDo && this.paperHasUnsubmitted());
+        if (!this.paperAllowPause) {
+          // 不允许中途退出
+          if (!finalExit) {
+            if (!activeAttempt) return true;
+            this._leavePrompted = true;
+            return await this.askConfirm(
+              "返回试卷详情",
+              "本次作答不会交卷，计时会继续。确定返回试卷详情吗？",
+              false, "返回详情", "继续做题");
+          }
+          if (!activeAttempt) return true;
+          if (this.paperOutOfTries) {
+            // 次数已用完，无法再交卷；允许离开，避免把人困在页面里
+            return true;
+          }
+          const has = this.paperHasSavedDrafts();
           this._leavePrompted = true;
-          return await this.askConfirm(
-            "试卷还没有交卷",
-            "本套试卷还没有交卷，离开后已写的内容会保留为草稿，但本次作答不会计入成绩。" +
-            timer + "确定要离开吗？",
-            true, "离开", "继续做题");
+          if (!await this.askConfirm(
+              "本卷不允许中途退出",
+              "离开会直接交卷" + (has ? "，已写的答案会一并提交" : "（本次还没写答案，将记 0 分）") +
+              "。交卷后本次作答结束。确定交卷并离开吗？",
+              true, "交卷并离开", "继续做题")) return false;
+          return await this.submitPaper(true, true, "已交卷并离开");
         }
+        // 允许中途退出：保存草稿 + 暂停计时
+        if (!activeAttempt) return true;
+        this._leavePrompted = true;
+        return await this.askConfirm(
+          "试卷还没有交卷",
+          "离开后会保存草稿并暂停计时，回来可以继续作答。确定离开吗？",
+          true, "离开", "继续做题");
+      }
+      // 错题本单题
+      if (this.drillView === "do" && this.drillCurrent) {
         if (!this.drillDirty || !this.drillHasAnswer()) return true;
         this._leavePrompted = true;
         return await this.askConfirm(
           "题目还没有提交",
           "当前作答还没有交卷，离开后已写的内容会保留为草稿，但本次作答不会计入成绩。确定要离开吗？",
           true, "离开", "继续做题");
-      }
-      // 试卷详情：还有没交卷的草稿时，返回清单/切换页面也提醒
-      if (this.drillView === "paper" && this.paperCurrent &&
-          (this.paperActive || this.paperHasSavedDrafts())) {
-        const timer = this.paperDeadline ? "限时还在继续计时。" : "";
-        this._leavePrompted = true;
-        return await this.askConfirm(
-          "试卷还没有交卷",
-          "本套试卷还有没交卷的作答，离开后草稿会保留，但本次作答不会计入成绩。" +
-          timer + "确定要离开吗？",
-          true, "离开", "留在试卷");
       }
       return true;
     },

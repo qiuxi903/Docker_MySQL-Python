@@ -122,6 +122,8 @@ def init():
                     max_attempts INT NOT NULL DEFAULT 0,
                     show_answer TINYINT(1) NOT NULL DEFAULT 1,
                     time_limit_minutes INT NOT NULL DEFAULT 0,
+                    allow_pause TINYINT(1) NOT NULL DEFAULT 1,
+                    max_resumes INT NOT NULL DEFAULT 3,
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                     published_at DATETIME NULL,
                     KEY idx_owner (account_id),
@@ -133,6 +135,8 @@ def init():
                 ("max_attempts", "ADD COLUMN max_attempts INT NOT NULL DEFAULT 0"),
                 ("show_answer", "ADD COLUMN show_answer TINYINT(1) NOT NULL DEFAULT 1"),
                 ("time_limit_minutes", "ADD COLUMN time_limit_minutes INT NOT NULL DEFAULT 0"),
+                ("allow_pause", "ADD COLUMN allow_pause TINYINT(1) NOT NULL DEFAULT 1"),
+                ("max_resumes", "ADD COLUMN max_resumes INT NOT NULL DEFAULT 3"),
             ):
                 try:
                     cur.execute(f"ALTER TABLE {q_ident(C.COMMUNITY_DB)}.drill_papers {ddl}")
@@ -204,9 +208,25 @@ def init():
                     account_id BIGINT NOT NULL,
                     started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                     limit_minutes INT NOT NULL DEFAULT 0,
+                    elapsed_seconds INT NOT NULL DEFAULT 0,
+                    active_since DATETIME NULL,
+                    last_seen DATETIME NULL,
+                    resume_count INT NOT NULL DEFAULT 0,
+                    visit_id VARCHAR(48) NOT NULL DEFAULT '',
                     UNIQUE KEY uq_user_paper (account_id, paper_id)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             """)
+            for col, ddl in (
+                ("elapsed_seconds", "ADD COLUMN elapsed_seconds INT NOT NULL DEFAULT 0"),
+                ("active_since", "ADD COLUMN active_since DATETIME NULL"),
+                ("last_seen", "ADD COLUMN last_seen DATETIME NULL"),
+                ("resume_count", "ADD COLUMN resume_count INT NOT NULL DEFAULT 0"),
+                ("visit_id", "ADD COLUMN visit_id VARCHAR(48) NOT NULL DEFAULT ''"),
+            ):
+                try:
+                    cur.execute(f"ALTER TABLE {q_ident(C.COMMUNITY_DB)}.drill_paper_sessions {ddl}")
+                except Exception:
+                    pass
     finally:
         conn.close()
 
@@ -411,6 +431,8 @@ def _paper_row(r) -> dict:
         "triedCount": int(r[13] or 0),
         "maxAttempts": int(r[14] or 0), "showAnswer": bool(r[15]),
         "timeLimitMinutes": int(r[16] or 0),
+        "allowPause": bool(r[17]) if r[17] is not None else True,
+        "maxResumes": int(r[18] or 3),
     }
 
 
@@ -422,7 +444,8 @@ _PAPER_SELECT = """
            COALESCE(SUM(CASE WHEN s.passed = 1 THEN d.score ELSE 0 END), 0) AS my_score,
            COALESCE(SUM(CASE WHEN s.passed = 1 THEN 1 ELSE 0 END), 0) AS done_n,
            COALESCE(SUM(CASE WHEN s.attempts > 0 THEN 1 ELSE 0 END), 0) AS tried_n,
-           p.max_attempts, p.show_answer, p.time_limit_minutes
+           p.max_attempts, p.show_answer, p.time_limit_minutes,
+           p.allow_pause, p.max_resumes
       FROM drill_papers p
       LEFT JOIN drills d
              ON d.paper_id = p.id AND (d.status = 1 OR d.account_id = %s)
@@ -603,25 +626,30 @@ def get_paper(account: dict, pid: int) -> dict:
 
 
 def update_paper_settings(account: dict, pid: int, max_attempts: int = 0,
-                          show_answer: bool = True, time_limit_minutes: int = 0) -> dict:
-    """出卷人设置：整套卷子可交卷次数（0=不限）、交卷后是否显示答案、限时分钟数。"""
+                          show_answer: bool = True, time_limit_minutes: int = 0,
+                          allow_pause: bool = True, max_resumes: int = 3) -> dict:
+    """出卷人设置：次数、答案、限时、是否允许中途退出、异常退出可续做次数。"""
     n = int(max_attempts or 0)
     n = max(0, min(99, n))
     t = int(time_limit_minutes or 0)
     t = max(0, min(1440, t))
+    mr = int(max_resumes or 3)
+    mr = max(1, min(5, mr))
     conn = root_conn(C.COMMUNITY_DB)
     try:
         with conn.cursor() as cur:
             cur.execute("SELECT account_id FROM drill_papers WHERE id=%s", (pid,))
-            r = cur.fetchone()
-            if not r:
+            row = cur.fetchone()
+            if not row:
                 raise DrillError("试卷不存在")
-            if r[0] != account["id"] and account.get("role") != "admin":
+            if row[0] != account["id"] and account.get("role") != "admin":
                 raise DrillError("只能修改自己的试卷")
             cur.execute("""UPDATE drill_papers
-                              SET max_attempts=%s, show_answer=%s, time_limit_minutes=%s
+                              SET max_attempts=%s, show_answer=%s, time_limit_minutes=%s,
+                                  allow_pause=%s, max_resumes=%s
                             WHERE id=%s""",
-                        (n, 1 if show_answer else 0, t, pid))
+                        (n, 1 if show_answer else 0, t,
+                         1 if allow_pause else 0, mr, pid))
             # 正在作答的会话也按新时限从原开始时间重新计算
             cur.execute("""UPDATE drill_paper_sessions SET limit_minutes=%s
                             WHERE paper_id=%s""", (t, pid))
@@ -629,7 +657,8 @@ def update_paper_settings(account: dict, pid: int, max_attempts: int = 0,
     finally:
         conn.close()
     return {"id": pid, "maxAttempts": n, "showAnswer": bool(show_answer),
-            "timeLimitMinutes": t}
+            "timeLimitMinutes": t, "allowPause": bool(allow_pause),
+            "maxResumes": mr}
 
 
 def _decode_submitted_answer(raw):
@@ -2383,7 +2412,8 @@ def _paper_cfg(account: dict, pid: int):
     try:
         with conn.cursor() as cur:
             cur.execute("""SELECT id, account_id, title, course, status,
-                                  max_attempts, show_answer, time_limit_minutes
+                                  max_attempts, show_answer, time_limit_minutes,
+                                  allow_pause, max_resumes
                              FROM drill_papers WHERE id=%s""", (pid,))
             p = cur.fetchone()
             if not p:
@@ -2419,52 +2449,213 @@ def submit(account: dict, did: int, answer) -> dict:
     return res
 
 
-def start_paper(account: dict, pid: int) -> dict:
-    """开始 / 继续一次整卷作答：返回已用时和限时信息（刷新不重置）。"""
+def start_paper(account: dict, pid: int, visit_id: str = "") -> dict:
+    """开始 / 继续一次整卷作答：返回已用时、限时与续做信息。
+
+    允许中途退出的卷子：退出时暂停计时，回来继续累计；
+    不允许中途退出的卷子：正常退出由前端直接交卷，异常退出（刷新/关闭）按 visit_id 计一次续做。
+    """
     p, used = _paper_cfg(account, pid)
     mine = p[1] == account["id"]
+    is_admin = account.get("role") == "admin"
     limit = int(p[7] or 0)
+    allow_pause = bool(p[8]) if p[8] is not None else True
+    max_resumes = int(p[9] or 3)
     max_attempts = int(p[5] or 0)
+    if mine or is_admin:
+        limit = 0
+        allow_pause = True        # 出卷人 / 管理员试做：可以随时离开，不强制交卷
     out = {"limitMinutes": 0, "secondsLeft": 0, "elapsedSeconds": 0,
            "startedAt": "", "attemptsUsed": used, "maxAttempts": max_attempts,
-           "expired": False}
+           "expired": False, "allowPause": allow_pause,
+           "maxResumes": max_resumes, "resumeCount": 0, "resumeBlocked": False}
     if max_attempts > 0 and used >= max_attempts:
         return out
-    if mine or account.get("role") == "admin":
-        limit = 0          # 出卷人 / 管理员试做：只统计用时，不限时
+    visit_id = (visit_id or "")[:48]
     conn = root_conn(C.COMMUNITY_DB)
     try:
         with conn.cursor() as cur:
-            cur.execute("""SELECT started_at, limit_minutes FROM drill_paper_sessions
+            cur.execute("""SELECT started_at, limit_minutes, elapsed_seconds,
+                                  active_since, last_seen, resume_count, visit_id
+                             FROM drill_paper_sessions
                             WHERE account_id=%s AND paper_id=%s""",
                         (account["id"], pid))
             row = cur.fetchone()
             if not row:
                 cur.execute("""INSERT INTO drill_paper_sessions
-                               (paper_id, account_id, limit_minutes)
-                               VALUES (%s,%s,%s)""", (pid, account["id"], limit))
+                               (paper_id, account_id, limit_minutes, elapsed_seconds,
+                                active_since, last_seen, resume_count, visit_id)
+                               VALUES (%s,%s,%s,0,NOW(),NOW(),0,%s)""",
+                            (pid, account["id"], limit, visit_id))
                 conn.commit()
-            cur.execute("""SELECT started_at, limit_minutes,
-                                  TIMESTAMPDIFF(SECOND, started_at, NOW()),
-                                  TIMESTAMPDIFF(SECOND, NOW(),
-                                    DATE_ADD(started_at, INTERVAL limit_minutes MINUTE))
+                cur.execute("""SELECT started_at, limit_minutes, elapsed_seconds,
+                                      active_since, last_seen, resume_count, visit_id
+                                 FROM drill_paper_sessions
+                                WHERE account_id=%s AND paper_id=%s""",
+                            (account["id"], pid))
+                row = cur.fetchone()
+            started, sess_limit, elapsed0, active_since, last_seen, resume_count, old_visit = row
+            sess_limit = int(sess_limit or 0)
+            elapsed0 = int(elapsed0 or 0)
+            resume_count = int(resume_count or 0)
+            same_visit = bool(visit_id) and (visit_id == (old_visit or ""))
+            if allow_pause:
+                if active_since is None:
+                    # 上次是正常暂停，恢复计时
+                    cur.execute("""UPDATE drill_paper_sessions
+                                      SET active_since=NOW(), last_seen=NOW(), visit_id=%s
+                                    WHERE account_id=%s AND paper_id=%s""",
+                                (visit_id, account["id"], pid))
+                elif not same_visit:
+                    # 刷新 / 关闭页面等异常离开：只累计到最后心跳，空白时间不算
+                    cur.execute("""UPDATE drill_paper_sessions
+                                      SET elapsed_seconds=elapsed_seconds +
+                                            GREATEST(0, TIMESTAMPDIFF(SECOND, active_since,
+                                                                      COALESCE(last_seen, active_since))),
+                                          active_since=NOW(), last_seen=NOW(), visit_id=%s
+                                    WHERE account_id=%s AND paper_id=%s""",
+                                (visit_id, account["id"], pid))
+                else:
+                    cur.execute("""UPDATE drill_paper_sessions SET last_seen=NOW()
+                                    WHERE account_id=%s AND paper_id=%s""",
+                                (account["id"], pid))
+            else:
+                if visit_id and old_visit and not same_visit:
+                    resume_count += 1
+                cur.execute("""UPDATE drill_paper_sessions
+                                  SET resume_count=%s, last_seen=NOW(), visit_id=%s
+                                WHERE account_id=%s AND paper_id=%s""",
+                            (resume_count, visit_id, account["id"], pid))
+            conn.commit()
+            cur.execute("""SELECT started_at, limit_minutes, elapsed_seconds,
+                                  active_since, resume_count,
+                                  TIMESTAMPDIFF(SECOND, started_at, NOW())
                              FROM drill_paper_sessions
                             WHERE account_id=%s AND paper_id=%s""",
                         (account["id"], pid))
-            started, sess_limit, elapsed, sec_left = cur.fetchone()
+            started, sess_limit, elapsed0, active_since, resume_count, wall = cur.fetchone()
     finally:
         conn.close()
+    # 用数据库的 NOW() 重新计算已用时，避免应用和 DB 的时钟/时区差
+    conn = root_conn(C.COMMUNITY_DB)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""SELECT elapsed_seconds +
+                                  IF(active_since IS NULL, 0,
+                                     GREATEST(0, TIMESTAMPDIFF(SECOND, active_since, NOW()))),
+                                  started_at, limit_minutes, resume_count
+                             FROM drill_paper_sessions
+                            WHERE account_id=%s AND paper_id=%s""",
+                        (account["id"], pid))
+            elapsed, started, sess_limit, resume_count = cur.fetchone()
+    finally:
+        conn.close()
+    elapsed = int(elapsed or 0)
+    if not allow_pause:
+        elapsed = int(wall or 0)
     sess_limit = int(sess_limit or 0)
-    if mine or account.get("role") == "admin":
+    if mine or is_admin:
         sess_limit = 0
+    resume_count = int(resume_count or 0)
+    blocked = (not allow_pause) and resume_count > max_resumes
+    sec_left = max(0, sess_limit * 60 - elapsed) if sess_limit > 0 else 0
     out.update({
         "limitMinutes": sess_limit,
-        "secondsLeft": max(0, int(sec_left or 0)) if sess_limit > 0 else 0,
-        "elapsedSeconds": max(0, int(elapsed or 0)),
+        "secondsLeft": sec_left,
+        "elapsedSeconds": elapsed,
         "startedAt": str(started) if started else "",
-        "expired": sess_limit > 0 and int(sec_left or 0) <= 0,
+        "expired": sess_limit > 0 and sec_left <= 0,
+        "allowPause": allow_pause,
+        "maxResumes": max_resumes,
+        "resumeCount": resume_count,
+        "resumeBlocked": blocked,
     })
     return out
+
+
+def pause_paper(account: dict, pid: int, active: bool = True) -> dict:
+    """正常退出：允许中途退出的卷子把当前活跃时间记入并暂停；不允许的卷子不暂停。
+
+    active=True：刚从做题页退出，累计到当前时刻；
+    active=False：从试卷详情退出（可能刚刷新过），只累计到最后心跳，空白时间不算。
+    """
+    p, used = _paper_cfg(account, pid)
+    mine = p[1] == account["id"]
+    allow = bool(p[8]) if p[8] is not None else True
+    if mine or account.get("role") == "admin":
+        allow = True
+    out = {"paused": False, "elapsedSeconds": 0, "secondsLeft": 0, "limitMinutes": 0}
+    conn = root_conn(C.COMMUNITY_DB)
+    try:
+        with conn.cursor() as cur:
+            if allow:
+                cur.execute("""UPDATE drill_paper_sessions
+                                  SET elapsed_seconds=elapsed_seconds +
+                                        GREATEST(0, TIMESTAMPDIFF(SECOND, active_since,
+                                          CASE WHEN %s THEN NOW()
+                                               ELSE COALESCE(last_seen, active_since) END)),
+                                      active_since=NULL, last_seen=NOW()
+                                WHERE account_id=%s AND paper_id=%s
+                                  AND active_since IS NOT NULL""",
+                            (1 if active else 0, account["id"], pid))
+                conn.commit()
+            cur.execute("""SELECT elapsed_seconds, limit_minutes,
+                                  TIMESTAMPDIFF(SECOND, started_at, NOW()),
+                                  active_since
+                             FROM drill_paper_sessions
+                            WHERE account_id=%s AND paper_id=%s""", (account["id"], pid))
+            row = cur.fetchone()
+    finally:
+        conn.close()
+    if not row:
+        return out
+    elapsed = int(row[0] or 0)
+    limit = int(row[1] or 0)
+    if not allow:
+        elapsed = int(row[2] or 0)
+    if mine or account.get("role") == "admin":
+        limit = 0
+    out.update({"paused": allow,
+                "elapsedSeconds": elapsed,
+                "limitMinutes": limit,
+                "secondsLeft": max(0, limit * 60 - elapsed) if limit > 0 else 0})
+    return out
+
+
+def heartbeat_paper(account: dict, pid: int) -> dict:
+    """作答中定期上报，把已过的活跃时间记进会话；异常退出时空白时间不算。"""
+    p, used = _paper_cfg(account, pid)
+    mine = p[1] == account["id"]
+    allow = bool(p[8]) if p[8] is not None else True
+    if mine or account.get("role") == "admin":
+        allow = True
+    if not allow:
+        return {"elapsedSeconds": 0, "secondsLeft": 0, "paused": False}
+    conn = root_conn(C.COMMUNITY_DB)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""UPDATE drill_paper_sessions
+                              SET elapsed_seconds=elapsed_seconds +
+                                    GREATEST(0, TIMESTAMPDIFF(SECOND, active_since, NOW())),
+                                  active_since=NOW(), last_seen=NOW()
+                            WHERE account_id=%s AND paper_id=%s
+                              AND active_since IS NOT NULL""", (account["id"], pid))
+            conn.commit()
+            cur.execute("""SELECT elapsed_seconds, limit_minutes
+                             FROM drill_paper_sessions
+                            WHERE account_id=%s AND paper_id=%s""", (account["id"], pid))
+            row = cur.fetchone()
+    finally:
+        conn.close()
+    if not row:
+        return {"elapsedSeconds": 0, "secondsLeft": 0, "paused": True}
+    elapsed = int(row[0] or 0)
+    limit = int(row[1] or 0)
+    if mine or account.get("role") == "admin":
+        limit = 0
+    return {"elapsedSeconds": elapsed,
+            "secondsLeft": max(0, limit * 60 - elapsed) if limit > 0 else 0,
+            "paused": True}
 
 
 def submit_paper(account: dict, pid: int, answers: dict, auto: bool = False) -> dict:
@@ -2515,16 +2706,19 @@ def submit_paper(account: dict, pid: int, answers: dict, auto: bool = False) -> 
                       "maxScore": res["maxScore"], "reason": res.get("reason") or "",
                       "answer": ans, "ms": res.get("ms") or 0})
         pending.append((did, ans, res))
-    # 限时：读本次作答的开始时间；时间到自动交卷时允许 0 题作答
+    # 计时：允许中途退出的累计活跃时间；不允许的按开始到现在的墙钟时间
+    allow_pause = bool(p[8]) if p[8] is not None else True
     started_at = None
     limit_minutes = int(p[7] or 0)
-    sec_left = None
+    elapsed_used = 0
     conn = root_conn(C.COMMUNITY_DB)
     try:
         with conn.cursor() as cur:
-            cur.execute("""SELECT started_at, limit_minutes,
-                                  TIMESTAMPDIFF(SECOND, NOW(),
-                                    DATE_ADD(started_at, INTERVAL limit_minutes MINUTE))
+            cur.execute("""SELECT started_at, limit_minutes, elapsed_seconds,
+                                  active_since,
+                                  TIMESTAMPDIFF(SECOND, started_at, NOW()),
+                                  elapsed_seconds + IF(active_since IS NULL, 0,
+                                    GREATEST(0, TIMESTAMPDIFF(SECOND, active_since, NOW())))
                              FROM drill_paper_sessions
                             WHERE account_id=%s AND paper_id=%s""",
                         (account["id"], pid))
@@ -2532,15 +2726,13 @@ def submit_paper(account: dict, pid: int, answers: dict, auto: bool = False) -> 
     finally:
         conn.close()
     if sess:
-        started_at, limit_minutes = sess[0], int(sess[1] or 0)
-        sec_left = int(sess[2] or 0)
-    elif limit_minutes > 0:
-        sec_left = limit_minutes * 60
+        started_at = sess[0]
+        limit_minutes = int(sess[1] or 0)
+        elapsed_used = int(sess[5] or 0) if allow_pause else int(sess[4] or 0)
     if mine or account.get("role") == "admin":
         limit_minutes = 0
-        sec_left = None
-    expired = limit_minutes > 0 and sec_left is not None and sec_left <= 0
-    if answered_n == 0 and not expired:
+    expired = limit_minutes > 0 and elapsed_used >= limit_minutes * 60
+    if answered_n == 0 and not expired and not auto:
         raise DrillError("还没有作答，先做几道题再交卷")
 
     # 先写整卷记录，再把每题提交挂到这次交卷上

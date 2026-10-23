@@ -1055,11 +1055,21 @@ class PaperSettingsBody(BaseModel):
     maxAttempts: int = 0
     showAnswer: bool = True
     timeLimitMinutes: int = 0
+    allowPause: bool = True
+    maxResumes: int = 3
 
 
 class PaperSubmitBody(BaseModel):
     answers: dict = {}
     auto: bool = False
+
+
+class PaperStartBody(BaseModel):
+    visitId: str = ""
+
+
+class PaperPauseBody(BaseModel):
+    active: bool = True
 
 
 @app.post("/api/papers/{pid}/rename")
@@ -1076,7 +1086,8 @@ def api_paper_settings(pid: int, b: PaperSettingsBody, request: Request):
     a = acct(sess(request))
     try:
         return drills.update_paper_settings(a, pid, b.maxAttempts, b.showAnswer,
-                                            b.timeLimitMinutes)
+                                            b.timeLimitMinutes, b.allowPause,
+                                            b.maxResumes)
     except DrillError as e:
         raise HTTPException(400, str(e))
 
@@ -1091,11 +1102,31 @@ def api_paper_stats(pid: int, request: Request):
 
 
 @app.post("/api/papers/{pid}/start")
-def api_paper_start(pid: int, request: Request):
-    """开始 / 继续一次整卷作答，返回限时信息。"""
+def api_paper_start(pid: int, b: PaperStartBody, request: Request):
+    """开始 / 继续一次整卷作答，返回用时、限时与续做信息。"""
     a = acct(sess(request))
     try:
-        return drills.start_paper(a, pid)
+        return drills.start_paper(a, pid, b.visitId)
+    except DrillError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/papers/{pid}/pause")
+def api_paper_pause(pid: int, b: PaperPauseBody, request: Request):
+    """正常退出：允许中途退出时暂停计时。"""
+    a = acct(sess(request))
+    try:
+        return drills.pause_paper(a, pid, b.active)
+    except DrillError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/papers/{pid}/heartbeat")
+def api_paper_heartbeat(pid: int, request: Request):
+    """作答中定期上报活跃时间。"""
+    a = acct(sess(request))
+    try:
+        return drills.heartbeat_paper(a, pid)
     except DrillError as e:
         raise HTTPException(400, str(e))
 

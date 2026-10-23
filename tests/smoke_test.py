@@ -824,13 +824,16 @@ if mine:
 
     # ---- 试卷设置：整卷交卷次数 + 交卷后是否显示答案 ----
     check("试卷：默认不限次数、显示答案",
-          pd.get("maxAttempts") == 0 and pd.get("showAnswer") is True, str(pd)[:160])
+          pd.get("maxAttempts") == 0 and pd.get("showAnswer") is True
+          and pd.get("allowPause") is True and pd.get("maxResumes") == 3,
+          str(pd)[:160])
     code, r = call(f"/api/papers/{card['id']}/settings",
-                   {"maxAttempts": 1, "showAnswer": False, "timeLimitMinutes": 1},
-                   token=tok_ad2)
+                   {"maxAttempts": 1, "showAnswer": False, "timeLimitMinutes": 1,
+                    "allowPause": True, "maxResumes": 3}, token=tok_ad2)
     check("试卷：出卷人可改设置",
           code == 200 and r.get("maxAttempts") == 1 and r.get("showAnswer") is False
-          and r.get("timeLimitMinutes") == 1, str(r)[:120])
+          and r.get("timeLimitMinutes") == 1 and r.get("allowPause") is True
+          and r.get("maxResumes") == 3, str(r)[:120])
     code, r = call(f"/api/papers/{card['id']}/settings",
                    {"maxAttempts": 1, "showAnswer": False}, token=tok_md)
     check("试卷：学生不能改设置", code == 400, f"{code} {str(r)[:100]}")
@@ -847,6 +850,31 @@ if mine:
           st2.get("startedAt") == st.get("startedAt") and
           st2.get("secondsLeft", 999) <= st.get("secondsLeft", 0),
           str(st2)[:160])
+    _time.sleep(1.1)
+    code, pa = call(f"/api/papers/{card['id']}/pause", {}, token=tok_md)
+    check("暂停：正常退出记下已用时",
+          code == 200 and pa.get("paused") is True and int(pa.get("elapsedSeconds") or 0) >= 1,
+          str(pa)[:160])
+    _time.sleep(1.2)
+    _, st3 = call(f"/api/papers/{card['id']}/start", {}, token=tok_md)
+    check("暂停：离开的时间不计入",
+          int(st3.get("elapsedSeconds") or 0) <= int(pa.get("elapsedSeconds") or 0) + 1,
+          str(st3)[:160])
+
+    # 不允许中途退出 + 异常退出续做次数
+    call(f"/api/papers/{card['id']}/settings",
+         {"maxAttempts": 1, "showAnswer": False, "timeLimitMinutes": 1,
+          "allowPause": False, "maxResumes": 1}, token=tok_ad2)
+    _, r1 = call(f"/api/papers/{card['id']}/start", {"visitId": "smoke-v1"}, token=tok_md)
+    _, r2 = call(f"/api/papers/{card['id']}/start", {"visitId": "smoke-v2"}, token=tok_md)
+    _, r3 = call(f"/api/papers/{card['id']}/start", {"visitId": "smoke-v3"}, token=tok_md)
+    check("禁退出：异常退出续做计数",
+          r1.get("resumeCount") == 0 and r2.get("resumeCount") == 1
+          and r2.get("resumeBlocked") is False,
+          str([r1.get("resumeCount"), r2.get("resumeCount")]))
+    check("禁退出：超过续做次数返回 blocked",
+          r3.get("resumeCount") == 2 and r3.get("resumeBlocked") is True,
+          str(r3)[:160])
 
     all_answers = {str(qp_ids[i]): answers[f"-- {i + 1}"] for i in range(3)}
     code, r = call(f"/api/papers/{card['id']}/submit",
@@ -882,7 +910,8 @@ if mine:
     _, pdt = call(f"/api/papers/{card['id']}", token=tok_md)
     check("限时：试卷详情带限时设置", pdt.get("timeLimitMinutes") == 1, str(pdt)[:160])
     call(f"/api/papers/{card['id']}/settings",
-         {"maxAttempts": 0, "showAnswer": True, "timeLimitMinutes": 0}, token=tok_ad2)
+         {"maxAttempts": 0, "showAnswer": True, "timeLimitMinutes": 0,
+          "allowPause": True, "maxResumes": 3}, token=tok_ad2)
     _, stats = call(f"/api/papers/{card['id']}/stats", token=tok_md)
     stq = (stats.get("questions") or [{}])[0]
     check("统计：允许后可看参考答案",

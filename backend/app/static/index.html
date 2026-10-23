@@ -381,6 +381,12 @@ html[data-theme="light"] body { background: #f6f8fa; }
             <div class="paper-rules">
               <span class="badge tiny">{{ paperCurrent.maxAttempts ? '每套可交 ' + paperCurrent.maxAttempts + ' 次' : '不限交卷次数' }}</span>
               <span class="badge tiny" v-if="paperCurrent.timeLimitMinutes">限时 {{ paperCurrent.timeLimitMinutes }} 分钟</span>
+              <span class="badge tiny" :class="{err: paperCurrent.allowPause === false}">
+                {{ paperCurrent.allowPause === false ? '不允许中途退出' : '允许中途退出（计时暂停）' }}
+              </span>
+              <span class="badge tiny err" v-if="paperCurrent.allowPause === false">
+                异常退出可续做 {{ paperCurrent.maxResumes }} 次
+              </span>
               <span class="badge tiny ok" v-if="paperCurrent.showAnswer">交卷后可见答案</span>
               <span class="badge tiny" v-else>交卷后不显示答案</span>
               <span class="badge tiny err" v-if="paperActive || paperHasSavedDrafts()">有未交卷的作答</span>
@@ -615,6 +621,10 @@ html[data-theme="light"] body { background: #f6f8fa; }
               <span v-if="paperTriesLeft !== null" class="pdb-stat"
                     :class="{out: paperOutOfTries}">
                 {{ paperOutOfTries ? '交卷次数已用完' : '剩余 ' + paperTriesLeft + ' 次' }}
+              </span>
+              <span v-if="!paperAllowPause" class="pdb-stat out" title="离开会直接交卷">不允许中途退出</span>
+              <span v-if="!paperAllowPause && paperResumeCount" class="pdb-stat out">
+                已续做 {{ paperResumeCount }}/{{ paperMaxResumes }} 次
               </span>
               <span v-if="paperElapsedSeconds !== null" class="pdb-clock" title="本次作答已用时">
                 <e-icon name="clock" :size="12"></e-icon> 用时 <b>{{ paperElapsedText }}</b>
@@ -2124,6 +2134,18 @@ INSERT INTO course VALUES (1,'数学');</pre>
       <em>0 = 不限时；时间到会自动交卷（从第一次进入做题开始计时，刷新不重置）</em>
     </label>
     <label class="mini-check">
+      <input type="checkbox" v-model="paperForm.allowPause">
+      <span>允许中途退出并保存（计时暂停）</span>
+    </label>
+    <label class="mini-field" v-if="!paperForm.allowPause">
+      <span>非正常退出后可继续次数</span>
+      <input type="number" min="1" max="5" step="1" v-model.number="paperForm.maxResumes">
+      <em>刷新、关闭页面等异常退出后，最多可以回来续做几次（1–5）</em>
+    </label>
+    <p class="mini-note" v-if="!paperForm.allowPause">
+      关闭后，通过页面按钮正常离开（返回清单 / 退出登录 / 切页）会直接交卷；刷新或关闭页面算异常退出，回来可继续，超过次数系统会自动交卷。
+    </p>
+    <label class="mini-check">
       <input type="checkbox" v-model="paperForm.showAnswer">
       <span>交卷后允许学生查看答案</span>
     </label>
@@ -2922,6 +2944,6 @@ INSERT INTO course VALUES (1,'数学');</pre>
 </script>
 
 <script src="/navicat.js?v=1"></script>
-<script src="/app.js?v=150"></script>
+<script src="/app.js?v=153"></script>
 </body>
 </html>
