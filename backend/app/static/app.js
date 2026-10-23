@@ -285,6 +285,7 @@ const App = {
       pyFiles: [],
       pyProjects: [],
       pyProjectId: 0,
+      pyProjectCollapsed: false,
       pyOpenFiles: [],
       pyCurrent: "main.py",
       pySaveTimer: null,
@@ -2410,6 +2411,7 @@ const App = {
         if (!await this.ensurePySaved(this.pyCurrent)) return;
       }
       this.pyProjectId = pid;
+      this.pyProjectCollapsed = false;
       try { localStorage.setItem(this.pyProjectKey(), String(pid)); } catch (e) {}
       this.pyOpenFiles = [];
       this.pyCurrent = "";
@@ -2424,6 +2426,14 @@ const App = {
         this.$nextTick(() => { if (this.$refs.cmPyRef) this.$refs.cmPyRef.refresh(); });
       } catch (e) { this.toast(e.message); }
       this.loadPyProjects().catch(() => {});
+    },
+    async togglePyProject(pj) {
+      if (!pj) return;
+      if (pj.id !== this.pyProjectId) {
+        await this.switchPyProject(pj.id);
+        return;
+      }
+      this.pyProjectCollapsed = !this.pyProjectCollapsed;
     },
     async newPyProject() {
       if (this.pyProjects.length >= 10) { this.toast("最多创建 10 个项目"); return; }

@@ -2294,17 +2294,20 @@ input[type="text"], input[type="password"], textarea, select, .CodeMirror,
 
 /* ============ Python 项目分组 ============ */
 .pyproj-list { padding-bottom: 4px; }
-.pyproj { border-bottom: 1px solid var(--line); }
+.pyproj { border-bottom: 0; }
 .pyproj-h {
-  display: flex; align-items: center; gap: 6px; padding: 8px 10px; cursor: pointer;
+  display: flex; align-items: center; gap: 6px; padding: 7px 8px;
+  border-radius: var(--radius); cursor: pointer; transition: background .12s;
 }
-.pyproj-h:hover { background: var(--btn-bg); }
+.pyproj-h:hover { background: var(--btn-hover); }
 .pyproj.on > .pyproj-h { background: var(--accent-weak); }
 .pyproj-chev { display: inline-flex; align-items: center; width: 14px; color: var(--muted); }
 .pyproj.on .pyproj-chev { color: var(--accent); }
+.pyproj-chev-ico { transition: transform .2s ease; }
+.pyproj-chev-ico.open { transform: rotate(90deg); }
 .pyproj-name {
   flex: 1; min-width: 0; font-size: 13px; font-weight: 600;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  line-height: 1.35; white-space: normal; overflow-wrap: anywhere;
 }
 .pyproj-count {
   flex: 0 0 auto; font-size: 10.5px; color: var(--muted);
@@ -2312,7 +2315,40 @@ input[type="text"], input[type="password"], textarea, select, .CodeMirror,
 }
 .pyproj-actions { display: flex; align-items: center; gap: 2px; flex: 0 0 auto; }
 .pyproj-actions .row-x { width: 20px; height: 20px; }
-.pyproj-files { padding: 0 0 4px; }
+.pyproj-files {
+  display: grid; grid-template-rows: 1fr; opacity: 1;
+  transition: grid-template-rows .22s ease, opacity .18s ease;
+}
+.pyproj-files.folded { grid-template-rows: 0fr; opacity: 0; }
+.pyproj-files-inner { overflow: hidden; min-height: 0; padding: 0 0 4px; }
 .pyproj-files .tbrow { padding-left: 30px; }
 .pyproj-files .tbname { font-weight: 400; }
 .pyproj-new { justify-content: center; gap: 6px; color: var(--accent); font-weight: 500; }
+
+/* Python 工作区：图标/按钮统一平面 2D，不加投影、位移和渐变 */
+.py-workspace .btn,
+.py-workspace .icon-btn,
+.py-workspace .row-x,
+.py-workspace .pyproj-h,
+.py-workspace .tbrow {
+  box-shadow: none;
+  text-shadow: none;
+  background-image: none;
+}
+.py-workspace .btn:hover,
+.py-workspace .btn:active,
+.py-workspace .btn.primary:hover,
+.py-workspace .btn.run:hover {
+  box-shadow: none;
+  transform: none;
+}
+.py-workspace .py-tab-close {
+  display: inline-flex; align-items: center; justify-content: center;
+  line-height: 1; font-size: 0;
+}
+
+/* 触屏没有 hover：文件删除按钮常显，避免点不到 */
+@media (hover: none), (max-width: 919px) {
+  .tbrow .row-x { opacity: 1; }
+}
+.pyproj-files.folded .pyproj-files-inner { padding-bottom: 0; }
