@@ -2277,3 +2277,4 @@ input[type="text"], input[type="password"], textarea, select, .CodeMirror,
   .paper-do-bar { padding: 6px 8px; gap: 6px; }
   .pdb-title { flex: 1 1 100%; order: -1; white-space: normal; }
 }
+.stat-attempt .stat-timeout { color: var(--err); opacity: 1; font-weight: 600; }

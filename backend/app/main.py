@@ -1054,10 +1054,12 @@ class PaperRenameBody(BaseModel):
 class PaperSettingsBody(BaseModel):
     maxAttempts: int = 0
     showAnswer: bool = True
+    timeLimitMinutes: int = 0
 
 
 class PaperSubmitBody(BaseModel):
     answers: dict = {}
+    auto: bool = False
 
 
 @app.post("/api/papers/{pid}/rename")
@@ -1073,7 +1075,8 @@ def api_paper_rename(pid: int, b: PaperRenameBody, request: Request):
 def api_paper_settings(pid: int, b: PaperSettingsBody, request: Request):
     a = acct(sess(request))
     try:
-        return drills.update_paper_settings(a, pid, b.maxAttempts, b.showAnswer)
+        return drills.update_paper_settings(a, pid, b.maxAttempts, b.showAnswer,
+                                            b.timeLimitMinutes)
     except DrillError as e:
         raise HTTPException(400, str(e))
 
@@ -1087,12 +1090,22 @@ def api_paper_stats(pid: int, request: Request):
         raise HTTPException(400, str(e))
 
 
+@app.post("/api/papers/{pid}/start")
+def api_paper_start(pid: int, request: Request):
+    """开始 / 继续一次整卷作答，返回限时信息。"""
+    a = acct(sess(request))
+    try:
+        return drills.start_paper(a, pid)
+    except DrillError as e:
+        raise HTTPException(400, str(e))
+
+
 @app.post("/api/papers/{pid}/submit")
 def api_paper_submit(pid: int, b: PaperSubmitBody, request: Request):
     """整卷交卷：一次判完整套题，只消耗一次交卷机会。"""
     a = acct(sess(request))
     try:
-        return drills.submit_paper(a, pid, b.answers or {})
+        return drills.submit_paper(a, pid, b.answers or {}, b.auto)
     except DrillError as e:
         raise HTTPException(400, str(e))
 

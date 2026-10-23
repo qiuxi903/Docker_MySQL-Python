@@ -327,13 +327,19 @@ const App = {
       drillView: "list",            // list 清单 / paper 试卷详情 / do 做题
       papers: [],
       paperCurrent: null,
-      paperForm: { id: 0, maxAttempts: 0, showAnswer: true, busy: false },
+      paperForm: { id: 0, maxAttempts: 0, showAnswer: true,
+                   timeLimitMinutes: 0, busy: false },
       paperStats: null,
       paperStatsBusy: false,
       statsBack: "paper",
       paperBusy: false,
       paperAnswers: {},        // 本次作答：题目 id -> 是否已写答案
       paperNav: {},            // 本题 Navicat 操作缓存：题目 id -> {log, query, mode}
+      paperLimitMinutes: 0,    // 本套限时（分钟）
+      paperDeadline: 0,        // 本次作答截止时间戳
+      paperNow: Date.now(),
+      paperAutoSubmitting: false,
+      paperAutoRetryAt: 0,
       papersBusy: false,
       drillTabs: [
         { value: "sql", label: "MySQL", icon: "database" },
@@ -530,6 +536,32 @@ const App = {
     paperAnsweredCount() {
       return Object.values(this.paperAnswers || {}).filter(Boolean).length;
     },
+    paperSecondsLeft() {
+      if (!this.paperDeadline) return null;
+      return Math.max(0, Math.ceil((this.paperDeadline - this.paperNow) / 1000));
+    },
+    paperTimeLow() {
+      const s = this.paperSecondsLeft;
+      return s !== null && s <= 300;
+    },
+    paperTimeText() {
+      const s = this.paperSecondsLeft;
+      if (s === null) return "";
+      const h = Math.floor(s / 3600);
+      const m = Math.floor((s % 3600) / 60);
+      const sec = s % 60;
+      const pad = n => String(n).padStart(2, "0");
+      return h ? `${h}:${pad(m)}:${pad(sec)}` : `${m}:${pad(sec)}`;
+    },
+    drillIndex() {
+      const list = this.drillSideList || [];
+      return list.findIndex(x => this.drillCurrent && x.id === this.drillCurrent.id);
+    },
+    isFirstDrill() { return this.drillIndex <= 0; },
+    isLastDrill() {
+      const i = this.drillIndex;
+      return i < 0 || i >= (this.drillSideList || []).length - 1;
+    },
     draftCount() { return this.myQuestions.filter(q => !q.status).length; },
     // 题库广场：题目在前、旧资源条目在后，放进同一个网格里铺开（避免两排各自留空）
     squareList() {
@@ -603,6 +635,11 @@ const App = {
     });
     // 刷新/关闭页面时，未交卷的作答先让浏览器拦一下
     window.addEventListener("beforeunload", this.onBeforeUnload);
+    // 整卷限时：每秒刷新倒计时，到点自动交卷
+    setInterval(() => {
+      this.paperNow = Date.now();
+      this.checkPaperTimeout();
+    }, 1000);
     // 分享链接：/s/码 或 #/s/码（进站即记录，登录后自动弹出）
     const m = location.pathname.match(/^\/s\/([A-Za-z0-9]{4,})/) ||
               (location.hash || "").match(/s\/([A-Za-z0-9]{4,})/);
@@ -787,6 +824,7 @@ const App = {
 
     async logout() {
       if (!await this.confirmLeaveDrill()) return;
+      if (!await this.confirmLeaveWorkspace()) return;
       this.flushDrillDraft();
       this.stashPaperNav();
       try { await this.api("/api/logout", { method: "POST" }); } catch (e) {}
@@ -870,6 +908,8 @@ const App = {
       }
       try {
         this.paperCurrent = await this.api(`/api/papers/${p.id}`);
+        this.paperDeadline = 0;
+        this.paperLimitMinutes = this.paperCurrent.timeLimitMinutes || 0;
         this.loadPaperNav(p.id);
         this.paperAnswers = {};
         this.syncPaperAnswers();
@@ -902,7 +942,8 @@ const App = {
     openPaperSettings(p) {
       if (!p || !p.mine || !this.user || !this.user.canPublish) return;
       this.paperForm = { id: p.id, maxAttempts: p.maxAttempts || 0,
-                         showAnswer: p.showAnswer !== false, busy: false };
+                         showAnswer: p.showAnswer !== false,
+                         timeLimitMinutes: p.timeLimitMinutes || 0, busy: false };
       const d = this.$refs.paperSetDlg;
       if (d && !d.open) { try { d.showModal(); } catch (e) { d.setAttribute("open", ""); } }
     },
@@ -914,18 +955,25 @@ const App = {
       const f = this.paperForm;
       if (!f.id || f.busy) return;
       f.maxAttempts = Math.max(0, Math.min(99, parseInt(f.maxAttempts, 10) || 0));
+      f.timeLimitMinutes = Math.max(0, Math.min(1440, parseInt(f.timeLimitMinutes, 10) || 0));
       f.busy = true;
       try {
         const r = await this.api(`/api/papers/${f.id}/settings`, {
           method: "POST",
-          body: { maxAttempts: f.maxAttempts, showAnswer: !!f.showAnswer },
+          body: { maxAttempts: f.maxAttempts, showAnswer: !!f.showAnswer,
+                  timeLimitMinutes: f.timeLimitMinutes },
         });
         if (this.paperCurrent && this.paperCurrent.id === f.id) {
           this.paperCurrent.maxAttempts = r.maxAttempts;
           this.paperCurrent.showAnswer = r.showAnswer;
+          this.paperCurrent.timeLimitMinutes = r.timeLimitMinutes;
         }
         const p = this.papers.find(x => x.id === f.id);
-        if (p) { p.maxAttempts = r.maxAttempts; p.showAnswer = r.showAnswer; }
+        if (p) {
+          p.maxAttempts = r.maxAttempts;
+          p.showAnswer = r.showAnswer;
+          p.timeLimitMinutes = r.timeLimitMinutes;
+        }
         this.closePaperSettings();
         this.toast("试卷设置已保存");
       } catch (e) { this.toast(e.message); }
@@ -1129,41 +1177,92 @@ const App = {
       this.navLog = [];
       this.navLastQuery = "";
     },
+    async ensurePaperSession() {
+      if (!this.paperCurrent) return;
+      if (this.paperDeadline) return;
+      try {
+        const r = await this.api(`/api/papers/${this.paperCurrent.id}/start`, { method: "POST" });
+        this.paperLimitMinutes = r.limitMinutes || 0;
+        if (r.limitMinutes > 0) {
+          this.paperDeadline = Date.now() + Math.max(0, r.secondsLeft || 0) * 1000;
+          this.paperNow = Date.now();
+        } else {
+          this.paperDeadline = 0;
+        }
+      } catch (e) { /* 限时接口失败不阻塞做题 */ }
+    },
+    clearPaperTimer() {
+      this.paperDeadline = 0;
+      this.paperLimitMinutes = 0;
+      this.paperAutoRetryAt = 0;
+      this.paperAutoSubmitting = false;
+    },
+    checkPaperTimeout() {
+      if (this.view !== "drills" || this.drillView !== "do" || !this.paperCurrent) return;
+      if (!this.paperDeadline || this.paperSecondsLeft > 0) return;
+      if (this.paperBusy || this.paperAutoSubmitting) return;
+      if (Date.now() < this.paperAutoRetryAt) return;
+      this.paperAutoSubmitting = true;
+      this.submitPaper(true).finally(() => { this.paperAutoSubmitting = false; });
+    },
+    prevDrill() {
+      const i = this.drillIndex;
+      if (i <= 0) return;
+      this.startDrill(this.drillSideList[i - 1]);
+    },
+    nextDrill() {
+      const i = this.drillIndex;
+      if (i < 0 || i >= (this.drillSideList || []).length - 1) {
+        this.toast("已经是最后一题了，请点「交卷」");
+        return;
+      }
+      this.startDrill(this.drillSideList[i + 1]);
+    },
     startPaper() {
       if (!this.paperCurrent || !this.paperCurrent.questions.length) return;
       const qs = this.paperCurrent.questions;
       const first = qs.find(q => !q.passed) || qs[0];
       this.startDrill(first);
     },
-    async submitPaper() {
+    async submitPaper(auto = false) {
       const p = this.paperCurrent;
       if (!p || this.paperBusy) return;
-      if (this.paperOutOfTries) { this.toast("本套试卷的交卷次数已经用完"); return; }
+      if (this.paperOutOfTries) {
+        if (!auto) this.toast("本套试卷的交卷次数已经用完");
+        return;
+      }
       const answers = this.collectPaperAnswers();
       const n = Object.keys(answers).length;
-      if (!n) { this.toast("先作答至少一道题再交卷"); return; }
+      if (!auto && !n) { this.toast("先作答至少一道题再交卷"); return; }
       const total = this.drillSideList.length;
       const left = total - n;
       this.paperBusy = true;
       try {
-        if (!await this.askConfirm(
-            "确认交卷",
-            `本套共 ${total} 题，已作答 ${n} 题${left ? `，还有 ${left} 题未作答` : ""}。` +
-            "请检查好再交卷，交卷后会统一判分并记录本次成绩。",
-            false, "确认交卷", "再检查一下")) return;
+        if (!auto) {
+          if (!await this.askConfirm(
+              "确认交卷",
+              `本套共 ${total} 题，已作答 ${n} 题${left ? `，还有 ${left} 题未作答` : ""}。` +
+              "请检查好再交卷，交卷后会统一判分并记录本次成绩。",
+              false, "确认交卷", "再检查一下")) return;
+        }
         const r = await this.api(`/api/papers/${p.id}/submit`, {
-          method: "POST", body: { answers },
+          method: "POST", body: { answers, auto: !!auto },
         });
         this.paperStats = r;
         this.statsBack = "paper";
         this.drillView = "stats";
         this.clearPaperDrafts();
+        this.clearPaperTimer();
         this.refreshPaper();
         await this.loadPapers();
-        this.toast(`交卷成功：${r.myScore}/${r.totalScore} 分`);
+        this.toast(auto
+          ? `时间到，已自动交卷：${r.myScore}/${r.totalScore} 分`
+          : `交卷成功：${r.myScore}/${r.totalScore} 分`);
         window.scrollTo(0, 0);
-      } catch (e) { this.toast(e.message); }
-      finally { this.paperBusy = false; }
+      } catch (e) {
+        if (auto) this.paperAutoRetryAt = Date.now() + 5000;
+        this.toast(e.message);
+      } finally { this.paperBusy = false; }
     },
     viewAttempt(a) {
       const s = this.paperStats;
@@ -1184,6 +1283,7 @@ const App = {
       // 切题前先把上一题的草稿和 Navicat 操作落盘
       this.flushDrillDraft();
       this.stashPaperNav();
+      if (this.paperCurrent) await this.ensurePaperSession();
       this.drillView = "do";
       window.scrollTo(0, 0);
       await this.openDrill(d);
@@ -1242,6 +1342,24 @@ const App = {
     markDrillDirty() {
       this.drillDirty = this.drillHasAnswer();
     },
+    // 主工作台（MySQL / Python）退出前的防误触
+    async confirmLeaveWorkspace() {
+      if (this.view === "sql") {
+        const sql = this.$refs.cmSqlRef ? this.$refs.cmSqlRef.getValue() : "";
+        if (!sql.trim()) return true;
+        return await this.askConfirm(
+          "SQL 还没有处理",
+          "MySQL 工作台里还有没运行的 SQL。退出后当前内容会留在浏览器草稿里，重新登录还能恢复。确定退出吗？",
+          true, "退出登录", "留下继续");
+      }
+      if (this.view === "py" && this.pyDirty && this.pyDirty.size) {
+        return await this.askConfirm(
+          "Python 还有未保存的修改",
+          "当前 Python 文件还有没保存的修改。确定退出登录吗？",
+          true, "退出登录", "留下继续");
+      }
+      return true;
+    },
     // 离开做题页前的防误触：整套卷子还没交卷先确认
     async confirmLeaveDrill() {
       if (this.view !== "drills" || this.drillView !== "do" || !this.drillCurrent) return true;
@@ -1259,9 +1377,16 @@ const App = {
         true, "离开", "继续做题");
     },
     onBeforeUnload(e) {
-      if (this.view !== "drills" || this.drillView !== "do" || !this.drillCurrent) return;
-      const dirty = this.paperCurrent ? this.paperHasUnsubmitted()
-                                      : (this.drillDirty && this.drillHasAnswer());
+      let dirty = false;
+      if (this.view === "drills" && this.drillView === "do" && this.drillCurrent) {
+        dirty = this.paperCurrent ? this.paperHasUnsubmitted()
+                                  : (this.drillDirty && this.drillHasAnswer());
+      } else if (this.view === "sql") {
+        const sql = this.$refs.cmSqlRef ? this.$refs.cmSqlRef.getValue() : "";
+        dirty = !!sql.trim();
+      } else if (this.view === "py") {
+        dirty = !!(this.pyDirty && this.pyDirty.size);
+      }
       if (!dirty) return;
       e.preventDefault();
       e.returnValue = "";

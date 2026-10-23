@@ -27,7 +27,7 @@ html[data-theme="light"] body { background: #f6f8fa; }
 <link rel="stylesheet" href="/vendor/codemirror/codemirror.css">
 <link rel="stylesheet" href="/vendor/codemirror/addon/hint/show-hint.css">
 <link rel="stylesheet" href="/fonts/misans/misans.css">
-<link rel="stylesheet" href="/style.css?v=143">
+<link rel="stylesheet" href="/style.css?v=145">
   <link rel="stylesheet" href="/navicat.css?v=10">
 </head>
 <body>
@@ -328,6 +328,7 @@ html[data-theme="light"] body { background: #f6f8fa; }
                   <span class="pc-stat"><b>{{ p.questionCount }}</b> 题</span>
                   <span class="pc-stat"><b>{{ p.totalScore }}</b> 总分</span>
                   <span class="pc-stat got"><b>{{ p.myScore }}</b> 我的得分</span>
+                  <span class="pc-stat" v-if="p.timeLimitMinutes"><b>{{ p.timeLimitMinutes }}</b> 分钟限时</span>
                 </div>
                 <div class="pc-bar"><i :style="{width: paperPct(p) + '%'}"></i></div>
                 <div class="pc-foot">
@@ -379,6 +380,7 @@ html[data-theme="light"] body { background: #f6f8fa; }
             <p class="paper-desc" v-if="paperCurrent.description">{{ paperCurrent.description }}</p>
             <div class="paper-rules">
               <span class="badge tiny">{{ paperCurrent.maxAttempts ? '每套可交 ' + paperCurrent.maxAttempts + ' 次' : '不限交卷次数' }}</span>
+              <span class="badge tiny" v-if="paperCurrent.timeLimitMinutes">限时 {{ paperCurrent.timeLimitMinutes }} 分钟</span>
               <span class="badge tiny ok" v-if="paperCurrent.showAnswer">交卷后可见答案</span>
               <span class="badge tiny" v-else>交卷后不显示答案</span>
               <span class="badge tiny" v-if="paperCurrent.attemptCount">
@@ -446,6 +448,7 @@ html[data-theme="light"] body { background: #f6f8fa; }
                       :class="{on: paperStats.currentNo === a.no}" @click="viewAttempt(a)">
                 第 {{ a.no }} 次 · {{ a.score }}/{{ a.totalScore }} 分
                 <em>{{ a.at.slice(5, 16) }}</em>
+                <em v-if="a.timedOut" class="stat-timeout">超时</em>
               </button>
             </div>
             <div class="stat-hero">
@@ -612,7 +615,12 @@ html[data-theme="light"] body { background: #f6f8fa; }
                     :class="{out: paperOutOfTries}">
                 {{ paperOutOfTries ? '交卷次数已用完' : '剩余 ' + paperTriesLeft + ' 次' }}
               </span>
+              <span v-if="paperSecondsLeft !== null" class="pdb-stat"
+                    :class="{out: paperTimeLow}">剩余 {{ paperTimeText }}</span>
               <span class="spacer"></span>
+              <button class="btn mini ghost" :disabled="isFirstDrill" @click="prevDrill">上一题</button>
+              <button class="btn mini ghost" :disabled="isLastDrill" @click="nextDrill"
+                      title="已经是最后一题就点「交卷」">下一题</button>
               <button class="btn primary" :disabled="paperBusy || paperOutOfTries" @click="submitPaper">
                 <e-icon name="target" :size="13"></e-icon> {{ paperBusy ? '交卷中…' : '交卷' }}
               </button>
@@ -2105,6 +2113,11 @@ INSERT INTO course VALUES (1,'数学');</pre>
       <input type="number" min="0" max="99" step="1" v-model.number="paperForm.maxAttempts">
       <em>0 = 不限次数；填 1 表示整套卷子只能交一次（交卷时统一判所有题）</em>
     </label>
+    <label class="mini-field">
+      <span>限时（分钟）</span>
+      <input type="number" min="0" max="1440" step="1" v-model.number="paperForm.timeLimitMinutes">
+      <em>0 = 不限时；时间到会自动交卷（从第一次进入做题开始计时，刷新不重置）</em>
+    </label>
     <label class="mini-check">
       <input type="checkbox" v-model="paperForm.showAnswer">
       <span>交卷后允许学生查看答案</span>
@@ -2904,6 +2917,6 @@ INSERT INTO course VALUES (1,'数学');</pre>
 </script>
 
 <script src="/navicat.js?v=1"></script>
-<script src="/app.js?v=139"></script>
+<script src="/app.js?v=141"></script>
 </body>
 </html>

@@ -121,6 +121,7 @@ def init():
                     status TINYINT(1) NOT NULL DEFAULT 0,
                     max_attempts INT NOT NULL DEFAULT 0,
                     show_answer TINYINT(1) NOT NULL DEFAULT 1,
+                    time_limit_minutes INT NOT NULL DEFAULT 0,
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                     published_at DATETIME NULL,
                     KEY idx_owner (account_id),
@@ -131,6 +132,7 @@ def init():
             for col, ddl in (
                 ("max_attempts", "ADD COLUMN max_attempts INT NOT NULL DEFAULT 0"),
                 ("show_answer", "ADD COLUMN show_answer TINYINT(1) NOT NULL DEFAULT 1"),
+                ("time_limit_minutes", "ADD COLUMN time_limit_minutes INT NOT NULL DEFAULT 0"),
             ):
                 try:
                     cur.execute(f"ALTER TABLE {q_ident(C.COMMUNITY_DB)}.drill_papers {ddl}")
@@ -176,10 +178,33 @@ def init():
                     passed_n INT NOT NULL DEFAULT 0,
                     answered_n INT NOT NULL DEFAULT 0,
                     question_n INT NOT NULL DEFAULT 0,
+                    timed_out TINYINT(1) NOT NULL DEFAULT 0,
+                    started_at DATETIME NULL,
+                    limit_minutes INT NOT NULL DEFAULT 0,
                     detail MEDIUMTEXT,
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                     KEY idx_user (account_id, paper_id),
                     KEY idx_paper (paper_id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+            for col, ddl in (
+                ("timed_out", "ADD COLUMN timed_out TINYINT(1) NOT NULL DEFAULT 0"),
+                ("started_at", "ADD COLUMN started_at DATETIME NULL"),
+                ("limit_minutes", "ADD COLUMN limit_minutes INT NOT NULL DEFAULT 0"),
+            ):
+                try:
+                    cur.execute(f"ALTER TABLE {q_ident(C.COMMUNITY_DB)}.drill_paper_attempts {ddl}")
+                except Exception:
+                    pass
+            # 限时作答：开始做题时记一行，交卷后删除，下一次重新计时
+            cur.execute(f"""
+                CREATE TABLE IF NOT EXISTS {q_ident(C.COMMUNITY_DB)}.drill_paper_sessions (
+                    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                    paper_id BIGINT NOT NULL,
+                    account_id BIGINT NOT NULL,
+                    started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    limit_minutes INT NOT NULL DEFAULT 0,
+                    UNIQUE KEY uq_user_paper (account_id, paper_id)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             """)
     finally:
@@ -385,6 +410,7 @@ def _paper_row(r) -> dict:
         "myScore": int(r[11] or 0), "doneCount": int(r[12] or 0),
         "triedCount": int(r[13] or 0),
         "maxAttempts": int(r[14] or 0), "showAnswer": bool(r[15]),
+        "timeLimitMinutes": int(r[16] or 0),
     }
 
 
@@ -396,7 +422,7 @@ _PAPER_SELECT = """
            COALESCE(SUM(CASE WHEN s.passed = 1 THEN d.score ELSE 0 END), 0) AS my_score,
            COALESCE(SUM(CASE WHEN s.passed = 1 THEN 1 ELSE 0 END), 0) AS done_n,
            COALESCE(SUM(CASE WHEN s.attempts > 0 THEN 1 ELSE 0 END), 0) AS tried_n,
-           p.max_attempts, p.show_answer
+           p.max_attempts, p.show_answer, p.time_limit_minutes
       FROM drill_papers p
       LEFT JOIN drills d
              ON d.paper_id = p.id AND (d.status = 1 OR d.account_id = %s)
@@ -577,10 +603,12 @@ def get_paper(account: dict, pid: int) -> dict:
 
 
 def update_paper_settings(account: dict, pid: int, max_attempts: int = 0,
-                          show_answer: bool = True) -> dict:
-    """出卷人设置：整套卷子可交卷次数（0=不限）与交卷后是否显示答案。"""
+                          show_answer: bool = True, time_limit_minutes: int = 0) -> dict:
+    """出卷人设置：整套卷子可交卷次数（0=不限）、交卷后是否显示答案、限时分钟数。"""
     n = int(max_attempts or 0)
     n = max(0, min(99, n))
+    t = int(time_limit_minutes or 0)
+    t = max(0, min(1440, t))
     conn = root_conn(C.COMMUNITY_DB)
     try:
         with conn.cursor() as cur:
@@ -590,13 +618,18 @@ def update_paper_settings(account: dict, pid: int, max_attempts: int = 0,
                 raise DrillError("试卷不存在")
             if r[0] != account["id"] and account.get("role") != "admin":
                 raise DrillError("只能修改自己的试卷")
-            cur.execute("""UPDATE drill_papers SET max_attempts=%s, show_answer=%s
+            cur.execute("""UPDATE drill_papers
+                              SET max_attempts=%s, show_answer=%s, time_limit_minutes=%s
                             WHERE id=%s""",
-                        (n, 1 if show_answer else 0, pid))
+                        (n, 1 if show_answer else 0, t, pid))
+            # 正在作答的会话也按新时限从原开始时间重新计算
+            cur.execute("""UPDATE drill_paper_sessions SET limit_minutes=%s
+                            WHERE paper_id=%s""", (t, pid))
         conn.commit()
     finally:
         conn.close()
-    return {"id": pid, "maxAttempts": n, "showAnswer": bool(show_answer)}
+    return {"id": pid, "maxAttempts": n, "showAnswer": bool(show_answer),
+            "timeLimitMinutes": t}
 
 
 def _decode_submitted_answer(raw):
@@ -657,7 +690,8 @@ def paper_stats(account: dict, pid: int) -> dict:
                             ORDER BY id ASC""", (pid, account["id"]))
             drows = cur.fetchall()
             cur.execute("""SELECT id, attempt_no, score, total_score, passed_n,
-                                  answered_n, question_n, detail, created_at
+                                  answered_n, question_n, timed_out, started_at,
+                                  limit_minutes, detail, created_at
                              FROM drill_paper_attempts
                             WHERE paper_id=%s AND account_id=%s
                             ORDER BY attempt_no ASC, id ASC""", (pid, account["id"]))
@@ -679,7 +713,8 @@ def paper_stats(account: dict, pid: int) -> dict:
     if arows:
         attempts = []
         for a in arows:
-            aid, ano, ascore, atotal, apassed, aanswered, aqn, detail_raw, at = a
+            (aid, ano, ascore, atotal, apassed, aanswered, aqn,
+             atimed_out, astarted, alimit, detail_raw, at) = a
             at = str(at)
             try:
                 detail = json.loads(detail_raw or "{}")
@@ -722,6 +757,9 @@ def paper_stats(account: dict, pid: int) -> dict:
                 "totalScore": int(atotal or 0), "passedCount": int(apassed or 0),
                 "answeredCount": int(aanswered or 0),
                 "questionCount": len(qs), "at": at, "questions": qs,
+                "timedOut": bool(atimed_out),
+                "startedAt": str(astarted) if astarted else "",
+                "limitMinutes": int(alimit or 0),
                 "finished": len(qs) > 0 and int(apassed or 0) >= len(qs),
             })
         latest = attempts[-1]
@@ -854,6 +892,7 @@ def delete_paper(account: dict, pid: int):
                            JOIN drills d ON d.id = s.drill_id
                            WHERE d.paper_id = %s""", (pid,))
             cur.execute("DELETE FROM drill_paper_attempts WHERE paper_id=%s", (pid,))
+            cur.execute("DELETE FROM drill_paper_sessions WHERE paper_id=%s", (pid,))
             cur.execute("DELETE FROM drills WHERE paper_id=%s", (pid,))
             cur.execute("DELETE FROM drill_papers WHERE id=%s", (pid,))
         conn.commit()
@@ -2344,7 +2383,7 @@ def _paper_cfg(account: dict, pid: int):
     try:
         with conn.cursor() as cur:
             cur.execute("""SELECT id, account_id, title, course, status,
-                                  max_attempts, show_answer
+                                  max_attempts, show_answer, time_limit_minutes
                              FROM drill_papers WHERE id=%s""", (pid,))
             p = cur.fetchone()
             if not p:
@@ -2380,7 +2419,52 @@ def submit(account: dict, did: int, answer) -> dict:
     return res
 
 
-def submit_paper(account: dict, pid: int, answers: dict) -> dict:
+def start_paper(account: dict, pid: int) -> dict:
+    """开始 / 继续一次整卷作答，返回限时信息（限时从第一次开始计时，刷新不重置）。"""
+    p, used = _paper_cfg(account, pid)
+    mine = p[1] == account["id"]
+    limit = int(p[7] or 0)
+    max_attempts = int(p[5] or 0)
+    out = {"limitMinutes": 0, "secondsLeft": 0, "startedAt": "",
+           "attemptsUsed": used, "maxAttempts": max_attempts, "expired": False}
+    if mine or account.get("role") == "admin":
+        limit = 0
+    if max_attempts > 0 and used >= max_attempts:
+        limit = 0
+    if limit <= 0:
+        return out
+    conn = root_conn(C.COMMUNITY_DB)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""SELECT started_at, limit_minutes FROM drill_paper_sessions
+                            WHERE account_id=%s AND paper_id=%s""",
+                        (account["id"], pid))
+            row = cur.fetchone()
+            if not row:
+                cur.execute("""INSERT INTO drill_paper_sessions
+                               (paper_id, account_id, limit_minutes)
+                               VALUES (%s,%s,%s)""", (pid, account["id"], limit))
+                conn.commit()
+            elif int(row[1] or 0) <= 0:
+                return out
+            cur.execute("""SELECT TIMESTAMPDIFF(SECOND, NOW(),
+                              DATE_ADD(started_at, INTERVAL limit_minutes MINUTE)),
+                              started_at, limit_minutes
+                             FROM drill_paper_sessions
+                            WHERE account_id=%s AND paper_id=%s""",
+                        (account["id"], pid))
+            sec, started, sess_limit = cur.fetchone()
+    finally:
+        conn.close()
+    sec = int(sec or 0)
+    out.update({"limitMinutes": int(sess_limit or 0),
+                "secondsLeft": max(0, sec),
+                "startedAt": str(started) if started else "",
+                "expired": sec <= 0})
+    return out
+
+
+def submit_paper(account: dict, pid: int, answers: dict, auto: bool = False) -> dict:
     """整卷交卷：一次判完整套题，只消耗一次交卷机会。"""
     p, used = _paper_cfg(account, pid)
     mine = p[1] == account["id"]
@@ -2428,7 +2512,29 @@ def submit_paper(account: dict, pid: int, answers: dict) -> dict:
                       "maxScore": res["maxScore"], "reason": res.get("reason") or "",
                       "answer": ans, "ms": res.get("ms") or 0})
         pending.append((did, ans, res))
-    if answered_n == 0:
+    # 限时：读本次作答的开始时间；时间到自动交卷时允许 0 题作答
+    started_at = None
+    limit_minutes = int(p[7] or 0)
+    sec_left = None
+    conn = root_conn(C.COMMUNITY_DB)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""SELECT started_at, limit_minutes,
+                                  TIMESTAMPDIFF(SECOND, NOW(),
+                                    DATE_ADD(started_at, INTERVAL limit_minutes MINUTE))
+                             FROM drill_paper_sessions
+                            WHERE account_id=%s AND paper_id=%s""",
+                        (account["id"], pid))
+            sess = cur.fetchone()
+    finally:
+        conn.close()
+    if sess:
+        started_at, limit_minutes = sess[0], int(sess[1] or 0)
+        sec_left = int(sess[2] or 0)
+    elif limit_minutes > 0:
+        sec_left = limit_minutes * 60
+    expired = limit_minutes > 0 and sec_left is not None and sec_left <= 0
+    if answered_n == 0 and not expired:
         raise DrillError("还没有作答，先做几道题再交卷")
 
     # 先写整卷记录，再把每题提交挂到这次交卷上
@@ -2438,12 +2544,16 @@ def submit_paper(account: dict, pid: int, answers: dict) -> dict:
         with conn.cursor() as cur:
             cur.execute("""INSERT INTO drill_paper_attempts
                            (paper_id, account_id, attempt_no, score, total_score,
-                            passed_n, answered_n, question_n, detail)
-                           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                            passed_n, answered_n, question_n, timed_out, started_at,
+                            limit_minutes, detail)
+                           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,COALESCE(%s,NOW()),%s,%s)""",
                         (pid, account["id"], used + 1, my_score, total_score,
-                         passed_n, answered_n, len(rows),
+                         passed_n, answered_n, len(rows), 1 if expired else 0,
+                         started_at, limit_minutes,
                          json.dumps(detail, ensure_ascii=False, default=str)[:4_000_000]))
             attempt_id = int(cur.lastrowid)
+            cur.execute("""DELETE FROM drill_paper_sessions
+                            WHERE account_id=%s AND paper_id=%s""", (account["id"], pid))
         conn.commit()
     finally:
         conn.close()

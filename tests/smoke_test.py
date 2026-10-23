@@ -826,10 +826,11 @@ if mine:
     check("试卷：默认不限次数、显示答案",
           pd.get("maxAttempts") == 0 and pd.get("showAnswer") is True, str(pd)[:160])
     code, r = call(f"/api/papers/{card['id']}/settings",
-                   {"maxAttempts": 1, "showAnswer": False}, token=tok_ad2)
+                   {"maxAttempts": 1, "showAnswer": False, "timeLimitMinutes": 1},
+                   token=tok_ad2)
     check("试卷：出卷人可改设置",
-          code == 200 and r.get("maxAttempts") == 1 and r.get("showAnswer") is False,
-          str(r)[:120])
+          code == 200 and r.get("maxAttempts") == 1 and r.get("showAnswer") is False
+          and r.get("timeLimitMinutes") == 1, str(r)[:120])
     code, r = call(f"/api/papers/{card['id']}/settings",
                    {"maxAttempts": 1, "showAnswer": False}, token=tok_md)
     check("试卷：学生不能改设置", code == 400, f"{code} {str(r)[:100]}")
@@ -837,6 +838,15 @@ if mine:
     check("试卷：设置下发到做题页",
           d0.get("paperMaxAttempts") == 1 and d0.get("paperShowAnswer") is False,
           str(d0)[:200])
+    code, st = call(f"/api/papers/{card['id']}/start", {}, token=tok_md)
+    check("限时：开始返回倒计时",
+          code == 200 and st.get("limitMinutes") == 1 and 0 < st.get("secondsLeft", 0) <= 60,
+          str(st)[:160])
+    _, st2 = call(f"/api/papers/{card['id']}/start", {}, token=tok_md)
+    check("限时：再次进入不重置",
+          st2.get("startedAt") == st.get("startedAt") and
+          st2.get("secondsLeft", 999) <= st.get("secondsLeft", 0),
+          str(st2)[:160])
 
     all_answers = {str(qp_ids[i]): answers[f"-- {i + 1}"] for i in range(3)}
     code, r = call(f"/api/papers/{card['id']}/submit",
@@ -850,6 +860,10 @@ if mine:
     check("整卷：关闭答案时不返回参考答案",
           all(q.get("ref") is None for q in r.get("questions") or []),
           str([q.get("ref") for q in r.get("questions") or []])[:160])
+    att = (r.get("attempts") or [{}])[0]
+    check("限时：交卷记录开始时间与限时",
+          att.get("timedOut") is False and att.get("limitMinutes") == 1 and att.get("startedAt"),
+          str({k: att.get(k) for k in ("timedOut", "limitMinutes", "startedAt")}))
     code, r2 = call(f"/api/papers/{card['id']}/submit",
                     {"answers": all_answers}, token=tok_md)
     check("整卷：超过交卷次数被拦",
@@ -865,8 +879,10 @@ if mine:
           str(stq)[:200])
     check("统计：关闭答案时不显示参考答案",
           stq.get("ref") is None and stats.get("showAnswer") is False, str(stq)[:160])
+    _, pdt = call(f"/api/papers/{card['id']}", token=tok_md)
+    check("限时：试卷详情带限时设置", pdt.get("timeLimitMinutes") == 1, str(pdt)[:160])
     call(f"/api/papers/{card['id']}/settings",
-         {"maxAttempts": 0, "showAnswer": True}, token=tok_ad2)
+         {"maxAttempts": 0, "showAnswer": True, "timeLimitMinutes": 0}, token=tok_ad2)
     _, stats = call(f"/api/papers/{card['id']}/stats", token=tok_md)
     stq = (stats.get("questions") or [{}])[0]
     check("统计：允许后可看参考答案",
