@@ -49,6 +49,8 @@ const NavicatPanel = {
       build: this.blankBuilder(),
       newRow: { tid: "", col: "" },
       builderMode: false,
+      // 创建图表（用当前查询结果画柱状/折线/饼图）
+      chart: { open: false, type: "bar", x: "", y: "" },
       condPop: null,
       buildDragName: "",
       condOps: ["=", "<>", ">", "<", ">=", "<=", "LIKE", "NOT LIKE",
@@ -148,12 +150,162 @@ const NavicatPanel = {
       ];
     },
     // SQL 窗格：只读、关键字高亮（先转义再一次性替换，避免嵌套）
-    builderSqlHtml() {
-      const esc = String((this.build && this.build.sql) || "")
-        .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-      return esc.replace(
-        /('[^']*'|`[^`]*`)|\b(SELECT|FROM|WHERE|GROUP BY|HAVING|ORDER BY|LIMIT|INNER JOIN|LEFT JOIN|RIGHT JOIN|JOIN|ON|AS|AND|OR|NOT|LIKE|IN|BETWEEN|IS NULL|IS NOT NULL|ASC|DESC|EXPLAIN)\b/gi,
-        (m, s) => s ? '<span class="tk-s">' + s + "</span>" : '<span class="tk-k">' + m + "</span>");
+    builderSqlHtml() { return this.sqlHighlight((this.build && this.build.sql) || ""); },
+    // 设计表：当前选中的字段（底部属性栏绑定它）
+    curCol() {
+      const i = this.design.sel;
+      const cols = this.design.columns || [];
+      return (i >= 0 && i < cols.length) ? cols[i] : null;
+    },
+    // 设计表：这张表上的触发器（信息来自 information_schema）
+    designTriggers() {
+      const n = this.design.name || this.design.originalName;
+      return (this.schema.triggers || []).filter(t => t.table === n);
+    },
+    // 设计表「SQL 预览」：按当前设计实时生成完整 CREATE TABLE（和 Navicat 一样边改边看）
+    designDdl() {
+      const d = this.design;
+      if (!d) return "";
+      const defs = (d.columns || []).map(c => this.colSql(c));
+      const pk = (d.columns || []).filter(c => c.pk).map(c => this.ident(c.name));
+      if (pk.length) defs.push("PRIMARY KEY (" + pk.join(", ") + ")");
+      for (const ix of d.indexes || []) {
+        const cols = String(ix.columns || "").split(",").map(x => x.trim()).filter(Boolean);
+        if (!ix.name || !cols.length) continue;
+        defs.push(`${ix.unique ? "UNIQUE " : ""}KEY ${this.ident(ix.name)} (${cols.map(c => this.ident(c)).join(", ")})`);
+      }
+      for (const f of d.fks || []) {
+        if (!f.name || !f.col || !f.refTable || !f.refCol) continue;
+        defs.push(`CONSTRAINT ${this.ident(f.name)} FOREIGN KEY (${this.ident(f.col)}) ` +
+                  `REFERENCES ${this.ident(f.refTable)} (${this.ident(f.refCol)})` +
+                  ` ON DELETE ${f.onDelete || "RESTRICT"} ON UPDATE ${f.onUpdate || "RESTRICT"}`);
+      }
+      for (const ck of d.checks || []) {
+        if (!ck.name || !ck.expr) continue;
+        defs.push(`CONSTRAINT ${this.ident(ck.name)} CHECK (${ck.expr})`);
+      }
+      let sql = `CREATE TABLE ${this.ident(d.name || "新表")} (\n  ${defs.join(",\n  ")}\n) ` +
+                `ENGINE=${d.engine || "InnoDB"} DEFAULT CHARSET=${d.charset || "utf8mb4"}`;
+      if (d.comment) sql += ` COMMENT=${this.lit(d.comment)}`;
+      return sql + ";";
+    },
+    designDdlHtml() { return this.sqlHighlight(this.designDdl); },
+    /* ---------------- 创建图表 ---------------- */
+    // 可画的列：X 任意列，Y 取数值列（结果集里能解析成数字的）
+    chartCols() {
+      const r = this.queryResult;
+      return r && r.columns ? r.columns : [];
+    },
+    chartNumericCols() {
+      const r = this.queryResult;
+      if (!r || !r.rows || !r.rows.length) return [];
+      return r.columns.filter((c, i) =>
+        r.rows.some(row => row[i] !== null && row[i] !== "" && isFinite(Number(row[i]))));
+    },
+    chartData() {
+      const r = this.queryResult, ch = this.chart;
+      if (!r || !r.columns) return [];
+      const xi = r.columns.indexOf(ch.x);
+      const yi = r.columns.indexOf(ch.y);
+      if (xi < 0 || yi < 0 || xi === yi) return [];
+      const out = [];
+      for (const row of (r.rows || [])) {
+        const v = Number(row[yi]);
+        if (row[xi] === null || row[xi] === undefined) continue;
+        if (!isFinite(v)) continue;
+        out.push({ label: String(row[xi]), value: v });
+        if (out.length >= 30) break;
+      }
+      return out;
+    },
+    chartSvg() {
+      const data = this.chartData;
+      if (!data.length) return "";
+      const W = 640, H = 340, L = 56, R = 18, T = 22, B = 52;
+      const IW = W - L - R, IH = H - T - B;
+      const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+      let max = Math.max(...data.map(d => d.value), 0.000001);
+      const min = Math.min(...data.map(d => d.value), 0);
+      if (min >= 0) max += (max - min) * 0.1;   // 顶部留 10%，给柱顶数值标签腾地方
+      const span = (max - min) || 1;
+      const ticks = 4;
+      let g = "";
+      // 轴 + 网格线 + 刻度值
+      for (let i = 0; i <= ticks; i++) {
+        const v = min + (span * i) / ticks;
+        const y = T + IH - (IH * i) / ticks;
+        g += `<line x1="${L}" y1="${y.toFixed(1)}" x2="${W - R}" y2="${y.toFixed(1)}" class="cgrid"/>` +
+             `<text x="${L - 6}" y="${(y + 4).toFixed(1)}" class="ctick" text-anchor="end">${fmtNum(v)}</text>`;
+      }
+      g += `<line x1="${L}" y1="${T}" x2="${L}" y2="${T + IH}" class="caxis"/>` +
+           `<line x1="${L}" y1="${T + IH}" x2="${W - R}" y2="${T + IH}" class="caxis"/>`;
+      function fmtNum(v) {
+        return Math.abs(v) >= 1000 ? (Math.round(v)).toLocaleString("en-US")
+             : (Math.round(v * 100) / 100).toString();
+      }
+      const title = esc(this.chart.x) + " → " + esc(this.chart.y);
+      g = `<text x="${(W / 2).toFixed(0)}" y="14" class="ctitle" text-anchor="middle">${title}</text>` + g;
+
+      if (this.chart.type === "pie") {
+        const total = data.reduce((a, d) => a + Math.max(d.value, 0), 0) || 1;
+        const cx = L + IW * 0.32, cy = T + IH / 2, rad = Math.min(IW, IH) * 0.42;
+        const palette = ["#4c7ddb", "#4caf7d", "#e0a92e", "#d05c5c", "#7b61d1",
+                         "#4c9a86", "#c04fb0", "#8a97a8", "#b0604c", "#5c8ac0"];
+        let a0 = -Math.PI / 2, ly = T + 10;
+        data.forEach((d, i) => {
+          const frac = Math.max(d.value, 0) / total;
+          const a1 = a0 + frac * Math.PI * 2;
+          const large = frac > 0.5 ? 1 : 0;
+          const x0 = (cx + rad * Math.cos(a0)).toFixed(2), y0 = (cy + rad * Math.sin(a0)).toFixed(2);
+          const x1 = (cx + rad * Math.cos(a1)).toFixed(2), y1 = (cy + rad * Math.sin(a1)).toFixed(2);
+          const col = palette[i % palette.length];
+          if (frac > 0.0001) {
+            g += `<path d="M ${cx} ${cy} L ${x0} ${y0} A ${rad} ${rad} 0 ${large} 1 ${x1} ${y1} Z" ` +
+                 `fill="${col}" stroke="#fff" stroke-width="1.5"><title>${esc(d.label)}: ${fmtNum(d.value)}（${(frac * 100).toFixed(1)}%）</title></path>`;
+          }
+          g += `<rect x="${W - R - 168}" y="${ly}" width="10" height="10" rx="2" fill="${col}"/>` +
+               `<text x="${W - R - 152}" y="${ly + 9}" class="clab">${esc(clip(d.label, 12))} ${(frac * 100).toFixed(0)}%</text>`;
+          a0 = a1; ly += 17;
+          if (ly > T + IH) { ly = T + 10; }   // 图例太长就折回顶部（罕见）
+        });
+      } else if (this.chart.type === "line") {
+        const pts = data.map((d, i) => {
+          const x = data.length === 1 ? L + IW / 2 : L + (IW * i) / (data.length - 1);
+          const y = T + IH - ((d.value - min) / span) * IH;
+          return { x, y: Math.max(T, Math.min(T + IH, y)), d };
+        });
+        g += `<polyline points="${pts.map(p => p.x.toFixed(1) + "," + p.y.toFixed(1)).join(" ")}" ` +
+             `fill="none" stroke="#4c7ddb" stroke-width="2.2" stroke-linejoin="round"/>`;
+        pts.forEach((p, i) => {
+          g += `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="3.4" fill="#4c7ddb">` +
+               `<title>${esc(p.d.label)}: ${fmtNum(p.d.value)}</title></circle>`;
+          const step = Math.ceil(data.length / 8);
+          if (i % step === 0) {
+            g += `<text x="${p.x.toFixed(1)}" y="${T + IH + 16}" class="clab" text-anchor="middle">${esc(clip(p.d.label, 8))}</text>`;
+          }
+        });
+      } else {   // bar 柱状图
+        const bw = IW / data.length;
+        const barW = Math.max(4, Math.min(46, bw * 0.62));
+        data.forEach((d, i) => {
+          const x = L + bw * i + (bw - barW) / 2;
+          const zero = T + IH - ((0 - min) / span) * IH;
+          const y = T + IH - ((d.value - min) / span) * IH;
+          const top = Math.min(y, zero), h = Math.max(Math.abs(zero - y), 1);
+          g += `<rect x="${x.toFixed(1)}" y="${top.toFixed(1)}" width="${barW.toFixed(1)}" height="${h.toFixed(1)}" ` +
+               `rx="2.5" fill="${d.value >= 0 ? "#4c7ddb" : "#d05c5c"}"><title>${esc(d.label)}: ${fmtNum(d.value)}</title></rect>`;
+          if (data.length <= 12) {
+            g += `<text x="${(x + barW / 2).toFixed(1)}" y="${(top - 5).toFixed(1)}" class="cval" text-anchor="middle">${fmtNum(d.value)}</text>`;
+          }
+          const step = Math.ceil(data.length / 10);
+          if (i % step === 0) {
+            g += `<text x="${(L + bw * i + bw / 2).toFixed(1)}" y="${T + IH + 16}" class="clab" text-anchor="middle">${esc(clip(d.label, 8))}</text>`;
+          }
+        });
+      }
+      function clip(s, n) { s = String(s); return s.length > n ? s.slice(0, n - 1) + "…" : s; }
+      return `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" class="nc-chart-svg">${g}</svg>`;
     },
   },
 
@@ -178,7 +330,7 @@ const NavicatPanel = {
   mounted() {
     if (this.db) this.reload();
     this._menuOff = () => { this.menu = ""; this.ctx.show = false; this.condPop = null; };
-    this._escOff = (e) => { if (e.key === "Escape") { this.ctx.show = false; this.menu = ""; this.condPop = null; } };
+    this._escOff = (e) => { if (e.key === "Escape") { this.ctx.show = false; this.menu = ""; this.condPop = null; this.chart.open = false; } };
     document.addEventListener("click", this._menuOff);
     document.addEventListener("keydown", this._escOff);
   },
@@ -218,6 +370,14 @@ const NavicatPanel = {
       return (n / 1024 / 1024).toFixed(1) + " MB";
     },
     fmtDate(s) { return s ? String(s).replace("T", " ").slice(0, 19) : ""; },
+    // SQL 高亮（查询创建工具右侧预览 / 设计表 SQL 预览共用）：先转义再一次性替换
+    sqlHighlight(sql) {
+      const esc = String(sql || "")
+        .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      return esc.replace(
+        /('[^']*'|`[^`]*`)|\b(SELECT|FROM|WHERE|GROUP BY|HAVING|ORDER BY|LIMIT|INNER JOIN|LEFT JOIN|RIGHT JOIN|JOIN|ON|AS|AND|OR|NOT|LIKE|IN|BETWEEN|IS NULL|IS NOT NULL|ASC|DESC|EXPLAIN|CREATE TABLE|ALTER TABLE|DROP|ADD|PRIMARY KEY|UNIQUE|KEY|CONSTRAINT|FOREIGN KEY|REFERENCES|CHECK|ENGINE|DEFAULT|CHARSET|COMMENT|AUTO_INCREMENT|UNSIGNED|ZEROFILL|NULL|INTO|VALUES|SET|UPDATE|DELETE|INSERT|TRIGGER|CASCADE|RESTRICT)\b/gi,
+        (m, s) => s ? '<span class="tk-s">' + s + "</span>" : '<span class="tk-k">' + m + "</span>");
+    },
     normType(t) {
       const m = /^([a-zA-Z]+)(?:\((\d+)(?:,(\d+))?\))?(.*)$/.exec(String(t || ""));
       if (!m) return { type: String(t || "VARCHAR").toUpperCase(), length: null, scale: null, extra: "" };
@@ -419,14 +579,18 @@ const NavicatPanel = {
       this.loadRows();
     },
 
-    /* ---------------- 设计表 ---------------- */
+    /* ---------------- 设计表（Navicat 同款：工具栏 + 字段/索引/外键/检查/触发器/选项/注释/SQL预览） ---------------- */
     blankDesign() {
       return {
         mode: "new", name: "", originalName: "", engine: "InnoDB", charset: "utf8mb4",
         comment: "", originalEngine: "InnoDB", originalCharset: "utf8mb4", originalComment: "",
-        columns: [{ name: "id", type: "INT", length: null, scale: null, nullable: false,
-                    pk: true, auto: true, default: "", comment: "" }],
-        indexes: [], originalColumns: [], originalIndexes: [], tab: "columns",
+        columns: [{ name: "id", type: "INT", length: null, scale: null, extra: "",
+                    pk: true, auto: true, unsigned: false, zerofill: false,
+                    nullable: false, default: "", comment: "" }],
+        indexes: [], fks: [], checks: [],
+        originalColumns: [], originalIndexes: [], originalFks: [],
+        doneChecks: [],          // 本次会话里已经 ALTER 过的检查名（5.7 不回读，防重复）
+        sel: 0, tab: "columns",
       };
     },
     openDesign(name, mode = "edit") {
@@ -443,36 +607,123 @@ const NavicatPanel = {
           name: c.name, type: p.type, length: p.length, scale: p.scale,
           extra: p.extra || "", nullable: c.nullable, pk: c.key === "PRI",
           auto: String(c.extra || "").toUpperCase().includes("AUTO_INCREMENT"),
+          unsigned: /\bunsigned\b/i.test(c.type || ""),
+          zerofill: /\bzerofill\b/i.test(c.type || ""),
           default: c.default === null ? "" : c.default, comment: c.comment || "",
         };
       });
       const indexes = (t.indexes || [])
         .filter(i => i.name !== "PRIMARY")
         .map(i => ({ name: i.name, unique: i.unique, columns: (i.columns || []).join(", "), type: i.type }));
+      // 外键：按约束名分组（多列外键合并成一行，编辑时锁定）
+      const fkMap = {};
+      for (const f of (t.fks || [])) {
+        const k = f.name || f.col;
+        const g = fkMap[k] = fkMap[k] || {
+          name: k, col: f.col, refTable: f.refTable, refCol: f.refCol,
+          onDelete: f.onDelete || "RESTRICT", onUpdate: f.onUpdate || "RESTRICT",
+          cols: [], refCols: [],
+        };
+        g.cols.push(f.col); g.refCols.push(f.refCol);
+      }
+      const fks = Object.values(fkMap).map(g => {
+        g.multi = g.cols.length > 1;
+        g.col = g.cols[0]; g.refCol = g.refCols[0];
+        return g;
+      });
       this.design = {
         mode: "edit", name: t.name, originalName: t.name,
         engine: t.engine || "InnoDB", charset: this.schema.charset || "utf8mb4",
         comment: t.comment || "",
         originalEngine: t.engine || "InnoDB", originalCharset: this.schema.charset || "utf8mb4",
         originalComment: t.comment || "",
-        columns: cols, indexes,
+        columns: cols, indexes, fks, checks: [],
         originalColumns: JSON.parse(JSON.stringify(cols)),
         originalIndexes: JSON.parse(JSON.stringify(indexes)),
-        tab: "columns",
+        originalFks: JSON.parse(JSON.stringify(fks)),
+        doneChecks: [], sel: 0, tab: "columns",
       };
       this.ensureTab({ id: "design:" + name, kind: "design", name, title: "设计表 - " + name, icon: "table" });
     },
+    /* 工具栏（图1）：添加字段 / 插入字段 / 删除字段 / 主键 / 上移 / 下移，都作用在选中行上 */
     addDesignCol() {
-      this.design.columns.push({ name: "new_col", type: "VARCHAR", length: 50, scale: null,
-                                 extra: "", nullable: true, pk: false, auto: false,
-                                 default: "", comment: "" });
+      const blank = { name: "new_col", type: "VARCHAR", length: 50, scale: null, extra: "",
+                      pk: false, auto: false, unsigned: false, zerofill: false,
+                      nullable: true, default: "", comment: "" };
+      this.design.columns.push(blank);
+      this.design.sel = this.design.columns.length - 1;
     },
-    delDesignCol(i) { this.design.columns.splice(i, 1); },
-    moveDesignCol(i, dir) {
+    insertDesignCol() {
+      const blank = { name: "new_col", type: "VARCHAR", length: 50, scale: null, extra: "",
+                      pk: false, auto: false, unsigned: false, zerofill: false,
+                      nullable: true, default: "", comment: "" };
+      const at = Math.min(this.design.sel + 1, this.design.columns.length);
+      this.design.columns.splice(at, 0, blank);
+      this.design.sel = at;
+    },
+    delDesignColSel() {
+      const i = this.design.sel;
+      if (i < 0 || i >= this.design.columns.length) { this.toast("先在网格里点一行选中字段"); return; }
+      this.design.columns.splice(i, 1);
+      this.design.sel = Math.max(0, Math.min(i, this.design.columns.length - 1));
+    },
+    togglePkSel() {
+      const c = this.design.columns[this.design.sel];
+      if (!c) { this.toast("先在网格里点一行选中字段"); return; }
+      c.pk = !c.pk;
+      if (c.pk) { c.nullable = false; c.auto = (c.type || "").match(/INT|BIGINT|TINYINT|SMALLINT|MEDIUMINT/) ? true : c.auto; }
+    },
+    moveDesignColSel(dir) {
+      const i = this.design.sel;
       const c = this.design.columns;
       const j = i + dir;
-      if (j < 0 || j >= c.length) return;
+      if (i < 0 || j < 0 || j >= c.length) return;
       [c[i], c[j]] = [c[j], c[i]];
+      this.design.sel = j;
+    },
+    // 键 列：PRI / UNI / MUL（像 Navicat 一样从主键 + 索引推导）
+    colKeyTag(c) {
+      if (!c) return "";
+      if (c.pk) return "PRI";
+      const hit = (this.design.indexes || []).find(ix => {
+        const cols = String(ix.columns || "").split(",").map(x => x.trim()).filter(Boolean);
+        return cols.includes(c.name);
+      });
+      if (!hit) return "";
+      return hit.unique ? "UNI" : "MUL";
+    },
+    addDesignFk() {
+      const firstOther = (this.schema.tables.find(t => t.name !== this.design.name) || {}).name || "";
+      this.design.fks.push({
+        name: "fk_" + (this.design.fks.length + 1), col: (this.design.columns[0] || {}).name || "",
+        refTable: firstOther, refCol: "",
+        onDelete: "RESTRICT", onUpdate: "RESTRICT",
+      });
+    },
+    delDesignFk(i) { this.design.fks.splice(i, 1); },
+    // 外键引用表的字段下拉（从 schema 拿，选择引用表后自动选第一个字段）
+    refTableCols(f) {
+      const t = this.schema.tables.find(x => x.name === f.refTable);
+      return t ? t.columns.map(c => c.name) : [];
+    },
+    setFkRefTable(f, name) {
+      f.refTable = name;
+      const t = this.schema.tables.find(x => x.name === name);
+      f.refCol = (t && t.columns[0]) ? t.columns[0].name : "";
+    },
+    addDesignCheck() {
+      this.design.checks.push({ name: "chk_" + (this.design.checks.length + 1), expr: "" });
+    },
+    delDesignCheck(i) { this.design.checks.splice(i, 1); },
+    // 设计表「触发器」标签页：在这张表上新建 / 编辑触发器（复用触发器编辑页）
+    addDesignTrigger() {
+      this.openTrigger(null, "new");
+      this.triggerForm.table = this.design.name || this.design.originalName || "";
+    },
+    editDesignTrigger(t) { this.openTrigger(t); },
+    trigBrief(t) {
+      const s = String(t.statement || "").replace(/\s+/g, " ").trim();
+      return s.length > 60 ? s.slice(0, 59) + "…" : s;
     },
     addIndex() {
       this.design.indexes.push({ name: "idx_" + (this.design.indexes.length + 1),
@@ -486,6 +737,8 @@ const NavicatPanel = {
         t += `(${c.length}${c.scale !== null && c.scale !== "" && c.scale !== undefined ? "," + c.scale : ""})`;
       else if (["INT", "BIGINT", "TINYINT", "SMALLINT", "MEDIUMINT"].includes(t) && c.length)
         t += `(${c.length})`;
+      if (c.unsigned && /INT|BIGINT|TINYINT|SMALLINT|MEDIUMINT|DECIMAL|DOUBLE|FLOAT/.test(t)) t += " UNSIGNED";
+      if (c.zerofill && /INT|BIGINT|TINYINT|SMALLINT|MEDIUMINT|DECIMAL|DOUBLE|FLOAT/.test(t)) t += " ZEROFILL";
       if (c.extra) t += " " + String(c.extra).toUpperCase();
       return t;
     },
@@ -501,9 +754,25 @@ const NavicatPanel = {
       if (c.comment) s += " COMMENT " + this.lit(c.comment);
       return s;
     },
+    fkSql(f) {
+      return `CONSTRAINT ${this.ident(f.name)} FOREIGN KEY (${this.ident(f.col)}) ` +
+             `REFERENCES ${this.ident(f.refTable)} (${this.ident(f.refCol)})` +
+             ` ON DELETE ${f.onDelete || "RESTRICT"} ON UPDATE ${f.onUpdate || "RESTRICT"}`;
+    },
     async saveDesign() {
       const d = this.design;
       if (!d.name.trim()) { this.toast("表名不能为空"); return; }
+      // 校验外键 / 检查（Navicat 也是必填项校验）
+      for (const f of d.fks || []) {
+        if (!f.name.trim() || !f.col || !f.refTable || !f.refCol) {
+          this.toast("外键的 名/字段/引用表/引用字段 都要填完整"); return;
+        }
+      }
+      for (const ck of d.checks || []) {
+        if (!ck.name.trim() || !String(ck.expr || "").trim()) {
+          this.toast("检查约束的 名 和 表达式 都要填（例如 salary > 0）"); return;
+        }
+      }
       const stmts = [];
       try {
         if (d.mode === "new") {
@@ -515,12 +784,20 @@ const NavicatPanel = {
             if (!ix.name || !cols.length) continue;
             defs.push(`${ix.unique ? "UNIQUE " : ""}KEY ${this.ident(ix.name)} (${cols.map(c => this.ident(c)).join(", ")})`);
           }
+          for (const f of d.fks) defs.push(this.fkSql(f));
+          for (const ck of d.checks) defs.push(`CONSTRAINT ${this.ident(ck.name)} CHECK (${ck.expr})`);
           stmts.push(`CREATE TABLE ${this.ident(d.name)} (\n  ${defs.join(",\n  ")}\n) ENGINE=${d.engine || "InnoDB"} DEFAULT CHARSET=${d.charset || "utf8mb4"}` +
                      (d.comment ? ` COMMENT=${this.lit(d.comment)}` : ""));
         } else {
           const cur = d.name;
           if (d.name !== d.originalName) {
             stmts.push(`RENAME TABLE ${this.ident(d.originalName)} TO ${this.ident(d.name)}`);
+          }
+          // 先处理外键差异（列变动前 DROP，避免顺序冲突）
+          const oldFk = {};
+          (d.originalFks || []).forEach(f => { oldFk[f.name] = f; });
+          for (const f of d.originalFks || []) {
+            if (!d.fks.find(x => x.name === f.name)) stmts.push(`ALTER TABLE ${this.ident(cur)} DROP FOREIGN KEY ${this.ident(f.name)}`);
           }
           const old = {};
           (d.originalColumns || []).forEach(c => { old[c.name] = c; });
@@ -561,6 +838,21 @@ const NavicatPanel = {
               stmts.push(`ALTER TABLE ${this.ident(cur)} ADD ${ix.unique ? "UNIQUE " : ""}INDEX ${this.ident(ix.name)} (${cols.map(c => this.ident(c)).join(", ")})`);
             }
           }
+          // 新外键在列/索引之后加
+          for (const f of d.fks) {
+            const o = oldFk[f.name];
+            const sig = f.col + "|" + f.refTable + "|" + f.refCol + "|" + f.onDelete + "|" + f.onUpdate;
+            const osig = o && !o.multi ? o.col + "|" + o.refTable + "|" + o.refCol + "|" + o.onDelete + "|" + o.onUpdate : "";
+            if (sig !== osig) {
+              if (o && !o.multi) stmts.push(`ALTER TABLE ${this.ident(cur)} DROP FOREIGN KEY ${this.ident(f.name)}`);
+              stmts.push(`ALTER TABLE ${this.ident(cur)} ADD ${this.fkSql(f)}`);
+            }
+          }
+          // 检查约束：5.7 只解析不强制，但语句是真实有效的 DDL（会记录到作答）
+          for (const ck of d.checks) {
+            if ((d.doneChecks || []).includes(ck.name)) continue;
+            stmts.push(`ALTER TABLE ${this.ident(cur)} ADD CONSTRAINT ${this.ident(ck.name)} CHECK (${ck.expr})`);
+          }
           if (d.engine !== d.originalEngine || d.charset !== d.originalCharset || d.comment !== d.originalComment) {
             stmts.push(`ALTER TABLE ${this.ident(cur)} ENGINE=${d.engine || "InnoDB"} DEFAULT CHARSET=${d.charset || "utf8mb4"}` +
                        (d.comment ? ` COMMENT=${this.lit(d.comment)}` : ""));
@@ -569,12 +861,27 @@ const NavicatPanel = {
         if (!stmts.length) { this.toast("没有需要保存的修改"); return; }
         await this.runBatch(stmts);
         this.toast(`表「${d.name}」已保存`);
+        d.doneChecks = d.checks.map(c => c.name);
         const wasNew = d.mode === "new";
         await this.reload();
+        // reload 重建了 schema，把当前设计对象的引用对上
+        if (!wasNew) {
+          const t = this.schema.tables.find(x => x.name === d.name);
+          if (t) this.openDesignKeepTab(t, d);
+        }
         const tab = this.currentTab;
         if (tab) { tab.title = "设计表 - " + d.name; tab.name = d.name; tab.id = "design:" + d.name; }
         if (wasNew) this.openTable(d.name, "table");
       } catch (e) { this.toast(e.message); }
+    },
+    // 保存后用最新 schema 刷新设计器，但保留当前标签页和已填的 检查（5.7 不回读）
+    openDesignKeepTab(t, d) {
+      const checks = d.checks, done = d.doneChecks, sel = d.sel, tab = d.tab;
+      this.openDesign(t.name, "edit");
+      this.design.checks = checks;
+      this.design.doneChecks = done;
+      this.design.sel = sel;
+      this.design.tab = tab;
     },
     async dropTable(name) {
       if (!confirm(`删除表「${name}」？表结构和数据都会删除。`)) return;
@@ -800,30 +1107,49 @@ const NavicatPanel = {
       } catch (e) { this.queryMsg = e.message; this.resultTab = "message"; }
     },
     beautifySql() {
-      if (this.builderMode) { this.toast("查询创建工具打开时 SQL 是自动生成的，先点「查询创建工具」关闭再编辑"); return; }
-      let s = this.sqlText || "";
-      s = s.replace(/\s+/g, " ")
-           .replace(/\b(from|where|group by|having|order by|limit|join|left join|right join|inner join|values|set)\b/gi,
-                    (m) => "\n" + m.toUpperCase())
-           .replace(/\b(and|or)\b/gi, (m) => "\n  " + m.toUpperCase())
-           .replace(/,\s*/g, ",\n  ")
-           .trim();
-      this.sqlText = s;
+      // 查询创建工具开着时：先收起工具（生成的 SQL 已经同步在编辑器里），再排版 —— 美化始终可用
+      if (this.builderMode) this.builderMode = false;
+      if (!String(this.sqlText || "").trim()) { this.toast("还没有可排版的 SQL"); return; }
+      this.sqlText = this.formatSql(this.sqlText);
       this.$nextTick(() => {
         if (this.$refs.cmQuery) {
-          this.$refs.cmQuery.setValue(s);
+          this.$refs.cmQuery.setValue(this.sqlText);
           this.$refs.cmQuery.refresh();
         }
       });
     },
-    insertSnippet() {
-      if (this.builderMode) { this.toast("查询创建工具打开时 SQL 是自动生成的，先点「查询创建工具」关闭再编辑"); return; }
-      const snip = "\n-- 常用：SELECT * FROM 表名 WHERE 条件 ORDER BY 字段 DESC LIMIT 10;\n";
-      this.sqlText = (this.sqlText || "") + snip;
+    // SQL 排版器：字符串字面量先抽出保护 → 关键字大写 → 主子句换行 → ON/AND/OR 缩进 → 顶层逗号换行（括号内不拆）
+    formatSql(sql) {
+      const strs = [];
+      let s = String(sql).replace(/'(?:[^']|'')*'/g, (m) => { strs.push(m); return "\x00" + (strs.length - 1) + "\x00"; });
+      s = s.replace(/\s+/g, " ").trim();
+      s = s.replace(/\b(select|from|where|group by|having|order by|limit|union all|union|left join|right join|inner join|cross join|join|on|and|or|not|in|like|between|is null|is not null|as|asc|desc|distinct|insert into|values|update|set|delete|create table|alter table|drop table|primary key|foreign key|references|check|constraint|unique|key|engine|default charset|auto_increment|unsigned|zerofill|current_timestamp|null)\b/gi,
+                    (m) => m.toUpperCase());
+      s = s.replace(/\s?\b(SELECT|FROM|WHERE|GROUP BY|HAVING|ORDER BY|LIMIT|UNION ALL|UNION|LEFT JOIN|RIGHT JOIN|INNER JOIN|CROSS JOIN|JOIN|VALUES|SET)\b/g, "\n$1");
+      s = s.replace(/^SELECT/, "SELECT");
+      s = s.replace(/\b(ON|AND|OR)\b/g, "\n  $1");
+      // 只拆顶层逗号：IN (1,2,3)、COUNT(a,b) 这类括号里的逗号保持原样
+      let out = "", depth = 0;
+      for (const ch of s) {
+        if (ch === "(") depth++;
+        if (ch === ")") depth = Math.max(0, depth - 1);
+        out += (ch === "," && depth === 0) ? ",\n  " : ch;
+      }
+      s = out.split("\n").map(l => l.replace(/\s+$/, "")).join("\n").trim();
+      s = s.replace(/;\s*(SELECT|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|EXPLAIN)\b/g, ";\n\n$1");
+      s = s.replace(/\x00(\d+)\x00/g, (m, i) => strs[Number(i)]);
+      return s.replace(/\s+$/, "").replace(/;?$/, ";");
+    },
+    insertSnippet(ev) {
+      this.openCtx(ev, "snippets");
+    },
+    pasteSnippet(text) {
+      if (this.builderMode) this.builderMode = false;
       this.$nextTick(() => {
+        this.sqlText = (String(this.sqlText || "").trim() ? String(this.sqlText).trim() + "\n\n" : "") + text + "\n";
         if (this.$refs.cmQuery) {
           this.$refs.cmQuery.setValue(this.sqlText);
-          this.$refs.cmQuery.focus();
+          this.$refs.cmQuery.refresh();
         }
       });
     },
@@ -832,6 +1158,45 @@ const NavicatPanel = {
         localStorage.setItem("lab_nav_query:" + this.drill.id, this.sqlText || "");
         this.toast("查询已保存到本浏览器");
       } catch (e) { this.toast("保存失败"); }
+    },
+
+    /* ---------------- 创建图表（把查询结果画成柱状/折线/饼图） ---------------- */
+    openChart() {
+      const r = this.queryResult;
+      if (!r || !r.rows || !r.rows.length) {
+        this.toast("先运行一个返回数据的查询（比如分组统计），再点「创建图表」");
+        return;
+      }
+      const numeric = this.chartNumericCols;
+      if (!numeric.length) { this.toast("结果里没有数值列，画不了图"); return; }
+      this.chart.x = r.columns[0] || "";
+      this.chart.y = numeric.find(c => c !== this.chart.x) || numeric[0];
+      this.chart.open = true;
+    },
+    closeChart() { this.chart.open = false; },
+    downloadChartPng() {
+      const svg = this.chartSvg;
+      if (!svg) { this.toast("先选好 X / Y 字段再导出"); return; }
+      try {
+        const blob = new Blob([svg], { type: "image/svg+xml;charset=utf-8" });
+        const url = URL.createObjectURL(blob);
+        const img = new Image();
+        img.onload = () => {
+          const cv = document.createElement("canvas");
+          cv.width = 1280; cv.height = 680;
+          const c2 = cv.getContext("2d");
+          c2.fillStyle = "#ffffff";
+          c2.fillRect(0, 0, cv.width, cv.height);
+          c2.drawImage(img, 0, 0, cv.width, cv.height);
+          URL.revokeObjectURL(url);
+          const a = document.createElement("a");
+          a.download = "chart_" + Date.now() + ".png";
+          a.href = cv.toDataURL("image/png");
+          a.click();
+        };
+        img.onerror = () => { URL.revokeObjectURL(url); this.toast("导出失败"); };
+        img.src = url;
+      } catch (e) { this.toast("导出失败"); }
     },
 
     /* ---------------- 查询创建工具（Navicat 同款：内嵌在查询页，工具栏按钮切换） ---------------- */
@@ -1413,6 +1778,20 @@ const NavicatPanel = {
           { label: "复制名称", icon: "list", action: () => this.copyText(p) },
           refresh,
         ];
+      }
+      if (kind === "snippets") {
+        // 代码段：点一下插入一段常用 SQL 模板（教学场景最常用的七种）
+        const snips = [
+          ["查询全部", "SELECT *\nFROM 表名;"],
+          ["条件 + 排序 + 限量", "SELECT *\nFROM 表名\nWHERE 条件\nORDER BY 字段 DESC\nLIMIT 10;"],
+          ["多表内连接", "SELECT a.*, b.*\nFROM 表a a\nINNER JOIN 表b b\n  ON a.字段 = b.字段;"],
+          ["左连接", "SELECT a.*, b.*\nFROM 表a a\nLEFT JOIN 表b b\n  ON a.字段 = b.字段;"],
+          ["分组统计", "SELECT 分组字段, COUNT(*) AS 数量\nFROM 表名\nGROUP BY 分组字段\nHAVING COUNT(*) > 1;"],
+          ["插入数据", "INSERT INTO 表名 (字段1, 字段2)\nVALUES (值1, 值2);"],
+          ["更新数据", "UPDATE 表名\nSET 字段 = 值\nWHERE 条件;"],
+          ["建表", "CREATE TABLE 表名 (\n  id INT UNSIGNED NOT NULL AUTO_INCREMENT,\n  name VARCHAR(50) NOT NULL,\n  PRIMARY KEY (id)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;"],
+        ];
+        return snips.map(x => ({ label: x[0], icon: "code", action: () => this.pasteSnippet(x[1]) }));
       }
       if (kind === "cell") {
         const val = this.cellValue(p.ri, p.ci);

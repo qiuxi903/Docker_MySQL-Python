@@ -1861,17 +1861,24 @@ def navicat_schema(account: dict, drill_id: int) -> dict:
                     "type": x[5] or "", "columns": []})
                 item["columns"].append(x[4])
 
-            # 外键关系（查询创建工具加表时自动连线用）
+            # 外键关系（查询创建工具自动连线 + 设计表「外键」标签页用）
             fks = {}
             try:
-                cur.execute("""SELECT TABLE_NAME, COLUMN_NAME,
-                                      REFERENCED_TABLE_NAME, REFERENCED_COLUMN_NAME
-                               FROM information_schema.KEY_COLUMN_USAGE
-                               WHERE TABLE_SCHEMA=%s AND REFERENCED_TABLE_NAME IS NOT NULL""",
+                cur.execute("""SELECT k.TABLE_NAME, k.COLUMN_NAME,
+                                      k.REFERENCED_TABLE_NAME, k.REFERENCED_COLUMN_NAME,
+                                      k.CONSTRAINT_NAME, r.DELETE_RULE, r.UPDATE_RULE
+                               FROM information_schema.KEY_COLUMN_USAGE k
+                               LEFT JOIN information_schema.REFERENTIAL_CONSTRAINTS r
+                                 ON r.CONSTRAINT_NAME = k.CONSTRAINT_NAME
+                                AND r.CONSTRAINT_SCHEMA = k.CONSTRAINT_SCHEMA
+                               WHERE k.TABLE_SCHEMA=%s AND k.REFERENCED_TABLE_NAME IS NOT NULL
+                               ORDER BY k.TABLE_NAME, k.CONSTRAINT_NAME, k.ORDINAL_POSITION""",
                             (db,))
                 for x in cur.fetchall():
                     fks.setdefault(str(x[0]).lower(), []).append({
-                        "col": x[1], "refTable": x[2], "refCol": x[3]})
+                        "col": x[1], "refTable": x[2], "refCol": x[3],
+                        "name": x[4] or "", "onDelete": x[5] or "RESTRICT",
+                        "onUpdate": x[6] or "RESTRICT"})
             except Exception:
                 pass
 

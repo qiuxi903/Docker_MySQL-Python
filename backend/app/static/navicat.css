@@ -465,7 +465,7 @@ tr.added td { background: rgba(46,160,67,.06); }
   .nc-design-top { gap: 8px; }
 }
 
-/* ---- 查询创建工具（Navicat 同款：内嵌查询页 = 左「对象」+ 右上「图表」+ 「准则」+ 底部只读「SQL」） ---- */
+/* ---- 查询创建工具（Navicat 同款，图2 布局：左「对象」+ 中「图表/准则」+ 右「SQL 预览」） ---- */
 .nc-bd-wrap {
   flex: 1 1 auto; min-height: 0; display: flex;
   border-top: 1px solid var(--line); background: var(--panel); position: relative;
@@ -507,7 +507,7 @@ tr.added td { background: rgba(46,160,67,.06); }
 .nc-bd-trow.added .nc-bd-tname { color: var(--accent); font-weight: 600; }
 .nc-bd-trow.added .nc-bd-tadd { color: var(--accent); border-color: var(--accent); }
 
-/* 右：图表 → 准则 → SQL 竖排 */
+/* 中：图表 → 准则 竖排（SQL 预览是右边的独立列） */
 .nc-bd-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; min-height: 0; }
 .nc-bd-pane-h {
   flex: 0 0 auto; display: flex; align-items: center; gap: 8px;
@@ -654,6 +654,95 @@ tr.added td { background: rgba(46,160,67,.06); }
 }
 .nc-condpop-f { display: flex; align-items: center; gap: 6px; margin-top: 8px; }
 
+/* 右：SQL 预览列（图2：像 Navicat 一样把当前 MySQL 命令放在右边，实时刷新） */
+.nc-bd-sqlside {
+  flex: 0 0 300px; min-width: 216px; max-width: 430px;
+  display: flex; flex-direction: column; min-height: 0;
+  border-left: 1px solid var(--line); background: var(--panel);
+}
+.nc-bd-sqlside .nc-bd-sql,
+.nc-bd-sql.grow,
+.nc-dsqlwrap .nc-bd-sql { flex: 1 1 auto; max-height: none; border-top: 0; }
+.nc-bd-sqlfoot {
+  flex: 0 0 auto; padding: 6px 12px 8px; border-top: 1px solid var(--line);
+  font-size: 10.5px; line-height: 1.65; color: var(--muted);
+}
+
+/* ============ 设计表（图1）：行选中 + 底部属性栏 + 键列 + 状态栏 ============ */
+.nc-design-name {
+  height: 25px; width: 150px; border: 1px solid var(--line-strong); border-radius: 5px;
+  background: var(--panel); color: var(--text); font: 12.5px var(--mono); padding: 0 8px;
+}
+.nc-design-name:focus { border-color: var(--accent); outline: none; }
+.nc-dmark-h, .nc-dmark { width: 28px; }
+.nc-dmark { text-align: center; padding: 0 !important; }
+.nc-darrow { color: var(--accent); font-size: 9px; }
+.nc-design-table tbody tr { cursor: default; }
+.nc-design-table tr.sel td { background: var(--accent-weak) !important; }
+.nc-design-table tr.sel td:first-child { box-shadow: inset 2px 0 0 var(--accent); }
+.nc-dkey { font: 700 10px var(--mono); letter-spacing: .3px; color: var(--muted); }
+.nc-dkey.pri { color: #bf8700; }
+.nc-dkey.uni { color: #7b61d1; }
+.nc-dgrow { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.nc-dprops {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+  padding: 7px 12px; border-top: 1px solid var(--line); background: var(--panel-2);
+}
+.nc-dprops-t { font-size: 11.5px; font-weight: 700; color: var(--muted); white-space: nowrap; }
+.nc-dprops label { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text); }
+.nc-dprops .nc-cell { height: 24px; width: 160px; }
+.nc-dprops .ck { gap: 4px; cursor: pointer; white-space: nowrap; }
+.nc-dempty { padding: 16px 12px !important; color: var(--muted); font-size: 12px; text-align: left; }
+.nc-design-table tr.lock td { opacity: .55; }
+.nc-dtrig {
+  max-width: 460px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font: 11.5px var(--mono);
+}
+.nc-dopts { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; }
+.nc-dopts select {
+  height: 26px; border: 1px solid var(--line-strong); border-radius: 5px;
+  background: var(--panel); color: var(--text); font: inherit; padding: 0 6px;
+}
+.nc-design-status {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 10px;
+  padding: 5px 12px; border-top: 1px solid var(--line); background: var(--panel-2);
+  font-size: 11.5px; color: var(--muted);
+}
+.nc-dsqlwrap { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+
+/* ============ 创建图表（查询结果 → 柱状 / 折线 / 饼图，可下载 PNG） ============ */
+.nc-chart-mask {
+  position: absolute; inset: 0; z-index: 92; display: flex; align-items: center;
+  justify-content: center; background: rgba(4, 12, 26, .45); padding: 16px;
+}
+.nc-chart-box {
+  width: min(880px, 100%); max-height: 100%; display: flex; flex-direction: column;
+  background: var(--panel); border: 1px solid var(--line-strong); border-radius: 10px;
+  box-shadow: 0 22px 60px rgba(0, 0, 0, .32); overflow: hidden;
+}
+.nc-chart-h {
+  display: flex; align-items: center; gap: 10px; padding: 7px 12px;
+  border-bottom: 1px solid var(--line); background: var(--panel-2);
+}
+.nc-chart-ctl {
+  display: flex; align-items: center; gap: 18px; flex-wrap: wrap;
+  padding: 8px 12px; border-bottom: 1px solid var(--line);
+}
+.nc-chart-ctl label { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+.nc-chart-ctl select {
+  height: 26px; max-width: 220px; border: 1px solid var(--line-strong); border-radius: 5px;
+  background: var(--panel); color: var(--text); font: 12px var(--mono); padding: 0 6px;
+}
+.nc-chart-body { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 10px 12px; }
+.nc-chart-svg { display: block; width: 100%; height: auto; }
+.nc-chart-empty { padding: 34px 18px; }
+.nc-chart-svg .cgrid { stroke: var(--line); stroke-width: 1; }
+.nc-chart-svg .caxis { stroke: #94a1b3; stroke-width: 1.2; }
+.nc-chart-svg .ctick { fill: var(--muted); font-size: 10.5px; font-family: var(--mono); }
+.nc-chart-svg .ctitle { fill: var(--text); font-size: 13px; font-weight: 600; }
+.nc-chart-svg .clab { fill: var(--muted); font-size: 10.5px; font-family: var(--mono); }
+.nc-chart-svg .cval { fill: var(--accent); font-size: 10.5px; font-family: var(--mono); }
+
 /* ============ 桌面应用手感：不可选中 + 自建右键菜单 ============ */
 .nc { user-select: none; -webkit-user-select: none; }
 .nc input, .nc textarea, .nc select,
@@ -740,8 +829,21 @@ tr.added td { background: rgba(46,160,67,.06); }
   .nc-bd-canvas { flex: 0 0 auto; min-height: 260px; }
   .nc-bd-grid-wrap { flex: 0 0 auto; max-height: 40vh; min-height: 120px; }
   .nc-bd-sql { max-height: 88px; }
+  /* SQL 预览列在手机上落到最下面（横向占满） */
+  .nc-bd-sqlside {
+    flex: 0 0 auto; max-width: none; min-width: 0; border-left: 0;
+    border-top: 1px solid var(--line); max-height: 200px;
+  }
+  .nc-bd-sqlside .nc-bd-sql { max-height: 132px; }
   .nc-bd-pane-h { flex-wrap: wrap; }
   .nc-condpop { width: 270px; }
+  /* 设计表：工具栏两行能换行，属性栏能折行 */
+  .nc-obj-bar { flex-wrap: wrap; }
+  .nc-design-name { width: 116px; }
+  .nc-dprops { gap: 10px; }
+  .nc-dprops .nc-cell { width: 120px; }
+  .nc-chart-box { max-height: 94%; }
+  .nc-chart-ctl { gap: 10px; }
   .nc-info { display: none; }
   .nc-status { font-size: 10.5px; }
 }

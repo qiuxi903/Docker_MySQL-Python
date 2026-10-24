@@ -28,7 +28,7 @@ html[data-theme="light"] body { background: #f6f8fa; }
 <link rel="stylesheet" href="/vendor/codemirror/addon/hint/show-hint.css">
 <link rel="stylesheet" href="/fonts/misans/misans.css">
 <link rel="stylesheet" href="/style.css?v=160">
-  <link rel="stylesheet" href="/navicat.css?v=17">
+  <link rel="stylesheet" href="/navicat.css?v=18">
 </head>
 <body>
 <div id="app" v-cloak>
@@ -2507,8 +2507,14 @@ INSERT INTO course VALUES (1,'数学');</pre>
           <button class="nc-btn" :class="{ on: builderMode }" @click="openBuilder"
                   :title="builderMode ? '关闭查询创建工具，回到 SQL 编辑器' : '打开可视化的查询创建工具（不用写 SQL）'">
             <e-icon name="list" :size="13"></e-icon> 查询创建工具</button>
-          <button v-show="!builderMode" class="nc-btn" @click="beautifySql">美化 SQL</button>
-          <button v-show="!builderMode" class="nc-btn" @click="insertSnippet">代码段</button>
+          <button class="nc-btn" @click.stop="beautifySql"
+                  :title="builderMode ? '收起查询创建工具，把当前 SQL 排版好放进编辑器' : '把编辑器里的 SQL 排版成多行缩进格式'">
+            <e-icon name="star" :size="13"></e-icon> 美化 SQL</button>
+          <button class="nc-btn" @click.stop="insertSnippet" title="点一下插入常用 SQL 模板">
+            <e-icon name="code" :size="13"></e-icon> 代码段</button>
+          <button class="nc-btn" :disabled="!queryResult" @click="openChart"
+                  title="用当前查询结果画图（柱状 / 折线 / 饼图），可下载 PNG">
+            <e-icon name="chart" :size="13"></e-icon> 创建图表</button>
           <span class="nc-vsep"></span>
           <span class="nc-conn"><i class="nc-dot ok"></i> 本地</span>
           <span class="nc-dbselect">{{ schema.db || db }}</span>
@@ -2524,8 +2530,8 @@ INSERT INTO course VALUES (1,'数学');</pre>
                      placeholder="在这里写 SQL，然后点「运行」"></cm-editor>
         </div>
 
-        <!-- 查询创建工具（Navicat 同款，内嵌在查询窗口）：
-             左「对象」窗格 + 右上「图表」窗格 + 右下「准则」窗格 + 底部只读「SQL」窗格 -->
+        <!-- 查询创建工具（Navicat 同款，内嵌在查询窗口，图2 布局）：
+             左「对象」窗格 + 中间「图表」画布和「准则」网格 + 右侧只读「SQL 预览」列 -->
         <div v-if="builderMode" class="nc-bd-wrap">
           <aside class="nc-bd-obj">
             <div class="nc-bd-obj-h">
@@ -2713,15 +2719,23 @@ INSERT INTO course VALUES (1,'数学');</pre>
               </table>
               <div v-else class="nc-empty">先在左边「对象」窗格点一张表（拖入后是 SELECT *），再勾字段或在这里选</div>
             </div>
+          </div>
 
+          <!-- SQL 预览：像 Navicat 一样放在右边，图表/准则一变就刷新（图2） -->
+          <aside class="nc-bd-sqlside">
             <div class="nc-bd-pane-h">
-              <span class="nc-bd-pane-t">SQL</span>
+              <span class="nc-bd-pane-t">SQL 预览</span>
+              <span class="nc-count" v-if="build.sql">实时</span>
+              <span class="spacer"></span>
               <button class="nc-btn sm" :disabled="!build.sql"
                       @click="copyText(build.sql)"><e-icon name="list" :size="12"></e-icon> 复制</button>
-              <span class="nc-muted m-hide">只读 · 由图表和准则自动生成 · 点上面的「运行」执行并记录作答</span>
             </div>
-            <pre class="nc-bd-sql" v-html="builderSqlHtml"></pre>
-          </div>
+            <pre class="nc-bd-sql grow" v-html="builderSqlHtml"></pre>
+            <div class="nc-bd-sqlfoot">
+              <span class="nc-muted">由图表和准则自动生成 · 只读</span><br>
+              <span class="nc-muted">点上面的「运行」执行并记录作答</span>
+            </div>
+          </aside>
         </div>
         <div class="nc-result" v-if="queryResult || queryMsg">
           <div class="nc-result-h">
@@ -2832,68 +2846,82 @@ INSERT INTO course VALUES (1,'数学');</pre>
         </div>
       </div>
 
-      <!-- 设计表 -->
+      <!-- 设计表（图1：工具栏 + 字段/索引/外键/检查/触发器/选项/注释/SQL预览 + 字段数状态栏） -->
       <div v-else-if="currentTab && currentTab.kind === 'design'" class="nc-page nc-design">
         <div class="nc-obj-bar">
           <span class="nc-table-name">
             <e-icon name="table" :size="14"></e-icon>
-            <span class="nc-table-name-t">{{ design.mode === 'new' ? '新建表' : '设计表：' + design.originalName }}</span>
+            <input class="nc-design-name" v-model.trim="design.name" placeholder="表名"
+                   :title="design.mode === 'new' ? '给新表起个名字' : '重命名这张表（RENAME TABLE）'">
+            <span class="nc-muted m-hide">{{ design.mode === 'new' ? '新建表' : design.originalName }}</span>
           </span>
           <span class="spacer"></span>
-          <button class="nc-btn primary" @click="saveDesign">
-            <e-icon name="check" :size="13"></e-icon> 保存</button>
-        </div>
-        <div class="nc-design-top">
-          <label>表名 <input v-model.trim="design.name"></label>
-          <label>引擎
-            <select v-model="design.engine"><option>InnoDB</option><option>MyISAM</option></select>
-          </label>
-          <label>字符集
-            <select v-model="design.charset">
-              <option>utf8mb4</option><option>utf8</option><option>gbk</option>
-            </select>
-          </label>
-          <label class="wide">注释 <input v-model="design.comment"></label>
+          <button class="nc-btn" @click="addDesignCol" title="在末尾加一个字段"><e-icon name="plus" :size="13"></e-icon> 添加字段</button>
+          <button class="nc-btn" @click="insertDesignCol" title="在选中行下面插入一个字段"><e-icon name="plus" :size="13"></e-icon> 插入字段</button>
+          <button class="nc-btn" @click="delDesignColSel" title="删除选中的字段"><e-icon name="minus" :size="13"></e-icon> 删除字段</button>
+          <button class="nc-btn" @click="togglePkSel" title="把选中字段设成 / 取消主键"><e-icon name="key" :size="13"></e-icon> 主键</button>
+          <button class="nc-btn" @click="moveDesignColSel(-1)" title="选中字段上移一行"><e-icon name="arrow-up" :size="13"></e-icon> 上移</button>
+          <button class="nc-btn" @click="moveDesignColSel(1)" title="选中字段下移一行"><e-icon name="arrow-down" :size="13"></e-icon> 下移</button>
+          <span class="nc-vsep"></span>
+          <button class="nc-btn primary" @click="saveDesign"><e-icon name="check" :size="13"></e-icon> 保存</button>
         </div>
         <div class="nc-subtabs">
           <button :class="{ on: design.tab === 'columns' }" @click="design.tab = 'columns'">字段</button>
           <button :class="{ on: design.tab === 'indexes' }" @click="design.tab = 'indexes'">索引</button>
+          <button :class="{ on: design.tab === 'fks' }" @click="design.tab = 'fks'">外键</button>
+          <button :class="{ on: design.tab === 'checks' }" @click="design.tab = 'checks'">检查</button>
+          <button :class="{ on: design.tab === 'triggers' }" @click="design.tab = 'triggers'">触发器</button>
           <button :class="{ on: design.tab === 'options' }" @click="design.tab = 'options'">选项</button>
+          <button :class="{ on: design.tab === 'comment' }" @click="design.tab = 'comment'">注释</button>
+          <button :class="{ on: design.tab === 'sql' }" @click="design.tab = 'sql'">SQL 预览</button>
         </div>
-        <div v-show="design.tab === 'columns'" class="nc-grid-wrap">
-          <table class="nc-grid nc-design-table">
-            <thead>
-              <tr>
-                <th>名称</th><th>类型</th><th class="num">长度</th><th class="num">小数点</th>
-                <th class="center">允许空</th><th class="center">主键</th>
-                <th class="center">自动递增</th><th>默认值</th><th>注释</th><th></th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="(c, i) in design.columns" :key="i">
-                <td><input v-model.trim="c.name" class="nc-cell"></td>
-                <td>
-                  <select v-model="c.type" class="nc-cell">
-                    <option v-for="t in designTypeOptions" :key="t">{{ t }}</option>
-                  </select>
-                </td>
-                <td><input v-model.number="c.length" type="number" min="0" class="nc-cell num"></td>
-                <td><input v-model.number="c.scale" type="number" min="0" class="nc-cell num"></td>
-                <td class="center"><input type="checkbox" v-model="c.nullable"></td>
-                <td class="center"><input type="checkbox" v-model="c.pk" @change="c.pk && (c.nullable = false)"></td>
-                <td class="center"><input type="checkbox" v-model="c.auto"></td>
-                <td><input v-model="c.default" class="nc-cell"></td>
-                <td><input v-model="c.comment" class="nc-cell"></td>
-                <td class="nc-row-actions">
-                  <button class="nc-mini" title="上移" @click="moveDesignCol(i, -1)">↑</button>
-                  <button class="nc-mini" title="下移" @click="moveDesignCol(i, 1)">↓</button>
-                  <button class="nc-mini danger" title="删除字段" @click="delDesignCol(i)">×</button>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-          <button class="nc-add-col" @click="addDesignCol">＋ 添加字段</button>
+
+        <!-- 字段：点行选中，底部是选中字段的 默认/自动递增/无符号/填充零（图1） -->
+        <div v-show="design.tab === 'columns'" class="nc-dgrow">
+          <div class="nc-grid-wrap">
+            <table class="nc-grid nc-design-table">
+              <thead>
+                <tr>
+                  <th class="nc-dmark-h"></th><th>名</th><th>类型</th>
+                  <th class="num">长度</th><th class="num">小数点</th>
+                  <th class="center">不是 null</th><th class="center">键</th><th>注释</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="(c, i) in design.columns" :key="i" :class="{ sel: design.sel === i }"
+                    @click="design.sel = i">
+                  <td class="nc-dmark"><span v-if="design.sel === i" class="nc-darrow">▶</span></td>
+                  <td><input v-model.trim="c.name" class="nc-cell" @click.stop></td>
+                  <td>
+                    <select v-model="c.type" class="nc-cell" @click.stop>
+                      <option v-for="t in designTypeOptions" :key="t">{{ t }}</option>
+                    </select>
+                  </td>
+                  <td><input v-model.number="c.length" type="number" min="0" class="nc-cell num" @click.stop></td>
+                  <td><input v-model.number="c.scale" type="number" min="0" class="nc-cell num" @click.stop></td>
+                  <td class="center"><input type="checkbox" :checked="!c.nullable"
+                            @change="c.nullable = !$event.target.checked" title="勾上 = NOT NULL"></td>
+                  <td class="center">
+                    <span v-if="colKeyTag(c)" class="nc-dkey" :class="{ pri: colKeyTag(c) === 'PRI', uni: colKeyTag(c) === 'UNI' }">{{ colKeyTag(c) }}</span>
+                  </td>
+                  <td><input v-model="c.comment" class="nc-cell" @click.stop></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="nc-dprops" v-if="curCol">
+            <span class="nc-dprops-t">字段「{{ curCol.name || '未命名' }}」</span>
+            <label>默认
+              <input v-model="curCol.default" class="nc-cell" placeholder="留空 = 无默认值"
+                     title="DEFAULT 值，支持 CURRENT_TIMESTAMP、数字、字符串">
+            </label>
+            <label class="ck"><input type="checkbox" v-model="curCol.auto"> 自动递增</label>
+            <label class="ck"><input type="checkbox" v-model="curCol.unsigned"> 无符号</label>
+            <label class="ck"><input type="checkbox" v-model="curCol.zerofill"> 填充零</label>
+          </div>
         </div>
+
+        <!-- 索引 -->
         <div v-show="design.tab === 'indexes'" class="nc-grid-wrap">
           <table class="nc-grid nc-design-table">
             <thead><tr><th>索引名</th><th class="center">唯一</th><th>字段（逗号分隔）</th><th>类型</th><th></th></tr></thead>
@@ -2905,14 +2933,145 @@ INSERT INTO course VALUES (1,'数学');</pre>
                 <td><select v-model="ix.type" class="nc-cell"><option>BTREE</option><option>HASH</option></select></td>
                 <td><button class="nc-mini danger" @click="delIndex(i)">×</button></td>
               </tr>
+              <tr v-if="!design.indexes.length"><td colspan="5" class="nc-dempty">还没有二级索引（主键不用写在这里）。</td></tr>
             </tbody>
           </table>
           <button class="nc-add-col" @click="addIndex">＋ 添加索引</button>
         </div>
-        <div v-show="design.tab === 'options'" class="nc-options">
-          <p><b>引擎</b>{{ design.engine }}　<b>字符集</b>{{ design.charset }}</p>
-          <p>保存时会根据字段差异自动生成 <code>CREATE TABLE</code> / <code>ALTER TABLE</code>，
-             这些语句会记录到本题作答里，判分时在干净库中重放。</p>
+
+        <!-- 外键 -->
+        <div v-show="design.tab === 'fks'" class="nc-grid-wrap">
+          <table class="nc-grid nc-design-table">
+            <thead><tr><th>名</th><th>字段</th><th>引用表</th><th>引用字段</th><th>ON DELETE</th><th>ON UPDATE</th><th></th></tr></thead>
+            <tbody>
+              <tr v-for="(f, i) in design.fks" :key="i" :class="{ lock: f.multi }">
+                <td><input v-model.trim="f.name" class="nc-cell" placeholder="fk_名字" :disabled="f.multi"></td>
+                <td>
+                  <select v-if="!f.multi" v-model="f.col" class="nc-cell">
+                    <option v-for="c in design.columns" :key="c.name" :value="c.name">{{ c.name }}</option>
+                  </select>
+                  <span v-else class="nc-muted">{{ f.cols.join(', ') }}</span>
+                </td>
+                <td>
+                  <select v-if="!f.multi" class="nc-cell" :value="f.refTable"
+                          @change="setFkRefTable(f, $event.target.value)">
+                    <option v-for="t in schema.tables" :key="t.name" :value="t.name">{{ t.name }}</option>
+                  </select>
+                  <span v-else class="nc-muted">{{ f.refTable }}</span>
+                </td>
+                <td>
+                  <select v-if="!f.multi" v-model="f.refCol" class="nc-cell">
+                    <option v-for="cn in refTableCols(f)" :key="cn" :value="cn">{{ cn }}</option>
+                  </select>
+                  <span v-else class="nc-muted">{{ f.refCols.join(', ') }}</span>
+                </td>
+                <td>
+                  <select v-if="!f.multi" v-model="f.onDelete" class="nc-cell">
+                    <option>RESTRICT</option><option>CASCADE</option><option>SET NULL</option><option>NO ACTION</option>
+                  </select>
+                  <span v-else class="nc-muted">{{ f.onDelete }}</span>
+                </td>
+                <td>
+                  <select v-if="!f.multi" v-model="f.onUpdate" class="nc-cell">
+                    <option>RESTRICT</option><option>CASCADE</option><option>SET NULL</option><option>NO ACTION</option>
+                  </select>
+                  <span v-else class="nc-muted">{{ f.onUpdate }}</span>
+                </td>
+                <td><button class="nc-mini danger" title="删除外键" @click="delDesignFk(i)">×</button></td>
+              </tr>
+              <tr v-if="!design.fks.length">
+                <td colspan="7" class="nc-dempty">
+                  还没有外键。点「＋ 添加外键」把这张表的字段连到另一张表，例如 订单.用户id → 用户.id。
+                </td>
+              </tr>
+            </tbody>
+          </table>
+          <button class="nc-add-col" @click="addDesignFk">＋ 添加外键</button>
+          <p class="nc-hint">保存时生成 <code>ADD CONSTRAINT … FOREIGN KEY (字段) REFERENCES 引用表 (引用字段) ON DELETE … ON UPDATE …</code>；
+             删除的外键会先 <code>DROP FOREIGN KEY</code>。灰色的行是多列外键（少见），这里只读。</p>
+        </div>
+
+        <!-- 检查（CHECK 约束） -->
+        <div v-show="design.tab === 'checks'" class="nc-grid-wrap">
+          <table class="nc-grid nc-design-table">
+            <thead><tr><th>名</th><th>表达式</th><th></th></tr></thead>
+            <tbody>
+              <tr v-for="(ck, i) in design.checks" :key="i">
+                <td><input v-model.trim="ck.name" class="nc-cell" placeholder="chk_salary"></td>
+                <td><input v-model="ck.expr" class="nc-cell" placeholder="salary > 0"></td>
+                <td><button class="nc-mini danger" title="删除检查" @click="delDesignCheck(i)">×</button></td>
+              </tr>
+              <tr v-if="!design.checks.length">
+                <td colspan="3" class="nc-dempty">还没有检查约束。例如 名 = <code>chk_salary</code>，表达式 = <code>salary &gt; 0</code>。</td>
+              </tr>
+            </tbody>
+          </table>
+          <button class="nc-add-col" @click="addDesignCheck">＋ 添加检查</button>
+          <p class="nc-hint">MySQL 5.7 会接受并执行 <code>CHECK</code> 语句（保存是真的执行，语句也会记录到作答），但<b>不强制</b>检查数据；
+             MySQL 8.0 起才强制。因为 5.7 没有存储检查约束，重新打开设计器时这里不会回显。</p>
+        </div>
+
+        <!-- 触发器 -->
+        <div v-show="design.tab === 'triggers'" class="nc-grid-wrap">
+          <table class="nc-grid nc-design-table">
+            <thead><tr><th>名</th><th>触发时间</th><th>事件</th><th>语句</th><th></th></tr></thead>
+            <tbody>
+              <tr v-for="t in designTriggers" :key="t.name">
+                <td>{{ t.name }}</td>
+                <td>{{ t.timing }}</td>
+                <td>{{ t.event }}</td>
+                <td class="nc-dtrig" :title="t.statement">{{ trigBrief(t) }}</td>
+                <td class="nc-row-actions">
+                  <button class="nc-mini" title="编辑触发器" @click="editDesignTrigger(t)">✎</button>
+                  <button class="nc-mini danger" title="删除触发器" @click="dropTrigger(t)">×</button>
+                </td>
+              </tr>
+              <tr v-if="!designTriggers.length">
+                <td colspan="5" class="nc-dempty">这张表上还没有触发器。点「＋ 添加触发器」创建一个（例如 插入前自动填时间）。</td>
+              </tr>
+            </tbody>
+          </table>
+          <button class="nc-add-col" @click="addDesignTrigger">＋ 添加触发器</button>
+        </div>
+
+        <!-- 选项 -->
+        <div v-show="design.tab === 'options'" class="nc-options nc-dopts">
+          <label>引擎
+            <select v-model="design.engine"><option>InnoDB</option><option>MyISAM</option></select>
+          </label>
+          <label>字符集
+            <select v-model="design.charset"><option>utf8mb4</option><option>utf8</option><option>gbk</option></select>
+          </label>
+          <p class="nc-hint">保存时按差异生成 <code>ALTER TABLE</code>（引擎 / 字符集 / 注释 变了才会执行）。</p>
+          <p class="nc-hint">所有改动都会执行并记录到本题作答，判分时在干净库中重放。</p>
+        </div>
+
+        <!-- 注释 -->
+        <div v-show="design.tab === 'comment'" class="nc-options nc-dopts">
+          <label class="wide">表注释
+            <textarea class="nc-code" v-model="design.comment" rows="4" spellcheck="false"
+                      placeholder="这张表的说明（保存在表结构里，SHOW CREATE TABLE 能看到）"></textarea>
+          </label>
+        </div>
+
+        <!-- SQL 预览：按当前设计实时生成 CREATE TABLE -->
+        <div v-show="design.tab === 'sql'" class="nc-dsqlwrap">
+          <div class="nc-bd-pane-h">
+            <span class="nc-bd-pane-t">SQL 预览</span>
+            <span class="nc-muted m-hide">按当前设计实时生成的 CREATE TABLE · 边改边看</span>
+            <span class="spacer"></span>
+            <button class="nc-btn sm" @click="copyText(designDdl)"><e-icon name="list" :size="12"></e-icon> 复制</button>
+          </div>
+          <pre class="nc-bd-sql grow" v-html="designDdlHtml"></pre>
+        </div>
+
+        <!-- 状态栏（图1：字段数） -->
+        <div class="nc-design-status">
+          <span>字段数：{{ design.columns.length }}</span>
+          <span v-if="design.fks && design.fks.length" class="nc-muted">· 外键 {{ design.fks.length }}</span>
+          <span v-if="design.checks && design.checks.length" class="nc-muted">· 检查 {{ design.checks.length }}</span>
+          <span class="spacer"></span>
+          <span class="nc-muted m-hide">点「保存」后执行改动并记录作答</span>
         </div>
       </div>
 
@@ -3058,6 +3217,43 @@ INSERT INTO course VALUES (1,'数学');</pre>
     </div>
   </div>
 
+  <!-- 创建图表：把最近一次查询结果画成 柱状 / 折线 / 饼 图，可下载 PNG -->
+  <div v-if="chart.open" class="nc-chart-mask" @click.self="chart.open = false">
+    <div class="nc-chart-box">
+      <div class="nc-chart-h">
+        <span class="nc-bd-pane-t">创建图表</span>
+        <span class="nc-muted m-hide">来自最近一次查询结果{{ queryResult && queryResult.rowCount ? '（' + queryResult.rowCount + ' 行，最多画 30 行）' : '' }}</span>
+        <span class="spacer"></span>
+        <button class="nc-btn sm" @click="downloadChartPng"><e-icon name="download" :size="12"></e-icon> 下载 PNG</button>
+        <button class="nc-btn sm" @click="chart.open = false">关闭</button>
+      </div>
+      <div class="nc-chart-ctl">
+        <label>类型
+          <select v-model="chart.type">
+            <option value="bar">柱状图</option>
+            <option value="line">折线图</option>
+            <option value="pie">饼图</option>
+          </select>
+        </label>
+        <label>{{ chart.type === 'pie' ? '名称' : 'X 轴（分类）' }}
+          <select v-model="chart.x">
+            <option v-for="c in chartCols" :key="c" :value="c">{{ c }}</option>
+          </select>
+        </label>
+        <label>{{ chart.type === 'pie' ? '数值' : 'Y 轴（数值）' }}
+          <select v-model="chart.y">
+            <option v-for="c in chartNumericCols" :key="c" :value="c">{{ c }}</option>
+          </select>
+        </label>
+      </div>
+      <div v-if="chartSvg" class="nc-chart-body" v-html="chartSvg"></div>
+      <div v-else class="nc-empty nc-chart-empty">
+        选一个{{ chart.type === 'pie' ? '名称列' : '分类列' }}和一个数值列就能画图
+        （数值列 = 结果里能当成数字的列，比如 COUNT(*)、SUM(…) 的结果）
+      </div>
+    </div>
+  </div>
+
   <!-- 状态栏 -->
   <div class="nc-status">
     <span>{{ statusText }}</span>
@@ -3122,7 +3318,7 @@ INSERT INTO course VALUES (1,'数学');</pre>
 </div>
 </script>
 
-<script src="/navicat.js?v=5"></script>
-<script src="/app.js?v=166"></script>
+<script src="/navicat.js?v=8"></script>
+<script src="/app.js?v=167"></script>
 </body>
 </html>
