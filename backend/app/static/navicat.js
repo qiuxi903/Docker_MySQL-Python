@@ -137,7 +137,6 @@ const NavicatPanel = {
       const f = String((this.build && this.build.search) || "").toLowerCase();
       return (this.schema.tables || []).filter(t => !f || String(t.name).toLowerCase().includes(f));
     },
-    builderEdited() { return !!(this.build && this.build.edited); },
   },
 
   watch: {
@@ -813,8 +812,8 @@ const NavicatPanel = {
     blankBuilder() {
       return {
         tables: [], joins: [],
-        sql: "", edited: false, search: "",
-        tab: "sql", result: null, msg: "", info: "", running: false, history: [],
+        sql: "", search: "",
+        tab: "cond", result: null, msg: "", info: "", running: false, history: [],
       };
     },
     openBuilder() {
@@ -838,7 +837,8 @@ const NavicatPanel = {
         id: "t" + Date.now() + "_" + n,
         name: t.name, alias: "",
         x: 24 + (n % 3) * 216, y: 18 + Math.floor(n / 3) * 200,
-        columns: (t.columns || []).map(c => ({ name: c.name, key: c.key || "", checked: true })),
+        columns: (t.columns || []).map(c => ({ name: c.name, key: c.key || "", checked: true,
+                                          alias: "", sort: "", op: "", val: "", logic: "AND" })),
       });
     },
     addBuildTableByName(name) {
@@ -895,6 +895,7 @@ const NavicatPanel = {
        起点元素上）。没拖动就抬起时进入“选中”状态，再点一下目标
        字段也能连线（手机上点-点连线更好用）。 */
     startMoveTable(ev, t) {
+      if (ev.target.closest && ev.target.closest("button, input, select")) return;
       const cv = this.$refs.canvas;
       if (!cv) return;
       const r = cv.getBoundingClientRect();
@@ -982,7 +983,8 @@ const NavicatPanel = {
       const b = this.build;
       const sel = [];
       for (const t of b.tables)
-        for (const c of t.columns) if (c.checked) sel.push(this.colRef(t, c.name));
+        for (const c of t.columns)
+          if (c.checked) sel.push(this.colRef(t, c.name) + (c.alias ? " AS " + this.ident(c.alias) : ""));
       let sql = "SELECT " + (sel.length ? sel.join(", ") : "*");
       if (b.tables.length) {
         const first = b.tables[0];
@@ -996,16 +998,30 @@ const NavicatPanel = {
         }
         sql += "\nFROM " + from;
       }
+      const conds = [];
+      for (const t of b.tables)
+        for (const c of t.columns)
+          if (c.op) conds.push({ ref: this.colRef(t, c.name), c });
+      if (conds.length) {
+        const parts = conds.map((x, i) => {
+          const v = /^(IS)/i.test(x.c.op) ? "" :
+            /^-?\d+(\.\d+)?$/.test(String(x.c.val).trim()) ? String(x.c.val).trim() :
+            /^(\(|'|")/.test(String(x.c.val).trim()) ? String(x.c.val).trim() : this.lit(x.c.val);
+          return (i ? (x.c.logic === "OR" ? " OR " : " AND ") : "") +
+                 `${x.ref} ${x.c.op}${v ? " " + v : ""}`;
+        });
+        sql += "\nWHERE " + parts.join("");
+      }
+      const ords = [];
+      for (const t of b.tables)
+        for (const c of t.columns)
+          if (c.sort) ords.push(`${this.colRef(t, c.name)} ${c.sort}`);
+      if (ords.length) sql += "\nORDER BY " + ords.join(", ");
       return sql + ";";
     },
     syncBuilderSql() {
       const b = this.build;
       if (b && !b.edited) b.sql = this.genSql();
-    },
-    regenBuilder() {
-      this.build.edited = false;
-      this.syncBuilderSql();
-      this.toast("已按画布重新生成 SQL");
     },
     async runBuilder(explain) {
       const b = this.build;
@@ -1249,7 +1265,6 @@ const NavicatPanel = {
       if (kind === "canvas") {
         return [
           { label: "添加表", icon: "plus", action: () => this.toast("从左边「表」面板点一张表加进画布") },
-          { label: "重新生成 SQL", icon: "refresh", action: () => this.regenBuilder() },
           { label: "清空画布", icon: "eraser", danger: true, action: () => this.clearBuilder() },
         ];
       }
