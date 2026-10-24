@@ -1,6 +1,25 @@
 /* Navicat 仿真面板：做题时用图形界面完成建表、改数据、建视图/函数/触发器、写查询 */
 "use strict";
 
+/* 代码段库（查询页右侧面板用）：分类 + 名称 + SQL 模板 */
+const NAV_SNIPPETS = [
+  { name: "查询全部", cat: "查询", sql: "SELECT *\nFROM 表名;" },
+  { name: "条件 + 排序 + 限量", cat: "查询", sql: "SELECT *\nFROM 表名\nWHERE 条件\nORDER BY 字段 DESC\nLIMIT 10;" },
+  { name: "去重统计", cat: "查询", sql: "SELECT DISTINCT 字段\nFROM 表名;" },
+  { name: "多表内连接", cat: "连接", sql: "SELECT a.*, b.*\nFROM 表a a\nINNER JOIN 表b b\n  ON a.字段 = b.字段;" },
+  { name: "左连接", cat: "连接", sql: "SELECT a.*, b.*\nFROM 表a a\nLEFT JOIN 表b b\n  ON a.字段 = b.字段;" },
+  { name: "三表连接", cat: "连接", sql: "SELECT a.*, b.*, c.*\nFROM 表a a\nINNER JOIN 表b b ON a.字段 = b.字段\nINNER JOIN 表c c ON b.字段 = c.字段;" },
+  { name: "分组统计", cat: "聚合", sql: "SELECT 分组字段, COUNT(*) AS 数量\nFROM 表名\nGROUP BY 分组字段\nHAVING COUNT(*) > 1;" },
+  { name: "合计 / 平均", cat: "聚合", sql: "SELECT SUM(字段) AS 合计, AVG(字段) AS 平均\nFROM 表名;" },
+  { name: "子查询 IN", cat: "聚合", sql: "SELECT *\nFROM 表名\nWHERE 字段 IN (SELECT 字段 FROM 另一张表 WHERE 条件);" },
+  { name: "建表", cat: "DDL", sql: "CREATE TABLE 表名 (\n  id INT UNSIGNED NOT NULL AUTO_INCREMENT,\n  name VARCHAR(50) NOT NULL,\n  PRIMARY KEY (id)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;" },
+  { name: "加字段", cat: "DDL", sql: "ALTER TABLE 表名\n  ADD COLUMN 新字段 VARCHAR(50) NOT NULL DEFAULT '';" },
+  { name: "建视图", cat: "DDL", sql: "CREATE OR REPLACE VIEW 视图名 AS\nSELECT 字段\nFROM 表名\nWHERE 条件;" },
+  { name: "插入数据", cat: "其他", sql: "INSERT INTO 表名 (字段1, 字段2)\nVALUES (值1, 值2);" },
+  { name: "更新数据", cat: "其他", sql: "UPDATE 表名\nSET 字段 = 值\nWHERE 条件;" },
+  { name: "删除数据", cat: "其他", sql: "DELETE FROM 表名\nWHERE 条件;" },
+];
+
 const NavicatPanel = {
   props: {
     drill: { type: Object, required: true },
@@ -27,6 +46,10 @@ const NavicatPanel = {
       queryMsg: "",
       queryInfo: "",
       resultTab: "result",
+      // 结果区 5 标签（视频 41.5s）：信息 / 摘要 / 结果 1 / 剖析 / 状态
+      profileResult: null,
+      // 右侧代码段面板（视频 41.5s）
+      snippetPane: false, snipSearch: "", snipTag: "全部",
       running: false,
       lastQuerySql: "",
       cursor: { line: 1, col: 1 },
@@ -51,6 +74,13 @@ const NavicatPanel = {
       builderMode: false,
       // 创建图表（用当前查询结果画柱状/折线/饼图）
       chart: { open: false, type: "bar", x: "", y: "" },
+      // 连接设置对话框（视频 8-21s：常规/高级/SSH/HTTP/SSL）
+      connForm: { tab: "常规", name: "本地", host: "localhost", port: 3306, init: "",
+                  user: "root", pw: "", db: "", socket: "tcp",
+                  timeout: 0, keepAlive: 240, maxRows: 1000, compress: false, autoCommit: true,
+                  ssh: false, sshHost: "", sshPort: 22, sshUser: "", sshAuth: "pw", sshPass: "",
+                  http: false, ssl: false },
+      connMsg: "",
       condPop: null,
       buildDragName: "",
       condOps: ["=", "<>", ">", "<", ">=", "<=", "LIKE", "NOT LIKE",
@@ -172,7 +202,7 @@ const NavicatPanel = {
       for (const ix of d.indexes || []) {
         const cols = String(ix.columns || "").split(",").map(x => x.trim()).filter(Boolean);
         if (!ix.name || !cols.length) continue;
-        defs.push(`${ix.unique ? "UNIQUE " : ""}KEY ${this.ident(ix.name)} (${cols.map(c => this.ident(c)).join(", ")})`);
+        defs.push(`${this.idxPrefix(ix.itype)}KEY ${this.ident(ix.name)} (${cols.map(c => this.ident(c)).join(", ")})`);
       }
       for (const f of d.fks || []) {
         if (!f.name || !f.col || !f.refTable || !f.refCol) continue;
@@ -190,6 +220,14 @@ const NavicatPanel = {
       return sql + ";";
     },
     designDdlHtml() { return this.sqlHighlight(this.designDdl); },
+    /* 右侧代码段面板：分类标签 + 搜索过滤 */
+    snipTags() { return ["全部", ...new Set(NAV_SNIPPETS.map(s => s.cat))]; },
+    snipList() {
+      const f = (this.snipSearch || "").toLowerCase();
+      return NAV_SNIPPETS.filter(s =>
+        (this.snipTag === "全部" || s.cat === this.snipTag) &&
+        (!f || s.name.toLowerCase().includes(f) || s.sql.toLowerCase().includes(f)));
+    },
     /* ---------------- 创建图表 ---------------- */
     // 可画的列：X 任意列，Y 取数值列（结果集里能解析成数字的）
     chartCols() {
@@ -344,6 +382,7 @@ const NavicatPanel = {
     /* ---------------- 基础 ---------------- */
     async api(path, opts = {}) {
       const init = { method: opts.method || "GET", headers: { "X-Token": this.token } };
+      if (opts.signal) init.signal = opts.signal;
       if (opts.body !== undefined) {
         init.headers["Content-Type"] = "application/json";
         init.body = JSON.stringify(opts.body);
@@ -586,6 +625,7 @@ const NavicatPanel = {
         comment: "", originalEngine: "InnoDB", originalCharset: "utf8mb4", originalComment: "",
         columns: [{ name: "id", type: "INT", length: null, scale: null, extra: "",
                     pk: true, auto: true, unsigned: false, zerofill: false,
+                    virtual: false, stored: false, genExpr: "",
                     nullable: false, default: "", comment: "" }],
         indexes: [], fks: [], checks: [],
         originalColumns: [], originalIndexes: [], originalFks: [],
@@ -603,18 +643,27 @@ const NavicatPanel = {
       if (!t) return;
       const cols = (t.columns || []).map(c => {
         const p = this.normType(c.type);
+        const extra = String(c.extra || "").toUpperCase();
         return {
           name: c.name, type: p.type, length: p.length, scale: p.scale,
           extra: p.extra || "", nullable: c.nullable, pk: c.key === "PRI",
-          auto: String(c.extra || "").toUpperCase().includes("AUTO_INCREMENT"),
+          auto: extra.includes("AUTO_INCREMENT"),
           unsigned: /\bunsigned\b/i.test(c.type || ""),
           zerofill: /\bzerofill\b/i.test(c.type || ""),
+          // 生成列（虚拟列）：EXTRA = VIRTUAL GENERATED / STORED GENERATED
+          virtual: extra.includes("GENERATED"),
+          stored: extra.includes("STORED"),
+          genExpr: c.genExpr || "",
           default: c.default === null ? "" : c.default, comment: c.comment || "",
         };
       });
+      // 索引类型（视频 54.5s）：名 / 字段 / 索引类型（NORMAL / UNIQUE / FULLTEXT / SPATIAL）
+      const idxKind = (i) => i.unique ? "UNIQUE"
+        : String(i.type || "").toUpperCase() === "FULLTEXT" ? "FULLTEXT"
+        : String(i.type || "").toUpperCase() === "SPATIAL" ? "SPATIAL" : "NORMAL";
       const indexes = (t.indexes || [])
         .filter(i => i.name !== "PRIMARY")
-        .map(i => ({ name: i.name, unique: i.unique, columns: (i.columns || []).join(", "), type: i.type }));
+        .map(i => ({ name: i.name, columns: (i.columns || []).join(", "), itype: idxKind(i) }));
       // 外键：按约束名分组（多列外键合并成一行，编辑时锁定）
       const fkMap = {};
       for (const f of (t.fks || [])) {
@@ -647,16 +696,18 @@ const NavicatPanel = {
     },
     /* 工具栏（图1）：添加字段 / 插入字段 / 删除字段 / 主键 / 上移 / 下移，都作用在选中行上 */
     addDesignCol() {
-      const blank = { name: "new_col", type: "VARCHAR", length: 50, scale: null, extra: "",
-                      pk: false, auto: false, unsigned: false, zerofill: false,
-                      nullable: true, default: "", comment: "" };
+      const blank = this.blankCol();
       this.design.columns.push(blank);
       this.design.sel = this.design.columns.length - 1;
     },
+    blankCol() {
+      return { name: "new_col", type: "VARCHAR", length: 50, scale: null, extra: "",
+               pk: false, auto: false, unsigned: false, zerofill: false,
+               virtual: false, stored: false, genExpr: "",
+               nullable: true, default: "", comment: "" };
+    },
     insertDesignCol() {
-      const blank = { name: "new_col", type: "VARCHAR", length: 50, scale: null, extra: "",
-                      pk: false, auto: false, unsigned: false, zerofill: false,
-                      nullable: true, default: "", comment: "" };
+      const blank = this.blankCol();
       const at = Math.min(this.design.sel + 1, this.design.columns.length);
       this.design.columns.splice(at, 0, blank);
       this.design.sel = at;
@@ -690,7 +741,7 @@ const NavicatPanel = {
         return cols.includes(c.name);
       });
       if (!hit) return "";
-      return hit.unique ? "UNI" : "MUL";
+      return hit.itype === "UNIQUE" ? "UNI" : "MUL";
     },
     addDesignFk() {
       const firstOther = (this.schema.tables.find(t => t.name !== this.design.name) || {}).name || "";
@@ -727,9 +778,16 @@ const NavicatPanel = {
     },
     addIndex() {
       this.design.indexes.push({ name: "idx_" + (this.design.indexes.length + 1),
-                                 unique: false, columns: "", type: "BTREE" });
+                                 columns: "", itype: "NORMAL" });
     },
     delIndex(i) { this.design.indexes.splice(i, 1); },
+    // 索引类型 → SQL 前缀（NORMAL 无前缀，其余加 UNIQUE / FULLTEXT / SPATIAL）
+    idxPrefix(itype) {
+      return { UNIQUE: "UNIQUE ", FULLTEXT: "FULLTEXT ", SPATIAL: "SPATIAL " }[itype] || "";
+    },
+    // 外键「引用模式」（视频 59.5s）：选一个模式同时应用到 ON DELETE 和 ON UPDATE
+    fkModeOf(f) { return f.onDelete === f.onUpdate ? f.onDelete : ""; },
+    setFkMode(f, v) { f.onDelete = v; f.onUpdate = v; },
     colTypeSql(c) {
       let t = String(c.type || "VARCHAR").toUpperCase();
       if (["VARCHAR", "CHAR"].includes(t) && c.length) t += `(${c.length})`;
@@ -744,6 +802,15 @@ const NavicatPanel = {
     },
     colSql(c) {
       let s = `${this.ident(c.name)} ${this.colTypeSql(c)}`;
+      // 生成列（虚拟列，视频 46.5s 的「虚拟」）：类型 AS (表达式) VIRTUAL / STORED
+      if (c.virtual) {
+        const ge = String(c.genExpr || "").trim();
+        if (!ge) return s + " NULL";
+        s += ` AS ${ge.startsWith("(") ? ge : "(" + ge + ")"} ${c.stored ? "STORED" : "VIRTUAL"}`;
+        s += c.nullable ? " NULL" : " NOT NULL";
+        if (c.comment) s += " COMMENT " + this.lit(c.comment);
+        return s;
+      }
       s += c.nullable ? " NULL" : " NOT NULL";
       if (c.auto) s += " AUTO_INCREMENT";
       if (!c.auto && c.default !== "" && c.default !== null && c.default !== undefined) {
@@ -782,7 +849,7 @@ const NavicatPanel = {
           for (const ix of d.indexes) {
             const cols = String(ix.columns || "").split(",").map(x => x.trim()).filter(Boolean);
             if (!ix.name || !cols.length) continue;
-            defs.push(`${ix.unique ? "UNIQUE " : ""}KEY ${this.ident(ix.name)} (${cols.map(c => this.ident(c)).join(", ")})`);
+            defs.push(`${this.idxPrefix(ix.itype)}KEY ${this.ident(ix.name)} (${cols.map(c => this.ident(c)).join(", ")})`);
           }
           for (const f of d.fks) defs.push(this.fkSql(f));
           for (const ck of d.checks) defs.push(`CONSTRAINT ${this.ident(ck.name)} CHECK (${ck.expr})`);
@@ -831,11 +898,11 @@ const NavicatPanel = {
             const cols = String(ix.columns || "").split(",").map(x => x.trim()).filter(Boolean);
             if (!cols.length) continue;
             const o = oldIdx[ix.name];
-            const sig = cols.join(",") + "|" + (ix.unique ? 1 : 0);
-            const osig = o ? (o.columns || []).join(",") + "|" + (o.unique ? 1 : 0) : "";
+            const sig = cols.join(",") + "|" + (ix.itype || "NORMAL");
+            const osig = o ? (o.columns || []).join(",") + "|" + (o.itype || "NORMAL") : "";
             if (sig !== osig) {
               if (o) stmts.push(`ALTER TABLE ${this.ident(cur)} DROP INDEX ${this.ident(ix.name)}`);
-              stmts.push(`ALTER TABLE ${this.ident(cur)} ADD ${ix.unique ? "UNIQUE " : ""}INDEX ${this.ident(ix.name)} (${cols.map(c => this.ident(c)).join(", ")})`);
+              stmts.push(`ALTER TABLE ${this.ident(cur)} ADD ${this.idxPrefix(ix.itype)}INDEX ${this.ident(ix.name)} (${cols.map(c => this.ident(c)).join(", ")})`);
             }
           }
           // 新外键在列/索引之后加
@@ -1062,8 +1129,11 @@ const NavicatPanel = {
       this.running = true;
       this.queryMsg = "";
       this.queryResult = null;
+      this.profileResult = null;
+      this._runAbort = new AbortController();   // 「停止」按钮用
       try {
-        const d = await this.api("/api/sql", { method: "POST", body: { sql, db: this.db } });
+        const d = await this.api("/api/sql", { method: "POST", body: { sql, db: this.db },
+                                               signal: this._runAbort.signal });
         const results = d.results || [];
         const rowsRes = [...results].reverse().find(r => r.type === "rows");
         const err = results.find(r => r.type === "error");
@@ -1077,20 +1147,83 @@ const NavicatPanel = {
           : results.map(r => r.type === "rows" ? `返回 ${r.rowCount} 行（${r.ms || 0} ms）`
             : r.type === "ok" ? `执行成功，影响 ${r.affected || 0} 行（${r.ms || 0} ms）`
             : r.msg).join("\n");
-        this.resultTab = err ? "message" : "result";
+        this.resultTab = err ? "info" : "result";
         if (!err) {
           this.lastQuerySql = sql;
           this.$emit("query", sql);
           this.$emit("changed");
         } else {
-          this.resultTab = "message";
+          this.resultTab = "info";
         }
       } catch (e) {
-        this.queryMsg = e.message;
-        this.resultTab = "message";
+        if (e && e.name === "AbortError") {
+          this.queryMsg = "已停止（用户中断）";
+          this.queryInfo = "已停止";
+        } else {
+          this.queryMsg = e.message;
+        }
+        this.resultTab = "info";
       } finally {
         this.running = false;
+        this._runAbort = null;
       }
+    },
+    stopQuery() {
+      if (this._runAbort) this._runAbort.abort();
+    },
+    // 「文本」按钮（视频 41.5s）：把选中的行加 / 去 -- 注释
+    commentToggle() {
+      if (this.builderMode) { this.toast("查询创建工具打开时 SQL 是自动生成的，先关闭再编辑"); return; }
+      const cm = this.$refs.cmQuery && this.$refs.cmQuery.cm;
+      if (!cm) return;
+      cm.operation(() => {
+        const sels = cm.somethingSelected() ? cm.listSelections()
+          : [{ from: cm.getCursor(true), to: cm.getCursor(false) }];
+        let commenting = false;
+        for (const s of sels) {
+          for (let l = s.from.line; l <= s.to.line; l++) {
+            if (!(cm.getLine(l) || "").startsWith("-- ")) commenting = true;
+          }
+        }
+        for (const s of sels) {
+          for (let l = s.from.line; l <= s.to.line; l++) {
+            if (commenting) cm.replaceRange("-- ", { line: l, ch: 0 });
+            else if ((cm.getLine(l) || "").startsWith("-- "))
+              cm.replaceRange("", { line: l, ch: 0 }, { line: l, ch: 3 });
+          }
+        }
+      });
+      this.sqlText = cm.getValue();
+    },
+    // 「导出结果」：当前结果网格 → CSV 下载
+    exportResult() {
+      const r = this.queryResult;
+      if (!r || !r.columns || !r.columns.length) { this.toast("没有可导出的结果"); return; }
+      const esc = (v) => {
+        const s = v === null || v === undefined ? "NULL" : String(v);
+        return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+      };
+      const lines = [r.columns.map(esc).join(",")];
+      for (const row of (r.rows || [])) lines.push(row.map(esc).join(","));
+      const blob = new Blob(["\ufeff" + lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
+      const a = document.createElement("a");
+      a.download = "result_" + Date.now() + ".csv";
+      a.href = URL.createObjectURL(blob);
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+      this.toast(`已导出 ${r.rowCount} 行 CSV`);
+    },
+    // 「剖析」标签（视频 41.5s）：对最近一次查询跑 EXPLAIN
+    async openProfile() {
+      this.resultTab = "profile";
+      const sql = (this.lastQuerySql ||
+        (this.builderMode && this.build.tables.length ? this.build.sql : this.sqlText) || "").trim();
+      if (!/^select/i.test(sql)) { this.profileResult = null; return; }
+      try {
+        const d = await this.api("/api/sql", {
+          method: "POST", body: { sql: "EXPLAIN " + sql.replace(/;\s*$/, ""), db: this.db } });
+        this.profileResult = (d.results || []).find(x => x.type === "rows") || null;
+      } catch (e) { this.profileResult = null; }
     },
     async explainQuery() {
       const sql = (this.builderMode && this.build.tables.length
@@ -1104,7 +1237,7 @@ const NavicatPanel = {
         this.queryInfo = "执行计划";
         this.queryMsg = "EXPLAIN 执行计划";
         this.resultTab = "result";
-      } catch (e) { this.queryMsg = e.message; this.resultTab = "message"; }
+      } catch (e) { this.queryMsg = e.message; this.resultTab = "info"; }
     },
     beautifySql() {
       // 查询创建工具开着时：先收起工具（生成的 SQL 已经同步在编辑器里），再排版 —— 美化始终可用
@@ -1140,8 +1273,9 @@ const NavicatPanel = {
       s = s.replace(/\x00(\d+)\x00/g, (m, i) => strs[Number(i)]);
       return s.replace(/\s+$/, "").replace(/;?$/, ";");
     },
+    /* 代码段面板（视频 41.5s）：分类 + 搜索 + 点击插入 */
     insertSnippet(ev) {
-      this.openCtx(ev, "snippets");
+      this.snippetPane = true;
     },
     pasteSnippet(text) {
       if (this.builderMode) this.builderMode = false;
@@ -1199,13 +1333,46 @@ const NavicatPanel = {
       } catch (e) { this.toast("导出失败"); }
     },
 
+    /* ---------------- 连接设置对话框（视频 8-21s） ---------------- */
+    openConnDlg() {
+      this.connForm.db = this.schema.db || this.db;
+      this.connMsg = "";
+      this.dlg = "conn";
+    },
+    async testConn() {
+      this.connMsg = "正在测试…";
+      try {
+        await this.reload();
+        this.connMsg = "";
+        this.toast("连接成功（本地 · MySQL 5.7）");
+      } catch (e) {
+        this.connMsg = "";
+        this.toast(e.message || "连接失败");
+      }
+    },
+    async connectNow() {
+      this.dlg = "";
+      await this.reload();
+      this.toast("已连接 " + (this.connForm.host || "localhost") + ":" + this.connForm.port);
+    },
+
     /* ---------------- 查询创建工具（Navicat 同款：内嵌在查询页，工具栏按钮切换） ---------------- */
     blankBuilder() {
       // rows：准则网格的行，逐行选 表.字段（拖入表不会自动选字段，和 Navicat 一样）
-      return { tables: [], joins: [], rows: [], sql: "", search: "" };
+      return { tables: [], joins: [], rows: [], sql: "", search: "", viewMode: "fields" };
+    },
+    // 「构建」：把生成的 SQL 放进编辑器（构建器保持打开）；「构建并运行」= 运行；「取消」= 收起
+    buildToEditor() {
+      if (!this.build.sql) { this.toast("先加一张表再构建"); return; }
+      this.sqlText = this.build.sql;
+      this.$nextTick(() => {
+        if (this.$refs.cmQuery) this.$refs.cmQuery.setValue(this.build.sql);
+      });
+      this.toast("SQL 已构建到编辑器");
     },
     openBuilder() {
       if (!this.build || !this.build.tables) this.build = this.blankBuilder();
+      if (!this.build.viewMode) this.build.viewMode = "fields";   // 旧会话兼容
       if (this.active !== "query") this.newQueryTab();
       this.builderMode = !this.builderMode;
       if (this.builderMode) this.syncBuilderSql();
@@ -1718,6 +1885,14 @@ const NavicatPanel = {
       const sep = { sep: true };
       const refresh = { label: "刷新", icon: "refresh", action: () => this.reload() };
       const newQuery = { label: "新建查询", icon: "search", action: () => this.newQueryTab() };
+      if (kind === "conn") {
+        return [
+          { label: "连接属性…", icon: "database", action: () => this.openConnDlg() },
+          { label: "新建查询", icon: "search", action: () => this.newQueryTab() },
+          sep,
+          { label: "刷新", icon: "refresh", action: () => this.reload() },
+        ];
+      }
       if (kind === "tree") {
         const map = {
           tables: { label: "新建表", icon: "plus", action: () => this.openDesign("", "new") },
@@ -1778,20 +1953,6 @@ const NavicatPanel = {
           { label: "复制名称", icon: "list", action: () => this.copyText(p) },
           refresh,
         ];
-      }
-      if (kind === "snippets") {
-        // 代码段：点一下插入一段常用 SQL 模板（教学场景最常用的七种）
-        const snips = [
-          ["查询全部", "SELECT *\nFROM 表名;"],
-          ["条件 + 排序 + 限量", "SELECT *\nFROM 表名\nWHERE 条件\nORDER BY 字段 DESC\nLIMIT 10;"],
-          ["多表内连接", "SELECT a.*, b.*\nFROM 表a a\nINNER JOIN 表b b\n  ON a.字段 = b.字段;"],
-          ["左连接", "SELECT a.*, b.*\nFROM 表a a\nLEFT JOIN 表b b\n  ON a.字段 = b.字段;"],
-          ["分组统计", "SELECT 分组字段, COUNT(*) AS 数量\nFROM 表名\nGROUP BY 分组字段\nHAVING COUNT(*) > 1;"],
-          ["插入数据", "INSERT INTO 表名 (字段1, 字段2)\nVALUES (值1, 值2);"],
-          ["更新数据", "UPDATE 表名\nSET 字段 = 值\nWHERE 条件;"],
-          ["建表", "CREATE TABLE 表名 (\n  id INT UNSIGNED NOT NULL AUTO_INCREMENT,\n  name VARCHAR(50) NOT NULL,\n  PRIMARY KEY (id)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;"],
-        ];
-        return snips.map(x => ({ label: x[0], icon: "code", action: () => this.pasteSnippet(x[1]) }));
       }
       if (kind === "cell") {
         const val = this.cellValue(p.ri, p.ci);

@@ -654,7 +654,90 @@ tr.added td { background: rgba(46,160,67,.06); }
 }
 .nc-condpop-f { display: flex; align-items: center; gap: 6px; margin-top: 8px; }
 
-/* 右：SQL 预览列（图2：像 Navicat 一样把当前 MySQL 命令放在右边，实时刷新） */
+/* ---- 查询页主体：左边编辑器/结果列 + 右侧代码段面板（视频 41.5s） ---- */
+.nc-qmain { flex: 1 1 auto; min-height: 0; display: flex; }
+.nc-qcol { flex: 1 1 auto; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.nc-snip {
+  flex: 0 0 216px; display: flex; flex-direction: column; min-height: 0;
+  border-left: 1px solid var(--line); background: var(--panel);
+}
+.nc-snip-h {
+  display: flex; align-items: center; gap: 6px; padding: 9px 10px 6px;
+  font-size: 11.5px; font-weight: 700; color: var(--muted); letter-spacing: .4px;
+}
+.nc-snip-search { margin: 0 8px 6px; }
+.nc-snip-tags { display: flex; flex-wrap: wrap; gap: 4px; padding: 0 8px 8px; }
+.nc-snip-tag {
+  border: 1px solid var(--line); background: var(--panel-2); color: var(--muted);
+  font: 11px inherit; padding: 2px 8px; border-radius: 999px; cursor: pointer;
+}
+.nc-snip-tag:hover { border-color: var(--accent); color: var(--accent); }
+.nc-snip-tag.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.nc-snip-list { flex: 1; min-height: 0; overflow: auto; padding: 0 6px 8px; }
+.nc-snip-item {
+  display: flex; align-items: center; gap: 6px; width: 100%; text-align: left;
+  border: 0; background: transparent; color: var(--text); font: 12.5px inherit;
+  padding: 6px 8px; border-radius: 6px; cursor: pointer;
+}
+.nc-snip-item:hover { background: var(--accent-weak); }
+.nc-snip-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nc-snip-cat { flex: 0 0 auto; font-size: 10px; color: var(--muted); border: 1px solid var(--line); padding: 0 6px; border-radius: 999px; line-height: 15px; }
+.nc-snip-foot {
+  flex: 0 0 auto; padding: 6px 10px; border-top: 1px solid var(--line);
+  font-size: 10.5px; color: var(--muted); background: var(--panel-2);
+}
+
+/* 结果区 摘要/状态 两页的键值小表 */
+.nc-sum-grid td { padding: 7px 12px; vertical-align: top; }
+.nc-sum-k { width: 110px; color: var(--muted); font-weight: 600; }
+.nc-mono { font-family: var(--mono); font-size: 12px; word-break: break-all; user-select: text; -webkit-user-select: text; }
+
+/* 连接设置对话框（视频 8-21s）：左侧竖排标签 + 表单页 */
+.nc-conn-dlg { width: min(560px, 96%); }
+.nc-conn-body { display: flex; min-height: 300px; border-top: 1px solid var(--line); }
+.nc-conn-tabs {
+  flex: 0 0 92px; display: flex; flex-direction: column; padding: 8px 6px; gap: 2px;
+  border-right: 1px solid var(--line); background: var(--panel-2);
+}
+.nc-conn-tabs button {
+  border: 0; background: transparent; color: var(--text); font: 12.5px inherit;
+  text-align: left; padding: 7px 10px; border-radius: 5px; cursor: pointer;
+}
+.nc-conn-tabs button:hover { background: var(--accent-weak); color: var(--accent); }
+.nc-conn-tabs button.on { background: var(--accent); color: #fff; font-weight: 600; }
+.nc-conn-page { flex: 1; min-width: 0; overflow: auto; }
+.nc-conn-form { display: flex; flex-wrap: wrap; gap: 10px 14px; padding: 14px; }
+.nc-conn-form > label {
+  flex: 1 1 100%; display: flex; align-items: center; gap: 8px;
+  font-size: 12.5px; color: var(--muted);
+}
+.nc-conn-form > label.w-half { flex: 1 1 calc(50% - 14px); min-width: 180px; }
+.nc-conn-form input:not([type="checkbox"]):not([type="radio"]),
+.nc-conn-form select {
+  flex: 1; min-width: 0; height: 27px; border: 1px solid var(--line-strong); border-radius: 5px;
+  background: var(--panel); color: var(--text); font: 12.5px var(--mono); padding: 0 8px;
+}
+.nc-conn-form input.nc-conn-ro { background: var(--panel-2); }
+.nc-conn-form .ck { flex: 0 0 auto; display: inline-flex; gap: 5px; color: var(--text); font-size: 12.5px; cursor: pointer; }
+.nc-conn-radio { flex-direction: row !important; flex-wrap: wrap; }
+.nc-conn-f {
+  display: flex; align-items: center; gap: 10px; padding: 10px 14px;
+  border-top: 1px solid var(--line);
+}
+
+/* 查询创建工具：表关系/字段关系 单选 + 卡片迷你态 + 构建按钮组 */
+.nc-bd-mode { display: inline-flex; gap: 10px; align-items: center; font-size: 12px; }
+.nc-bd-mode label { display: inline-flex; gap: 4px; align-items: center; cursor: pointer; color: var(--text); }
+.nc-bd-mode input { accent-color: var(--accent); margin: 0; }
+.nc-tbox-mini {
+  padding: 5px 10px 6px; font-size: 11px; color: var(--muted);
+  border-top: 1px dashed var(--line);
+}
+.nc-bd-btns {
+  flex: 0 0 auto; display: flex; gap: 6px; justify-content: flex-end;
+  padding: 6px 8px; border-top: 1px solid var(--line); background: var(--panel-2);
+}
+
 .nc-bd-sqlside {
   flex: 0 0 300px; min-width: 216px; max-width: 430px;
   display: flex; flex-direction: column; min-height: 0;
@@ -844,6 +927,16 @@ tr.added td { background: rgba(46,160,67,.06); }
   .nc-dprops .nc-cell { width: 120px; }
   .nc-chart-box { max-height: 94%; }
   .nc-chart-ctl { gap: 10px; }
+  /* 手机：代码段面板变成右侧浮层，不挤编辑器 */
+  .nc-snip {
+    position: absolute; top: 0; right: 0; bottom: 0; z-index: 40; width: 216px;
+    box-shadow: -8px 0 24px rgba(0, 0, 0, .18);
+  }
+  .nc-conn-body { min-height: 240px; flex-direction: column; }
+  .nc-conn-tabs {
+    flex: 0 0 auto; flex-direction: row; border-right: 0;
+    border-bottom: 1px solid var(--line); overflow-x: auto;
+  }
   .nc-info { display: none; }
   .nc-status { font-size: 10.5px; }
 }

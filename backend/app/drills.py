@@ -1835,7 +1835,8 @@ def navicat_schema(account: dict, drill_id: int) -> dict:
             cur.execute("""SELECT TABLE_NAME, COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE,
                                   COLUMN_KEY, COLUMN_DEFAULT, EXTRA, COLUMN_COMMENT,
                                   ORDINAL_POSITION, CHARACTER_MAXIMUM_LENGTH,
-                                  NUMERIC_PRECISION, NUMERIC_SCALE
+                                  NUMERIC_PRECISION, NUMERIC_SCALE,
+                                  GENERATION_EXPRESSION
                            FROM information_schema.COLUMNS
                            WHERE TABLE_SCHEMA=%s
                            ORDER BY TABLE_NAME, ORDINAL_POSITION""", (db,))
@@ -1845,7 +1846,7 @@ def navicat_schema(account: dict, drill_id: int) -> dict:
                     "name": c[1], "type": c[2] or "", "nullable": c[3] == "YES",
                     "key": c[4] or "", "default": "" if c[5] is None else str(c[5]),
                     "extra": c[6] or "", "comment": c[7] or "",
-                    "position": int(c[8] or 0),
+                    "position": int(c[8] or 0), "genExpr": c[12] or "",
                 })
 
             cur.execute("""SELECT TABLE_NAME, INDEX_NAME, NON_UNIQUE, SEQ_IN_INDEX,

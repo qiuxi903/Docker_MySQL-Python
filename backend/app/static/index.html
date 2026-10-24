@@ -28,7 +28,7 @@ html[data-theme="light"] body { background: #f6f8fa; }
 <link rel="stylesheet" href="/vendor/codemirror/addon/hint/show-hint.css">
 <link rel="stylesheet" href="/fonts/misans/misans.css">
 <link rel="stylesheet" href="/style.css?v=160">
-  <link rel="stylesheet" href="/navicat.css?v=18">
+  <link rel="stylesheet" href="/navicat.css?v=19">
 </head>
 <body>
 <div id="app" v-cloak>
@@ -2332,7 +2332,9 @@ INSERT INTO course VALUES (1,'数学');</pre>
         <button class="nc-side-x m-only" @click="mobileTree = false">×</button>
       </div>
       <div class="nc-tree">
-        <div class="nc-node conn">
+        <div class="nc-node conn" title="双击打开「连接」设置（和 Navicat 一样）"
+             @dblclick="openConnDlg"
+             @contextmenu.prevent.stop="openCtx($event, 'conn')">
           <e-icon name="chevron-down" :size="12"></e-icon>
           <span class="nc-conn-dot"></span>
           <span class="nc-node-t">本地</span>
@@ -2510,8 +2512,14 @@ INSERT INTO course VALUES (1,'数学');</pre>
           <button class="nc-btn" @click.stop="beautifySql"
                   :title="builderMode ? '收起查询创建工具，把当前 SQL 排版好放进编辑器' : '把编辑器里的 SQL 排版成多行缩进格式'">
             <e-icon name="star" :size="13"></e-icon> 美化 SQL</button>
-          <button class="nc-btn" @click.stop="insertSnippet" title="点一下插入常用 SQL 模板">
+          <button class="nc-btn" :class="{ on: snippetPane }" @click.stop="snippetPane = !snippetPane"
+                  title="打开 / 收起右侧的代码段面板，点条目插入 SQL 模板">
             <e-icon name="code" :size="13"></e-icon> 代码段</button>
+          <button class="nc-btn" @click.stop="commentToggle" title="把选中的行注释 / 取消注释（-- ）">
+            <e-icon name="minus" :size="13"></e-icon> 文本</button>
+          <button class="nc-btn" :disabled="!queryResult" @click="exportResult"
+                  title="把当前结果网格导出成 CSV 文件">
+            <e-icon name="download" :size="13"></e-icon> 导出结果</button>
           <button class="nc-btn" :disabled="!queryResult" @click="openChart"
                   title="用当前查询结果画图（柱状 / 折线 / 饼图），可下载 PNG">
             <e-icon name="chart" :size="13"></e-icon> 创建图表</button>
@@ -2522,8 +2530,11 @@ INSERT INTO course VALUES (1,'数学');</pre>
           <button class="nc-run" :disabled="running" @click="runQuery">
             <e-icon name="play" :size="12"></e-icon> {{ running ? '运行中…' : '运行' }}
           </button>
+          <button class="nc-btn" :disabled="!running" @click="stopQuery" title="中断正在运行的查询">停止</button>
           <button class="nc-btn" @click="explainQuery">解释</button>
         </div>
+        <div class="nc-qmain">
+        <div class="nc-qcol">
         <div v-show="!builderMode" class="nc-editor" @click="updateCursor" @keyup="updateCursor"
              @contextmenu.prevent.stop="openCtx($event, 'editor')">
           <cm-editor ref="cmQuery" mode="text/x-mysql" :value="sqlText" @change="onSqlChange"
@@ -2565,6 +2576,11 @@ INSERT INTO course VALUES (1,'数学');</pre>
           <div class="nc-bd-main">
             <div class="nc-bd-pane-h">
               <span class="nc-bd-pane-t">图表</span>
+              <!-- 表关系 / 字段关系（视频 24s）：表关系只看表名，字段关系显示字段勾选 -->
+              <span class="nc-bd-mode">
+                <label><input type="radio" value="tables" v-model="build.viewMode"> 表关系</label>
+                <label><input type="radio" value="fields" v-model="build.viewMode"> 字段关系</label>
+              </span>
               <select class="nc-bd-addsel" title="添加表 / 视图到图表"
                       @change="addBuildTableByName($event.target.value); $event.target.value = ''">
                 <option value="">＋ 添加表…</option>
@@ -2602,7 +2618,7 @@ INSERT INTO course VALUES (1,'数学');</pre>
                   <button class="nc-tbox-x" title="移除这张表"
                           @pointerdown.stop @click.stop="removeBuildTable(t)">×</button>
                 </div>
-                <div class="nc-tbox-cols">
+                <div class="nc-tbox-cols" v-show="build.viewMode === 'fields'">
                   <div v-for="c in t.columns" :key="c.name" class="nc-tcol"
                        :class="{ pk: c.key === 'PRI', drop: hoverJoin && hoverJoin.t.id === t.id && hoverJoin.c.name === c.name,
                                  src: dragJoin && !dragJoin.dragging && dragJoin.t.id === t.id && dragJoin.c.name === c.name }"
@@ -2617,6 +2633,11 @@ INSERT INTO course VALUES (1,'数学');</pre>
                     </span>
                     <span class="nc-tcol-n">{{ c.name }}</span>
                   </div>
+                </div>
+                <!-- 表关系模式：卡片收成一条，只显示主键数 / 字段数 -->
+                <div class="nc-tbox-mini" v-if="build.viewMode === 'tables'">
+                  {{ t.columns.filter(c => c.key === 'PRI').length }} 主键 · {{ t.columns.length }} 个字段
+                  （切到「字段关系」看字段）
                 </div>
               </div>
               <div v-if="!build.tables.length" class="nc-canvas-empty">
@@ -2731,19 +2752,43 @@ INSERT INTO course VALUES (1,'数学');</pre>
                       @click="copyText(build.sql)"><e-icon name="list" :size="12"></e-icon> 复制</button>
             </div>
             <pre class="nc-bd-sql grow" v-html="builderSqlHtml"></pre>
+            <!-- 构建 / 构建并运行 / 取消（视频 24s 同款按钮组） -->
+            <div class="nc-bd-btns">
+              <button class="nc-btn sm" title="把生成的 SQL 放进编辑器" @click="buildToEditor">构建</button>
+              <button class="nc-btn sm primary" title="执行生成的 SQL（计入作答）"
+                      :disabled="running" @click="runQuery">构建并运行</button>
+              <button class="nc-btn sm" title="收起查询创建工具" @click="builderMode = false">取消</button>
+            </div>
             <div class="nc-bd-sqlfoot">
-              <span class="nc-muted">由图表和准则自动生成 · 只读</span><br>
-              <span class="nc-muted">点上面的「运行」执行并记录作答</span>
+              <span class="nc-muted">由图表和准则实时生成 · 只读</span>
             </div>
           </aside>
         </div>
         <div class="nc-result" v-if="queryResult || queryMsg">
           <div class="nc-result-h">
-            <button :class="{ on: resultTab === 'result' }" @click="resultTab = 'result'">结果</button>
-            <button :class="{ on: resultTab === 'message' }" @click="resultTab = 'message'">消息</button>
+            <button :class="{ on: resultTab === 'info' }" @click="resultTab = 'info'">信息</button>
+            <button :class="{ on: resultTab === 'summary' }" @click="resultTab = 'summary'">摘要</button>
+            <button :class="{ on: resultTab === 'result' }" @click="resultTab = 'result'">结果 1</button>
+            <button :class="{ on: resultTab === 'profile' }" @click="openProfile">剖析</button>
+            <button :class="{ on: resultTab === 'status' }" @click="resultTab = 'status'">状态</button>
             <span class="spacer"></span>
             <span class="nc-muted">{{ queryInfo }}</span>
           </div>
+          <!-- 信息：执行的语句和返回信息（原「消息」） -->
+          <pre v-show="resultTab === 'info'" class="nc-msg">{{ queryMsg }}</pre>
+          <!-- 摘要：行列数、耗时、列清单 -->
+          <div v-show="resultTab === 'summary'" class="nc-grid-wrap">
+            <table class="nc-grid nc-sum-grid">
+              <tbody>
+                <tr><td class="nc-sum-k">行数</td><td>{{ queryResult ? queryResult.rowCount : 0 }}</td></tr>
+                <tr><td class="nc-sum-k">列数</td><td>{{ queryResult ? queryResult.columns.length : 0 }}</td></tr>
+                <tr><td class="nc-sum-k">耗时</td><td>{{ queryResult ? (queryResult.ms || 0) + ' ms' : '—' }}</td></tr>
+                <tr><td class="nc-sum-k">列</td><td class="nc-mono">{{ queryResult ? queryResult.columns.join('、') : '—' }}</td></tr>
+                <tr v-if="lastQuerySql"><td class="nc-sum-k">语句</td><td class="nc-mono">{{ lastQuerySql }}</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <!-- 结果 1：数据网格 -->
           <div v-show="resultTab === 'result'" class="nc-grid-wrap">
             <table v-if="queryResult && queryResult.columns.length" class="nc-grid">
               <thead>
@@ -2758,13 +2803,63 @@ INSERT INTO course VALUES (1,'数学');</pre>
             </table>
             <div v-else class="nc-empty">没有结果集</div>
           </div>
-          <pre v-show="resultTab === 'message'" class="nc-msg">{{ queryMsg }}</pre>
+          <!-- 剖析：EXPLAIN 执行计划 -->
+          <div v-show="resultTab === 'profile'" class="nc-grid-wrap">
+            <table v-if="profileResult && profileResult.columns.length" class="nc-grid">
+              <thead><tr><th v-for="c in profileResult.columns" :key="c">{{ c }}</th></tr></thead>
+              <tbody>
+                <tr v-for="(r, i) in profileResult.rows" :key="i">
+                  <td v-for="(v, j) in r" :key="j">{{ v === null ? 'NULL' : v }}</td>
+                </tr>
+              </tbody>
+            </table>
+            <div v-else class="nc-empty">点开这个标签会对最近一次运行的查询做 EXPLAIN（没有可剖析的查询时为空）</div>
+          </div>
+          <!-- 状态：连接与库信息 -->
+          <div v-show="resultTab === 'status'" class="nc-grid-wrap">
+            <table class="nc-grid nc-sum-grid">
+              <tbody>
+                <tr><td class="nc-sum-k">连接</td><td>本地（教学沙箱）</td></tr>
+                <tr><td class="nc-sum-k">数据库</td><td class="nc-mono">{{ schema.db || db }}</td></tr>
+                <tr><td class="nc-sum-k">字符集 / 校对</td><td class="nc-mono">{{ schema.charset || '—' }} / {{ schema.collation || '—' }}</td></tr>
+                <tr><td class="nc-sum-k">MySQL</td><td>5.7</td></tr>
+                <tr v-if="lastQuerySql"><td class="nc-sum-k">最近查询</td><td class="nc-mono">{{ lastQuerySql.slice(0, 160) }}</td></tr>
+              </tbody>
+            </table>
+          </div>
         </div>
         <div class="nc-query-status">
           <span>{{ schema.db || db }}</span>
           <span class="spacer"></span>
           <span v-if="builderMode">查询创建工具 · {{ build.tables.length }} 表 · {{ build.joins.length }} 连接</span>
           <span v-else>Ln {{ cursor.line }}, Col {{ cursor.col }}</span>
+        </div>
+        </div>
+
+        <!-- 右侧代码段面板（视频 41.5s：搜索 + 分类 + 列表，点条目插入） -->
+        <aside v-if="snippetPane" class="nc-snip">
+          <div class="nc-snip-h">
+            <span class="nc-bd-pane-t">代码段</span>
+            <button class="nc-side-x" title="收起" @click="snippetPane = false">×</button>
+          </div>
+          <div class="nc-search nc-snip-search">
+            <e-icon name="search" :size="12"></e-icon>
+            <input v-model.trim="snipSearch" placeholder="搜索代码段…">
+          </div>
+          <div class="nc-snip-tags">
+            <button v-for="tg in snipTags" :key="tg" class="nc-snip-tag"
+                    :class="{ on: snipTag === tg }" @click="snipTag = tg">{{ tg }}</button>
+          </div>
+          <div class="nc-snip-list">
+            <button v-for="s in snipList" :key="s.name" class="nc-snip-item"
+                    :title="s.sql" @click="pasteSnippet(s.sql)">
+              <span class="nc-snip-name">{{ s.name }}</span>
+              <span class="nc-snip-cat">{{ s.cat }}</span>
+            </button>
+            <div v-if="!snipList.length" class="nc-empty">没有匹配的代码段</div>
+          </div>
+          <div class="nc-snip-foot">点一下条目就插进编辑器</div>
+        </aside>
         </div>
       </div>
 
@@ -2884,7 +2979,7 @@ INSERT INTO course VALUES (1,'数学');</pre>
                 <tr>
                   <th class="nc-dmark-h"></th><th>名</th><th>类型</th>
                   <th class="num">长度</th><th class="num">小数点</th>
-                  <th class="center">不是 null</th><th class="center">键</th><th>注释</th>
+                  <th class="center">不是 null</th><th class="center">虚拟</th><th class="center">键</th><th>注释</th>
                 </tr>
               </thead>
               <tbody>
@@ -2901,6 +2996,8 @@ INSERT INTO course VALUES (1,'数学');</pre>
                   <td><input v-model.number="c.scale" type="number" min="0" class="nc-cell num" @click.stop></td>
                   <td class="center"><input type="checkbox" :checked="!c.nullable"
                             @change="c.nullable = !$event.target.checked" title="勾上 = NOT NULL"></td>
+                  <td class="center"><input type="checkbox" v-model="c.virtual"
+                            title="生成列：值由表达式算出来（AS (表达式) VIRTUAL / STORED）"></td>
                   <td class="center">
                     <span v-if="colKeyTag(c)" class="nc-dkey" :class="{ pri: colKeyTag(c) === 'PRI', uni: colKeyTag(c) === 'UNI' }">{{ colKeyTag(c) }}</span>
                   </td>
@@ -2911,29 +3008,46 @@ INSERT INTO course VALUES (1,'数学');</pre>
           </div>
           <div class="nc-dprops" v-if="curCol">
             <span class="nc-dprops-t">字段「{{ curCol.name || '未命名' }}」</span>
-            <label>默认
-              <input v-model="curCol.default" class="nc-cell" placeholder="留空 = 无默认值"
-                     title="DEFAULT 值，支持 CURRENT_TIMESTAMP、数字、字符串">
-            </label>
-            <label class="ck"><input type="checkbox" v-model="curCol.auto"> 自动递增</label>
-            <label class="ck"><input type="checkbox" v-model="curCol.unsigned"> 无符号</label>
-            <label class="ck"><input type="checkbox" v-model="curCol.zerofill"> 填充零</label>
+            <template v-if="curCol.virtual">
+              <label>生成表达式
+                <input v-model="curCol.genExpr" class="nc-cell nc-dgen" placeholder="如 price * qty"
+                       title="AS (表达式) —— 写括号里面的内容">
+              </label>
+              <label>存储
+                <select v-model="curCol.stored" class="nc-cell" title="VIRTUAL=查询时算，STORED=写入时算好存起来">
+                  <option :value="false">VIRTUAL（虚拟）</option>
+                  <option :value="true">STORED（存储）</option>
+                </select>
+              </label>
+            </template>
+            <template v-else>
+              <label>默认
+                <input v-model="curCol.default" class="nc-cell" placeholder="留空 = 无默认值"
+                       title="DEFAULT 值，支持 CURRENT_TIMESTAMP、数字、字符串">
+              </label>
+              <label class="ck"><input type="checkbox" v-model="curCol.auto"> 自动递增</label>
+              <label class="ck"><input type="checkbox" v-model="curCol.unsigned"> 无符号</label>
+              <label class="ck"><input type="checkbox" v-model="curCol.zerofill"> 填充零</label>
+            </template>
           </div>
         </div>
 
-        <!-- 索引 -->
+        <!-- 索引（视频 54.5s：名 / 字段 / 索引类型） -->
         <div v-show="design.tab === 'indexes'" class="nc-grid-wrap">
           <table class="nc-grid nc-design-table">
-            <thead><tr><th>索引名</th><th class="center">唯一</th><th>字段（逗号分隔）</th><th>类型</th><th></th></tr></thead>
+            <thead><tr><th>名</th><th>字段（逗号分隔）</th><th>索引类型</th><th></th></tr></thead>
             <tbody>
               <tr v-for="(ix, i) in design.indexes" :key="i">
                 <td><input v-model.trim="ix.name" class="nc-cell"></td>
-                <td class="center"><input type="checkbox" v-model="ix.unique"></td>
                 <td><input v-model.trim="ix.columns" class="nc-cell" placeholder="col1, col2"></td>
-                <td><select v-model="ix.type" class="nc-cell"><option>BTREE</option><option>HASH</option></select></td>
+                <td>
+                  <select v-model="ix.itype" class="nc-cell" title="NORMAL 普通索引 / UNIQUE 唯一 / FULLTEXT 全文 / SPATIAL 空间">
+                    <option>NORMAL</option><option>UNIQUE</option><option>FULLTEXT</option><option>SPATIAL</option>
+                  </select>
+                </td>
                 <td><button class="nc-mini danger" @click="delIndex(i)">×</button></td>
               </tr>
-              <tr v-if="!design.indexes.length"><td colspan="5" class="nc-dempty">还没有二级索引（主键不用写在这里）。</td></tr>
+              <tr v-if="!design.indexes.length"><td colspan="4" class="nc-dempty">还没有二级索引（主键不用写在这里）。</td></tr>
             </tbody>
           </table>
           <button class="nc-add-col" @click="addIndex">＋ 添加索引</button>
@@ -2942,7 +3056,7 @@ INSERT INTO course VALUES (1,'数学');</pre>
         <!-- 外键 -->
         <div v-show="design.tab === 'fks'" class="nc-grid-wrap">
           <table class="nc-grid nc-design-table">
-            <thead><tr><th>名</th><th>字段</th><th>引用表</th><th>引用字段</th><th>ON DELETE</th><th>ON UPDATE</th><th></th></tr></thead>
+            <thead><tr><th>名</th><th>字段</th><th>引用模式</th><th>引用表</th><th>引用字段</th><th>ON DELETE</th><th>ON UPDATE</th><th></th></tr></thead>
             <tbody>
               <tr v-for="(f, i) in design.fks" :key="i" :class="{ lock: f.multi }">
                 <td><input v-model.trim="f.name" class="nc-cell" placeholder="fk_名字" :disabled="f.multi"></td>
@@ -2951,6 +3065,16 @@ INSERT INTO course VALUES (1,'数学');</pre>
                     <option v-for="c in design.columns" :key="c.name" :value="c.name">{{ c.name }}</option>
                   </select>
                   <span v-else class="nc-muted">{{ f.cols.join(', ') }}</span>
+                </td>
+                <td>
+                  <select v-if="!f.multi" class="nc-cell" :value="fkModeOf(f)"
+                          title="引用模式：选一个同时应用到 ON DELETE 和 ON UPDATE"
+                          @change="setFkMode(f, $event.target.value)">
+                    <option value="">—</option>
+                    <option>RESTRICT</option><option>CASCADE</option><option>SET NULL</option>
+                    <option>NO ACTION</option><option>SET DEFAULT</option>
+                  </select>
+                  <span v-else class="nc-muted">—</span>
                 </td>
                 <td>
                   <select v-if="!f.multi" class="nc-cell" :value="f.refTable"
@@ -2980,7 +3104,7 @@ INSERT INTO course VALUES (1,'数学');</pre>
                 <td><button class="nc-mini danger" title="删除外键" @click="delDesignFk(i)">×</button></td>
               </tr>
               <tr v-if="!design.fks.length">
-                <td colspan="7" class="nc-dempty">
+                <td colspan="8" class="nc-dempty">
                   还没有外键。点「＋ 添加外键」把这张表的字段连到另一张表，例如 订单.用户id → 用户.id。
                 </td>
               </tr>
@@ -3014,12 +3138,13 @@ INSERT INTO course VALUES (1,'数学');</pre>
         <!-- 触发器 -->
         <div v-show="design.tab === 'triggers'" class="nc-grid-wrap">
           <table class="nc-grid nc-design-table">
-            <thead><tr><th>名</th><th>触发时间</th><th>事件</th><th>语句</th><th></th></tr></thead>
+            <thead><tr><th>名</th><th>触发时间</th><th>事件</th><th>字段</th><th>语句</th><th></th></tr></thead>
             <tbody>
               <tr v-for="t in designTriggers" :key="t.name">
                 <td>{{ t.name }}</td>
                 <td>{{ t.timing }}</td>
                 <td>{{ t.event }}</td>
+                <td class="nc-muted" title="MySQL 触发器不能只对某一列触发（其他数据库的 UPDATE OF 列 在 MySQL 里没有）">—</td>
                 <td class="nc-dtrig" :title="t.statement">{{ trigBrief(t) }}</td>
                 <td class="nc-row-actions">
                   <button class="nc-mini" title="编辑触发器" @click="editDesignTrigger(t)">✎</button>
@@ -3027,7 +3152,7 @@ INSERT INTO course VALUES (1,'数学');</pre>
                 </td>
               </tr>
               <tr v-if="!designTriggers.length">
-                <td colspan="5" class="nc-dempty">这张表上还没有触发器。点「＋ 添加触发器」创建一个（例如 插入前自动填时间）。</td>
+                <td colspan="6" class="nc-dempty">这张表上还没有触发器。点「＋ 添加触发器」创建一个（例如 插入前自动填时间）。</td>
               </tr>
             </tbody>
           </table>
@@ -3265,6 +3390,83 @@ INSERT INTO course VALUES (1,'数学');</pre>
   </div>
 
   <!-- 查询创建工具 -->
+  <!-- 连接设置（视频 8-21s：双击「本地」连接打开，常规/高级/SSH/HTTP/SSL + 测试连接） -->
+  <div class="nc-mask" v-if="dlg === 'conn'" @click.self="dlg = ''">
+    <div class="nc-dlg nc-conn-dlg">
+      <div class="nc-dlg-h">
+        <e-icon name="database" :size="14"></e-icon> 连接
+        <button class="nc-dlg-x" @click="dlg = ''">×</button>
+      </div>
+      <div class="nc-conn-body">
+        <div class="nc-conn-tabs">
+          <button v-for="t in ['常规', '高级', 'SSH', 'HTTP', 'SSL']" :key="t"
+                  :class="{ on: connForm.tab === t }" @click="connForm.tab = t">{{ t }}</button>
+        </div>
+        <div class="nc-conn-page">
+          <!-- 常规：连接名 / 主机 / 端口 / 初始化命令 / 用户名 / 密码 -->
+          <div v-if="connForm.tab === '常规'" class="nc-conn-form">
+            <label>连接名 <input v-model.trim="connForm.name" class="nc-conn-ro" readonly title="教学沙箱的连接名固定为「本地」"></label>
+            <label>主机 <input v-model.trim="connForm.host"></label>
+            <label class="w-half">端口 <input v-model.number="connForm.port" type="number"></label>
+            <label class="w-half">初始化命令 <input v-model="connForm.init" placeholder="（可空）"></label>
+            <label class="nc-conn-radio">
+              主机地址 / IP 地址：
+              <label class="ck"><input type="radio" value="tcp" v-model="connForm.socket">本地或 TCP/IP</label>
+              <label class="ck"><input type="radio" value="pipe" v-model="connForm.socket">命名管道</label>
+            </label>
+            <label>用户名 <input v-model.trim="connForm.user"></label>
+            <label>密码 <input v-model="connForm.pw" type="password" placeholder="••••••"></label>
+            <label>数据库
+              <select v-model="connForm.db">
+                <option value="">（默认）</option>
+                <option :value="schema.db || db">{{ schema.db || db }}</option>
+              </select>
+            </label>
+          </div>
+          <!-- 高级：会话属性（教学沙箱固定，展示） -->
+          <div v-if="connForm.tab === '高级'" class="nc-conn-form">
+            <label class="w-half">会话超时 <input v-model.number="connForm.timeout" type="number" min="0"></label>
+            <label class="w-half">保持连接间隔（秒） <input v-model.number="connForm.keepAlive" type="number" min="0"></label>
+            <label class="w-half">最大记录数 <input v-model.number="connForm.maxRows" type="number" min="1"></label>
+            <label class="ck w-half"><input type="checkbox" v-model="connForm.compress"> 使用压缩</label>
+            <label class="ck"><input type="checkbox" v-model="connForm.autoCommit"> 自动提交</label>
+            <p class="nc-hint">教学沙箱里这些选项只做展示，连接参数由平台统一管理。</p>
+          </div>
+          <!-- SSH / HTTP / SSL：通道选项（展示 + 说明） -->
+          <div v-if="connForm.tab === 'SSH'" class="nc-conn-form">
+            <label class="ck"><input type="checkbox" v-model="connForm.ssh"> 使用 SSH 通道</label>
+            <template v-if="connForm.ssh">
+              <label>主机名或 IP 地址 <input v-model.trim="connForm.sshHost" placeholder="如 203.0.113.10"></label>
+              <label class="w-half">端口 <input v-model.number="connForm.sshPort" type="number"></label>
+              <label class="w-half">用户名 <input v-model.trim="connForm.sshUser"></label>
+              <label class="nc-conn-radio">验证方法：
+                <label class="ck"><input type="radio" value="pw" v-model="connForm.sshAuth">密码</label>
+                <label class="ck"><input type="radio" value="key" v-model="connForm.sshAuth">用户公钥</label>
+              </label>
+              <label>密码 <input type="password" v-model="connForm.sshPass"></label>
+            </template>
+            <p class="nc-hint">教学沙箱直连数据库容器，不需要 SSH 通道；这里的设置不会生效。</p>
+          </div>
+          <div v-if="connForm.tab === 'HTTP'" class="nc-conn-form">
+            <label class="ck"><input type="checkbox" v-model="connForm.http"> 使用 HTTP 通道</label>
+            <p class="nc-hint">HTTP 通道用于穿透不能直连 3306 的网络；教学环境用不到。</p>
+          </div>
+          <div v-if="connForm.tab === 'SSL'" class="nc-conn-form">
+            <label class="ck"><input type="checkbox" v-model="connForm.ssl"> 使用 SSL</label>
+            <p class="nc-hint">教学沙箱是容器内网通信，不启用 SSL。</p>
+          </div>
+        </div>
+      </div>
+      <div class="nc-conn-f">
+        <button class="nc-btn" @click="testConn"><e-icon name="shield" :size="13"></e-icon> 测试连接</button>
+        <span class="nc-hint m-hide" v-if="connMsg">{{ connMsg }}</span>
+        <span class="spacer"></span>
+        <button class="nc-btn" @click="dlg = ''">取消</button>
+        <button class="nc-btn primary" @click="connectNow"><e-icon name="check" :size="13"></e-icon> 连接</button>
+      </div>
+    </div>
+  </div>
+
   <div class="nc-mask" v-if="dlg === 'runRoutine'" @click.self="dlg = ''">
     <div class="nc-dlg">
       <div class="nc-dlg-h">
@@ -3318,7 +3520,7 @@ INSERT INTO course VALUES (1,'数学');</pre>
 </div>
 </script>
 
-<script src="/navicat.js?v=8"></script>
+<script src="/navicat.js?v=9"></script>
 <script src="/app.js?v=167"></script>
 </body>
 </html>
