@@ -47,6 +47,11 @@ const NavicatPanel = {
       // 弹窗
       dlg: "",
       build: this.blankBuilder(),
+      builderMode: false,
+      condPop: null,
+      buildDragName: "",
+      condOps: ["=", "<>", ">", "<", ">=", "<=", "LIKE", "NOT LIKE",
+                "IN", "NOT IN", "BETWEEN", "IS NULL", "IS NOT NULL"],
       dragTable: null,
       dragJoin: null,
       dragPos: null,
@@ -132,10 +137,22 @@ const NavicatPanel = {
       (this.design.columns || []).forEach(c => { if (c.type) set.add(c.type); });
       return [...set];
     },
-    // 查询创建工具左侧的表面板：显示全部表，可搜索，已加的标状态
-    builderLeftTables() {
+    // 查询创建工具左侧「对象」窗格：表 + 视图，可搜索，点一下加进图表
+    builderObjects() {
       const f = String((this.build && this.build.search) || "").toLowerCase();
-      return (this.schema.tables || []).filter(t => !f || String(t.name).toLowerCase().includes(f));
+      const match = (o) => !f || String(o.name).toLowerCase().includes(f);
+      return [
+        { key: "tables", label: "表", icon: "table", items: (this.schema.tables || []).filter(match) },
+        { key: "views", label: "视图", icon: "file-text", items: (this.schema.views || []).filter(match) },
+      ];
+    },
+    // SQL 窗格：只读、关键字高亮（先转义再一次性替换，避免嵌套）
+    builderSqlHtml() {
+      const esc = String((this.build && this.build.sql) || "")
+        .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      return esc.replace(
+        /('[^']*'|`[^`]*`)|\b(SELECT|FROM|WHERE|GROUP BY|HAVING|ORDER BY|LIMIT|INNER JOIN|LEFT JOIN|RIGHT JOIN|JOIN|ON|AS|AND|OR|NOT|LIKE|IN|BETWEEN|IS NULL|IS NOT NULL|ASC|DESC|EXPLAIN)\b/gi,
+        (m, s) => s ? '<span class="tk-s">' + s + "</span>" : '<span class="tk-k">' + m + "</span>");
     },
   },
 
@@ -148,15 +165,18 @@ const NavicatPanel = {
         if (v === "query" && this.$refs.cmQuery) this.$refs.cmQuery.refresh();
       });
     },
-    // 画布一变（勾选字段 / 连线 / 别名），没手动改过的 SQL 自动重新生成
+    // 画布一变（勾选字段 / 连线 / 别名 / 条件），生成的 SQL 自动刷新
     "build.tables": { deep: true, handler() { this.syncBuilderSql(); } },
     "build.joins": { deep: true, handler() { this.syncBuilderSql(); } },
+    builderMode(v) {
+      if (v) this.syncBuilderSql();
+    },
   },
 
   mounted() {
     if (this.db) this.reload();
-    this._menuOff = () => { this.menu = ""; this.ctx.show = false; };
-    this._escOff = (e) => { if (e.key === "Escape") { this.ctx.show = false; this.menu = ""; } };
+    this._menuOff = () => { this.menu = ""; this.ctx.show = false; this.condPop = null; };
+    this._escOff = (e) => { if (e.key === "Escape") { this.ctx.show = false; this.menu = ""; this.condPop = null; } };
     document.addEventListener("click", this._menuOff);
     document.addEventListener("keydown", this._escOff);
   },
@@ -727,7 +747,8 @@ const NavicatPanel = {
       this.cursor = { line: p.line + 1, col: p.ch + 1 };
     },
     async runQuery() {
-      const sql = (this.sqlText || "").trim();
+      const sql = (this.builderMode && this.build.tables.length
+        ? this.build.sql : this.sqlText || "").trim();
       if (!sql) { this.toast("先写点 SQL"); return; }
       this.running = true;
       this.queryMsg = "";
@@ -763,7 +784,8 @@ const NavicatPanel = {
       }
     },
     async explainQuery() {
-      const sql = (this.sqlText || "").trim();
+      const sql = (this.builderMode && this.build.tables.length
+        ? this.build.sql : this.sqlText || "").trim();
       if (!sql) { this.toast("先写点 SQL"); return; }
       try {
         const d = await this.api("/api/sql", {
@@ -776,6 +798,7 @@ const NavicatPanel = {
       } catch (e) { this.queryMsg = e.message; this.resultTab = "message"; }
     },
     beautifySql() {
+      if (this.builderMode) { this.toast("查询创建工具打开时 SQL 是自动生成的，先点「查询创建工具」关闭再编辑"); return; }
       let s = this.sqlText || "";
       s = s.replace(/\s+/g, " ")
            .replace(/\b(from|where|group by|having|order by|limit|join|left join|right join|inner join|values|set)\b/gi,
@@ -792,6 +815,7 @@ const NavicatPanel = {
       });
     },
     insertSnippet() {
+      if (this.builderMode) { this.toast("查询创建工具打开时 SQL 是自动生成的，先点「查询创建工具」关闭再编辑"); return; }
       const snip = "\n-- 常用：SELECT * FROM 表名 WHERE 条件 ORDER BY 字段 DESC LIMIT 10;\n";
       this.sqlText = (this.sqlText || "") + snip;
       this.$nextTick(() => {
@@ -808,21 +832,19 @@ const NavicatPanel = {
       } catch (e) { this.toast("保存失败"); }
     },
 
-    /* ---------------- 查询创建工具（Navicat 同款标签页） ---------------- */
+    /* ---------------- 查询创建工具（Navicat 同款：内嵌在查询页，工具栏按钮切换） ---------------- */
     blankBuilder() {
-      return {
-        tables: [], joins: [],
-        sql: "", search: "",
-        tab: "cond", result: null, msg: "", info: "", running: false, history: [],
-      };
+      return { tables: [], joins: [], sql: "", search: "" };
     },
     openBuilder() {
       if (!this.build || !this.build.tables) this.build = this.blankBuilder();
-      this.ensureTab({ id: "builder", kind: "builder", title: "查询创建工具", icon: "list" });
+      if (this.active !== "query") this.newQueryTab();
+      this.builderMode = !this.builderMode;
+      if (this.builderMode) this.syncBuilderSql();
     },
     clearBuilder() {
       this.build = this.blankBuilder();
-      this.toast("画布已清空");
+      this.toast("已清空图表");
     },
     isBuildAdded(name) { return this.build.tables.some(t => t.name === name); },
     toggleBuildTable(name) {
@@ -831,26 +853,63 @@ const NavicatPanel = {
       else this.addBuildTableByName(name);
     },
     addBuildTable(t) {
-      if (this.isBuildAdded(t.name)) return;
+      if (!t || this.isBuildAdded(t.name)) return;
       const n = this.build.tables.length;
-      this.build.tables.push({
+      const nt = {
         id: "t" + Date.now() + "_" + n,
         name: t.name, alias: "",
         x: 24 + (n % 3) * 216, y: 18 + Math.floor(n / 3) * 200,
         columns: (t.columns || []).map(c => ({ name: c.name, key: c.key || "", checked: true,
-                                          alias: "", sort: "", op: "", val: "", logic: "AND" })),
-      });
+                                          alias: "", sort: "", op: "", val: "", op2: "", val2: "" })),
+      };
+      this.build.tables.push(nt);
+      this.autoJoinFks(nt);   // Navicat 同款：按外键自动连线
+    },
+    // 新表引用了已加的表，或已加的表引用了新表，都自动连上
+    autoJoinFks(nt) {
+      const src = this.schema.tables.find(x => x.name === nt.name) || {};
+      const link = (a, acol, b, bcol) => {
+        if (!a || !b || a.id === b.id || !acol || !bcol) return;
+        this.makeJoin({ t: a, c: a.columns.find(c => c.name === acol) },
+                      { t: b, c: b.columns.find(c => c.name === bcol) });
+      };
+      for (const fk of src.fks || [])
+        link(nt, fk.col,
+             this.build.tables.find(x => x.name === fk.refTable && x.id !== nt.id), fk.refCol);
+      for (const other of this.build.tables) {
+        if (other.id === nt.id) continue;
+        const osrc = this.schema.tables.find(x => x.name === other.name) || {};
+        for (const fk of osrc.fks || [])
+          if (fk.refTable === nt.name) link(other, fk.col, nt, fk.refCol);
+      }
     },
     addBuildTableByName(name) {
-      const t = this.schema.tables.find(x => x.name === name);
+      const t = this.schema.tables.find(x => x.name === name) ||
+                this.schema.views.find(x => x.name === name);
       if (t) this.addBuildTable(t);
+    },
+    // 桌面：从「对象」窗格把表拖进图表，落点即位置
+    dropBuildTable(ev) {
+      const name = this.buildDragName;
+      this.buildDragName = "";
+      if (!name || this.isBuildAdded(name)) return;
+      this.addBuildTableByName(name);
+      const cv = this.$refs.canvas;
+      const t = this.build.tables[this.build.tables.length - 1];
+      if (t && cv) {
+        const r = cv.getBoundingClientRect();
+        t.x = Math.max(0, Math.round(ev.clientX - r.left - 80));
+        t.y = Math.max(0, Math.round(ev.clientY - r.top - 12));
+      }
     },
     removeBuildTable(t) {
       this.build.tables = this.build.tables.filter(x => x !== t);
       this.build.joins = this.build.joins.filter(j => j.a.tid !== t.id && j.b.tid !== t.id);
     },
     tableById(id) { return this.build.tables.find(t => t.id === id) || null; },
-    colRef(t, col) { return (t.alias || t.name) + "." + col; },
+    colRef(t, col) {
+      return this.ident(t.alias || t.name) + "." + this.ident(col);
+    },
     colAnchor(t, colName, side) {
       const i = Math.max(0, t.columns.findIndex(c => c.name === colName));
       return { x: side === "r" ? t.x + 180 : t.x, y: t.y + 30 + i * 22 + 11 };
@@ -877,16 +936,15 @@ const NavicatPanel = {
       if (!e) return { x: 0, y: 0 };
       return { x: Math.round((e.p1.x + e.p2.x) / 2), y: Math.round((e.p1.y + e.p2.y) / 2) };
     },
+    joinTypeName(j) {
+      return { INNER: "内连接", LEFT: "左连接", RIGHT: "右连接" }[j.type] || "内连接";
+    },
     joinLabel(j) {
       const a = this.tableById(j.a.tid), b = this.tableById(j.b.tid);
       if (!a || !b) return "";
-      const name = { INNER: "内连接", LEFT: "左连接", RIGHT: "右连接" }[j.type] || "内连接";
-      return `${name} ${this.colRef(a, j.a.col)} = ${this.colRef(b, j.b.col)}`;
+      return this.joinTypeName(j) + "：" + this.colRef(a, j.a.col) + " = " + this.colRef(b, j.b.col);
     },
-    cycleJoin(j) {
-      const order = ["INNER", "LEFT", "RIGHT"];
-      j.type = order[(order.indexOf(j.type) + 1) % order.length];
-    },
+    openJoinMenu(ev, j) { this.openCtx(ev, "join", j); },
     removeJoin(j) { this.build.joins = this.build.joins.filter(x => x !== j); },
 
     /* ---- 画布拖拽：鼠标和触屏统一走 Pointer Events ----
@@ -978,86 +1036,114 @@ const NavicatPanel = {
       return `M ${a.x} ${a.y} L ${p.x} ${p.y}`;
     },
 
-    /* ---- SQL 生成 / 运行 ---- */
+    /* ---- SQL 生成（格式化多行；「条件」和「或」先各自 OR，字段之间 AND） ---- */
+    condSql(ref, op, val) {
+      if (!op) return "";
+      if (/^IS/i.test(op)) return ref + " " + op.toUpperCase();
+      const v = String(val == null ? "" : val).trim();
+      if (!v) return "";
+      if (op === "IN" || op === "NOT IN")
+        return ref + " " + op + " " + (v.startsWith("(") ? v : "(" + v + ")");
+      if (op === "BETWEEN") {
+        const m = v.split(/\s+AND\s+/i);
+        if (m.length === 2 && m[0].trim() && m[1].trim())
+          return ref + " BETWEEN " + m[0].trim() + " AND " + m[1].trim();
+        return "";
+      }
+      const raw = /^-?\d+(\.\d+)?$/.test(v) || /^[\('"]/.test(v);
+      return ref + " " + op + " " + (raw ? v : this.lit(v));
+    },
     genSql() {
       const b = this.build;
+      if (!b.tables.length) return "";
       const sel = [];
       for (const t of b.tables)
         for (const c of t.columns)
-          if (c.checked) sel.push(this.colRef(t, c.name) + (c.alias ? " AS " + this.ident(c.alias) : ""));
-      let sql = "SELECT " + (sel.length ? sel.join(", ") : "*");
-      if (b.tables.length) {
-        const first = b.tables[0];
-        let from = this.ident(first.name) + (first.alias ? " " + first.alias : "");
-        for (const j of b.joins) {
-          const ta = this.tableById(j.a.tid), tb = this.tableById(j.b.tid);
-          if (!ta || !tb) continue;
-          from += "\n" + j.type + " JOIN " + this.ident(tb.name) +
-                  (tb.alias ? " " + tb.alias : "") +
-                  " ON " + this.colRef(ta, j.a.col) + " = " + this.colRef(tb, j.b.col);
-        }
-        sql += "\nFROM " + from;
+          if (c.checked)
+            sel.push("  " + this.colRef(t, c.name) + (c.alias ? " AS " + this.ident(c.alias) : ""));
+      let sql = "SELECT" + (sel.length ? "\n" + sel.join(",\n") : " *");
+      const first = b.tables[0];
+      let from = this.ident(first.name) + (first.alias ? " " + this.ident(first.alias) : "");
+      for (const j of b.joins) {
+        const ta = this.tableById(j.a.tid), tb = this.tableById(j.b.tid);
+        if (!ta || !tb) continue;
+        from += "\n  " + j.type + " JOIN " + this.ident(tb.name) +
+                (tb.alias ? " " + this.ident(tb.alias) : "") +
+                " ON " + this.colRef(ta, j.a.col) + " = " + this.colRef(tb, j.b.col);
       }
-      const conds = [];
+      sql += "\nFROM " + from;
+      const parts = [];
       for (const t of b.tables)
-        for (const c of t.columns)
-          if (c.op) conds.push({ ref: this.colRef(t, c.name), c });
-      if (conds.length) {
-        const parts = conds.map((x, i) => {
-          const v = /^(IS)/i.test(x.c.op) ? "" :
-            /^-?\d+(\.\d+)?$/.test(String(x.c.val).trim()) ? String(x.c.val).trim() :
-            /^(\(|'|")/.test(String(x.c.val).trim()) ? String(x.c.val).trim() : this.lit(x.c.val);
-          return (i ? (x.c.logic === "OR" ? " OR " : " AND ") : "") +
-                 `${x.ref} ${x.c.op}${v ? " " + v : ""}`;
-        });
-        sql += "\nWHERE " + parts.join("");
-      }
+        for (const c of t.columns) {
+          const ref = this.colRef(t, c.name);
+          const c1 = this.condSql(ref, c.op, c.val);
+          const c2 = this.condSql(ref, c.op2, c.val2);
+          if (c1 && c2) parts.push("(" + c1 + " OR " + c2 + ")");
+          else if (c1 || c2) parts.push(c1 || c2);
+        }
+      if (parts.length) sql += "\nWHERE\n  " + parts.join("\n  AND ");
       const ords = [];
       for (const t of b.tables)
         for (const c of t.columns)
-          if (c.sort) ords.push(`${this.colRef(t, c.name)} ${c.sort}`);
-      if (ords.length) sql += "\nORDER BY " + ords.join(", ");
+          if (c.sort) ords.push(this.colRef(t, c.name) + " " + c.sort);
+      if (ords.length) sql += "\nORDER BY\n  " + ords.join(",\n  ");
       return sql + ";";
     },
     syncBuilderSql() {
       const b = this.build;
-      if (b && !b.edited) b.sql = this.genSql();
+      if (!b) return;
+      b.sql = this.genSql();
+      // SQL 窗格只读；生成的语句就是查询页的 SQL（和 Navicat 一致，「运行」即作答）
+      if (this.builderMode && b.tables.length) this.sqlText = b.sql;
     },
-    async runBuilder(explain) {
-      const b = this.build;
-      const sql = String(b.sql || "").trim().replace(/;+\s*$/, "");
-      if (!sql) { this.toast("先在下面生成或编写 SQL"); return; }
-      b.running = true; b.result = null; b.msg = ""; b.info = "";
-      const finalSql = explain ? "EXPLAIN " + sql : sql;
-      try {
-        const d = await this.api("/api/sql", { method: "POST", body: { sql: finalSql + ";", db: this.db } });
-        const results = d.results || [];
-        const err = results.find(r => r.type === "error");
-        const rowsRes = [...results].reverse().find(r => r.type === "rows");
-        const ok = results.filter(r => r.type === "ok");
-        b.result = rowsRes || null;
-        b.info = rowsRes ? `${rowsRes.rowCount} 行 · ${rowsRes.ms || 0} ms`
-          : ok.length ? `执行成功${ok.reduce((a, r) => a + (r.affected || 0), 0) ? " · 影响 " +
-              ok.reduce((a, r) => a + (r.affected || 0), 0) + " 行" : ""}` : "";
-        b.msg = err ? err.msg : results.map(r =>
-          r.type === "rows" ? `返回 ${r.rowCount} 行（${r.ms || 0} ms）`
-          : r.type === "ok" ? `执行成功，影响 ${r.affected || 0} 行` : r.msg).join("\n");
-        b.history.push({ at: new Date().toTimeString().slice(0, 8), sql: finalSql,
-                         ok: !err, info: err ? err.msg : b.info });
-        if (b.history.length > 30) b.history.shift();
-        b.tab = err ? "history" : "result";
-        if (!err) { this.$emit("query", finalSql); this.$emit("changed"); }
-      } catch (e) {
-        b.msg = e.message; b.tab = "history";
-        b.history.push({ at: new Date().toTimeString().slice(0, 8), sql: finalSql, ok: false, info: e.message });
-      } finally { b.running = false; }
+
+    /* ---- 准则网格「条件 / 或」组合框弹层（不用自己打 SQL） ---- */
+    condNeedVal(op) { return !!op && !/^IS/i.test(op); },
+    condText(c, which) {
+      const op = which === "or" ? c.op2 : c.op;
+      if (!op) return "";
+      if (/^IS/i.test(op)) return op;
+      const v = String((which === "or" ? c.val2 : c.val) || "").trim();
+      return op + (v ? " " + v : "");
     },
-    copyBuilderSql() { this.copyText(this.build.sql || ""); },
-    sendBuilderToQuery() {
-      this.sqlText = String(this.build.sql || "").trim();
-      this.newQueryTab();
-      this.$nextTick(() => { if (this.$refs.cmQuery) this.$refs.cmQuery.setValue(this.sqlText); });
-      this.toast("已把 SQL 放到查询页");
+    openCond(ev, t, c, which) {
+      const r = this.$el.getBoundingClientRect();
+      this.condPop = {
+        tid: t.id, col: c.name, which,
+        label: (t.alias || t.name) + "." + c.name,
+        op: which === "or" ? (c.op2 || "") : (c.op || ""),
+        val: which === "or" ? (c.val2 || "") : (c.val || ""),
+        x: Math.round(ev.clientX - r.left), y: Math.round(ev.clientY - r.top),
+      };
+      this.$nextTick(() => this.clampCond());
+    },
+    clampCond() {
+      const el = this.$refs.condPop;
+      if (!el || !this.condPop) return;
+      const r = this.$el.getBoundingClientRect();
+      const w = el.offsetWidth, h = el.offsetHeight;
+      if (this.condPop.x + w > r.width - 8) this.condPop.x = Math.max(6, r.width - w - 8);
+      if (this.condPop.y + h > r.height - 8) this.condPop.y = Math.max(6, r.height - h - 8);
+    },
+    setCondOp(op) { if (this.condPop) this.condPop.op = op; },
+    applyCond() {
+      const p = this.condPop;
+      if (!p) return;
+      this.writeCond(p, p.op, p.val);
+      this.condPop = null;
+    },
+    clearCond() {
+      const p = this.condPop;
+      if (!p) return;
+      this.writeCond(p, "", "");
+      this.condPop = null;
+    },
+    writeCond(p, op, val) {
+      const t = this.tableById(p.tid);
+      const c = t && t.columns.find(x => x.name === p.col);
+      if (!c) return;
+      if (p.which === "or") { c.op2 = op; c.val2 = val; }
+      else { c.op = op; c.val = val; }
     },
 
     /* ---------------- 菜单 / 工具栏 ---------------- */
@@ -1262,10 +1348,20 @@ const NavicatPanel = {
           { label: "保存查询", icon: "file-text", action: () => this.saveQuery() },
         ];
       }
+      if (kind === "join") {
+        const cur = (t) => (p.type === t ? "● " : "") + { INNER: "内连接", LEFT: "左连接", RIGHT: "右连接" }[t] + "（" + t + " JOIN）";
+        return [
+          { label: cur("INNER"), action: () => { p.type = "INNER"; } },
+          { label: cur("LEFT"), action: () => { p.type = "LEFT"; } },
+          { label: cur("RIGHT"), action: () => { p.type = "RIGHT"; } },
+          sep,
+          { label: "删除连接", icon: "trash", danger: true, action: () => this.removeJoin(p) },
+        ];
+      }
       if (kind === "canvas") {
         return [
-          { label: "添加表", icon: "plus", action: () => this.toast("从左边「表」面板点一张表加进画布") },
-          { label: "清空画布", icon: "eraser", danger: true, action: () => this.clearBuilder() },
+          { label: "添加表", icon: "plus", action: () => this.toast("从左边「对象」窗格点一张表，或拖进图表") },
+          { label: "清空图表", icon: "eraser", danger: true, action: () => this.clearBuilder() },
         ];
       }
       if (kind === "tab") {

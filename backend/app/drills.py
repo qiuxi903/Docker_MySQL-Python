@@ -1861,6 +1861,20 @@ def navicat_schema(account: dict, drill_id: int) -> dict:
                     "type": x[5] or "", "columns": []})
                 item["columns"].append(x[4])
 
+            # 外键关系（查询创建工具加表时自动连线用）
+            fks = {}
+            try:
+                cur.execute("""SELECT TABLE_NAME, COLUMN_NAME,
+                                      REFERENCED_TABLE_NAME, REFERENCED_COLUMN_NAME
+                               FROM information_schema.KEY_COLUMN_USAGE
+                               WHERE TABLE_SCHEMA=%s AND REFERENCED_TABLE_NAME IS NOT NULL""",
+                            (db,))
+                for x in cur.fetchall():
+                    fks.setdefault(str(x[0]).lower(), []).append({
+                        "col": x[1], "refTable": x[2], "refCol": x[3]})
+            except Exception:
+                pass
+
             cur.execute("""SELECT TABLE_NAME, VIEW_DEFINITION FROM information_schema.VIEWS
                            WHERE TABLE_SCHEMA=%s ORDER BY TABLE_NAME""", (db,))
             view_defs = {str(r[0]).lower(): r[1] or "" for r in cur.fetchall()}
@@ -1880,6 +1894,7 @@ def navicat_schema(account: dict, drill_id: int) -> dict:
                     "comment": t[6] or "",
                     "columns": cols.get(key, []),
                     "indexes": list(idx.get(key, {}).values()),
+                    "fks": fks.get(key, []),
                 }
                 if str(t[1]).upper() == "VIEW":
                     item["definition"] = view_defs.get(key, "")

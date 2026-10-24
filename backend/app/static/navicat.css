@@ -465,29 +465,29 @@ tr.added td { background: rgba(46,160,67,.06); }
   .nc-design-top { gap: 8px; }
 }
 
-/* ---- 查询创建工具（标签页版，Navicat 同款：表面板 + 点阵画布 + SQL 预览） ---- */
-.nc-bd-bar {
-  flex: 0 0 auto; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
-  padding: 8px 12px; border-bottom: 1px solid var(--line); background: var(--panel-2);
+/* ---- 查询创建工具（Navicat 同款：内嵌查询页 = 左「对象」+ 右上「图表」+ 「准则」+ 底部只读「SQL」） ---- */
+.nc-bd-wrap {
+  flex: 1 1 auto; min-height: 0; display: flex;
+  border-top: 1px solid var(--line); background: var(--panel); position: relative;
 }
-.nc-bd-addsel {
-  height: 28px; border: 1px solid var(--line-strong); border-radius: 5px;
-  background: var(--panel); color: var(--text); font: inherit; font-size: 12.5px; padding: 0 8px;
-}
-.nc-bd-bar .nc-btn.dirty { border-color: var(--err); color: var(--err); }
-.nc-bd-tip { font-size: 11.5px; color: var(--muted); }
-.nc-bd-body { flex: 1 1 auto; min-height: 0; display: flex; }
-.nc-bd-left {
-  flex: 0 0 196px; display: flex; flex-direction: column; min-height: 0;
+/* 左：对象窗格（表 / 视图，点一下或拖进图表） */
+.nc-bd-obj {
+  flex: 0 0 176px; display: flex; flex-direction: column; min-height: 0;
   border-right: 1px solid var(--line); background: var(--panel);
 }
-.nc-bd-left-h {
+.nc-bd-obj-h {
   flex: 0 0 auto; display: flex; align-items: center; gap: 6px;
   padding: 9px 10px 6px; font-size: 11.5px; font-weight: 700;
   color: var(--muted); letter-spacing: .4px;
 }
 .nc-bd-search { margin: 0 8px 6px; flex: 0 0 auto; }
-.nc-bd-list { flex: 1; min-height: 0; overflow: auto; padding: 0 6px 8px; }
+.nc-bd-obj-list { flex: 1; min-height: 0; overflow: auto; padding: 0 6px 8px; }
+.nc-bd-ogroup { margin-bottom: 6px; }
+.nc-bd-ogname {
+  display: flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 700;
+  color: var(--accent); padding: 4px 2px 3px;
+}
+.nc-bd-ogname .nc-count { margin-left: auto; }
 .nc-bd-trow {
   display: flex; align-items: center; gap: 7px; width: 100%;
   border: 0; background: transparent; color: var(--text); font: inherit; font-size: 12.5px;
@@ -507,7 +507,27 @@ tr.added td { background: rgba(46,160,67,.06); }
 .nc-bd-trow.added .nc-bd-tname { color: var(--accent); font-weight: 600; }
 .nc-bd-trow.added .nc-bd-tadd { color: var(--accent); border-color: var(--accent); }
 
-.nc-bd-canvas { flex: 1 1 auto; min-width: 0; height: auto; min-height: 220px; }
+/* 右：图表 → 准则 → SQL 竖排 */
+.nc-bd-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; min-height: 0; }
+.nc-bd-pane-h {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 8px;
+  padding: 4px 10px; background: var(--panel-2); border-bottom: 1px solid var(--line);
+}
+.nc-bd-pane-t {
+  flex: 0 0 auto; font-size: 11px; font-weight: 700; color: var(--muted); letter-spacing: .4px;
+}
+.nc-bd-addsel {
+  height: 24px; border: 1px solid var(--line-strong); border-radius: 5px;
+  background: var(--panel); color: var(--text); font: inherit; font-size: 12px; padding: 0 6px;
+}
+.nc-bd-tip { font-size: 11.5px; color: var(--muted); }
+.nc-btn.sm { height: 22px; padding: 0 8px; font-size: 11px; gap: 4px; }
+.nc-btn.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+.nc-bd-canvas {
+  flex: 1 1 44%; min-width: 0; min-height: 140px;
+  border-bottom: 1px solid var(--line);
+}
 .nc-canvas {
   position: relative; overflow: auto; background-color: var(--panel-2);
   background-image: radial-gradient(circle, #c4ccd4 1px, transparent 1px);
@@ -554,8 +574,14 @@ tr.added td { background: rgba(46,160,67,.06); }
 .nc-tcol.src { outline: 1px dashed var(--accent); background: var(--accent-weak); }
 .nc-tcol.drop { background: var(--accent-weak); box-shadow: inset 0 0 0 2px var(--accent); }
 .nc-tcol-ck { flex: 0 0 auto; accent-color: var(--accent); margin: 0; cursor: pointer; }
-.nc-tcol-k { flex: 0 0 18px; font: 700 9px/14px var(--mono); color: #bf8700; }
 .nc-tcol-n { overflow: hidden; text-overflow: ellipsis; }
+/* 主键：Navicat 同款小钥匙图标 */
+.nc-key {
+  flex: 0 0 auto; width: 11px; height: 11px; color: #bf8700;
+  display: inline-flex; vertical-align: -1px;
+}
+.nc-bd-grid .nc-key { margin-left: 5px; }
+.nc-key svg { width: 100%; height: 100%; fill: currentColor; }
 .nc-join-tag {
   position: absolute; transform: translate(-50%, -50%); display: flex; align-items: center;
   gap: 2px; background: var(--panel); border: 1px solid var(--accent); border-radius: 999px;
@@ -563,8 +589,9 @@ tr.added td { background: rgba(46,160,67,.06); }
 }
 .nc-join-type {
   border: 0; background: transparent; color: var(--accent); cursor: pointer;
-  font: 11px var(--mono); padding: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  font: 600 11px var(--font, inherit); padding: 0; white-space: nowrap;
 }
+.nc-join-type:hover { text-decoration: underline; }
 .nc-join-x {
   border: 0; background: transparent; color: var(--muted); cursor: pointer;
   font-size: 12px; line-height: 1; padding: 0 3px;
@@ -576,51 +603,61 @@ tr.added td { background: rgba(46,160,67,.06); }
   padding: 24px; line-height: 2;
 }
 
-/* 底部：SQL 预览（可编辑）/ 结果 / 历史 */
-.nc-bd-bottom {
-  flex: 0 0 auto; display: flex; flex-direction: column; min-height: 150px; max-height: 42%;
-  border-top: 1px solid var(--line); background: var(--panel);
-  position: relative; z-index: 5;   /* 画布是定位元素，别让它盖住底部按钮 */
+/* 准则窗格 */
+.nc-bd-grid-wrap { flex: 1 1 30%; min-height: 104px; overflow: auto; background: var(--panel); }
+.nc-condcell {
+  width: 100%; height: 22px; border: 1px solid transparent; border-radius: 4px;
+  background: transparent; color: var(--muted); font: 11.5px var(--mono);
+  padding: 0 6px; cursor: pointer; text-align: left;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.nc-bd-btabs {
-  flex: 0 0 auto; display: flex; align-items: center; gap: 2px; flex-wrap: wrap;
-  padding: 4px 8px; border-bottom: 1px solid var(--line); background: var(--panel-2);
-}
-.nc-bd-btabs > button {
-  border: 0; background: transparent; color: var(--muted); font: inherit;
-  font-size: 12px; padding: 5px 12px; cursor: pointer; border-radius: 5px 5px 0 0;
-  display: inline-flex; align-items: center; gap: 5px;
-}
-.nc-bd-btabs > button.on { color: var(--accent); font-weight: 600; box-shadow: inset 0 -2px 0 var(--accent); }
-.nc-bd-btabs .nc-run { margin-left: 8px; }
-.nc-bd-btabs .nc-btn { margin-left: 4px; }
+.nc-condcell:hover { border-color: var(--line-strong); background: var(--panel-2); }
+.nc-condcell.set { color: var(--accent); font-weight: 600; }
+
+/* 底部：只读 SQL 窗格（关键字高亮，Navicat 同款） */
 .nc-bd-sql {
-  flex: 1; min-height: 84px; max-height: 26vh; resize: vertical; border: 0; outline: none;
-  padding: 10px 12px; background: var(--panel); color: var(--text);
-  font: 12.5px/1.7 var(--mono); user-select: text; -webkit-user-select: text;
+  flex: 0 0 auto; max-height: 118px; min-height: 38px; overflow: auto; margin: 0;
+  padding: 6px 12px 8px; background: var(--panel); border-top: 1px solid var(--line);
+  font: 11.5px/1.65 var(--mono); color: var(--text);
+  white-space: pre-wrap; word-break: break-all;
+  user-select: text; -webkit-user-select: text;
 }
-.nc-bd-bottom > .nc-grid-wrap { flex: 1; min-height: 0; }
-.nc-bd-hist {
-  flex: 1; min-height: 0; overflow: auto; padding: 8px 10px; display: flex;
-  flex-direction: column; gap: 6px;
+.nc-bd-sql .tk-k { color: var(--accent); font-weight: 600; }
+.nc-bd-sql .tk-s { color: #1d9e57; }
+.nc-bd-sql:empty::after { content: "还没有生成 SQL —— 先在「对象」窗格加一张表"; color: var(--muted); }
+
+/* 「条件 / 或」组合框弹层 */
+.nc-condpop {
+  position: absolute; z-index: 70; width: 302px; max-width: calc(100% - 16px);
+  background: var(--panel); border: 1px solid var(--line-strong); border-radius: 8px;
+  box-shadow: 0 14px 38px rgba(1, 8, 24, .25); padding: 8px;
 }
-.nc-bd-hitem {
-  display: flex; align-items: baseline; gap: 8px; font-size: 11.5px;
-  padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-2);
+.nc-condpop-t {
+  display: flex; align-items: center; gap: 6px; font: 11.5px var(--mono);
+  color: var(--text); padding: 2px 4px 6px;
 }
-.nc-bd-hitem.err { border-color: var(--err); }
-.nc-bd-hitem.err .nc-bd-hinfo { color: var(--err); }
-.nc-bd-hat { flex: 0 0 auto; font-family: var(--mono); color: var(--muted); }
-.nc-bd-hsql {
-  margin: 0; flex: 1; min-width: 0; font: 11.5px/1.5 var(--mono); color: var(--text);
-  white-space: pre-wrap; word-break: break-all; user-select: text; -webkit-user-select: text;
+.nc-condpop-w {
+  font-size: 10px; color: var(--accent); border: 1px solid var(--accent);
+  border-radius: 999px; padding: 0 7px; line-height: 15px;
 }
-.nc-bd-hinfo { flex: 0 0 auto; color: var(--muted); }
+.nc-condpop-ops { display: flex; flex-wrap: wrap; gap: 4px; }
+.nc-condpop-ops button {
+  border: 1px solid var(--line); background: var(--panel-2); color: var(--text);
+  font: 11px var(--mono); padding: 2px 7px; border-radius: 4px; cursor: pointer;
+}
+.nc-condpop-ops button:hover { border-color: var(--accent); color: var(--accent); }
+.nc-condpop-ops button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.nc-condpop-val {
+  width: 100%; box-sizing: border-box; height: 26px; margin-top: 8px;
+  border: 1px solid var(--line-strong); border-radius: 4px;
+  background: var(--panel); color: var(--text); font: 12px var(--mono); padding: 0 8px;
+}
+.nc-condpop-f { display: flex; align-items: center; gap: 6px; margin-top: 8px; }
 
 /* ============ 桌面应用手感：不可选中 + 自建右键菜单 ============ */
 .nc { user-select: none; -webkit-user-select: none; }
 .nc input, .nc textarea, .nc select,
-.nc .CodeMirror, .nc .nc-bd-sql, .nc .nc-bd-hsql, .nc .nc-msg, .nc .nc-code {
+.nc .CodeMirror, .nc .nc-bd-sql, .nc .nc-msg, .nc .nc-code {
   user-select: text; -webkit-user-select: text;
 }
 
@@ -690,20 +727,21 @@ tr.added td { background: rgba(46,160,67,.06); }
   /* 弹窗铺满 */
   .nc-mask { padding: 8px; }
   .nc-dlg, .nc-dlg.wide { width: 100%; max-height: 96%; padding: 12px; }
-  /* 查询创建工具：表盘横向小卡片，画布和 SQL 区分屏 */
-  .nc-bd-body { flex-direction: column; }
-  .nc-bd-left {
-    flex: 0 0 auto; max-height: 118px; border-right: 0;
+  /* 查询创建工具：手机上上下堆叠，对象窗格横向小卡片，整体可滚动 */
+  .nc-bd-wrap { flex-direction: column; overflow: auto; }
+  .nc-bd-obj {
+    flex: 0 0 auto; max-height: 128px; border-right: 0;
     border-bottom: 1px solid var(--line);
   }
-  .nc-bd-list { display: flex; flex-wrap: wrap; gap: 4px; }
+  .nc-bd-obj-list { display: flex; flex-wrap: wrap; gap: 4px; align-content: flex-start; }
+  .nc-bd-ogroup { display: contents; }
   .nc-bd-trow { width: auto; }
   .nc-bd-tname { max-width: 108px; }
-  .nc-bd-canvas { min-height: 300px; }
-  .nc-bd-bottom { max-height: 46%; min-height: 128px; }
-  .nc-bd-sql { min-height: 72px; }
-  /* 运行按钮放第一行最左，避免被底部标签栏挡住 */
-  .nc-bd-btabs .nc-run { order: -1; margin-left: 0; margin-right: 4px; }
+  .nc-bd-canvas { flex: 0 0 auto; min-height: 260px; }
+  .nc-bd-grid-wrap { flex: 0 0 auto; max-height: 40vh; min-height: 120px; }
+  .nc-bd-sql { max-height: 88px; }
+  .nc-bd-pane-h { flex-wrap: wrap; }
+  .nc-condpop { width: 270px; }
   .nc-info { display: none; }
   .nc-status { font-size: 10.5px; }
 }
@@ -745,10 +783,8 @@ tr.added td { background: rgba(46,160,67,.06); }
   }
 }
 
-/* ---- 查询创建工具：Navicat 经典条件网格（显示/字段/别名/排序/条件/或） ---- */
-.nc-bd-cond { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-.nc-bd-grid-wrap { flex: 1; min-height: 0; overflow: auto; }
-.nc-bd-grid { border-collapse: collapse; width: 100%; min-width: 620px; background: var(--panel); }
+/* ---- 查询创建工具：Navicat 经典准则网格（显示/字段/别名/排序/条件/或） ---- */
+.nc-bd-grid { border-collapse: collapse; width: 100%; min-width: 560px; background: var(--panel); }
 .nc-bd-grid th {
   position: sticky; top: 0; z-index: 1; background: var(--panel-2);
   font-size: 11px; color: var(--muted); font-weight: 700; text-align: left;
@@ -763,27 +799,11 @@ tr.added td { background: rgba(46,160,67,.06); }
 .nc-bd-grid .w-field { font: 11.5px var(--mono); min-width: 150px; }
 .nc-bd-grid tr.pk .w-field { font-weight: 700; }
 .nc-bd-grid .w-alias { width: 104px; }
-.nc-bd-grid .w-sort, .nc-bd-grid .w-or { width: 84px; }
-.nc-bd-grid .w-cond { min-width: 216px; display: flex; gap: 4px; align-items: center; }
-.nc-bd-grid .w-cond select { width: 86px; flex: 0 0 auto; }
+.nc-bd-grid .w-sort { width: 84px; }
+.nc-bd-grid .w-cond, .nc-bd-grid .w-or { width: 138px; min-width: 96px; }
 .nc-bd-grid select, .nc-bd-grid input {
-  height: 24px; border: 1px solid var(--line); border-radius: 4px;
+  height: 24px; width: 100%; box-sizing: border-box;
+  border: 1px solid var(--line); border-radius: 4px;
   background: var(--panel); color: var(--text); font: 11.5px var(--mono); padding: 0 5px;
 }
-.nc-bd-grid input { width: 100%; min-width: 90px; }
-.nc-bd-grid .nc-pk {
-  margin-left: 5px; font: 700 9px var(--mono); color: #bf8700;
-  border: 1px solid #bf8700; border-radius: 3px; padding: 0 3px;
-}
-.nc-bd-sqlbar {
-  flex: 0 0 auto; display: flex; gap: 8px; align-items: flex-start;
-  border-top: 1px solid var(--line); background: var(--panel-2);
-  padding: 5px 10px; max-height: 96px;
-}
-.nc-bd-sqlbar-l { flex: 0 0 auto; font-size: 10.5px; font-weight: 700; color: var(--muted);
-  padding-top: 3px; white-space: nowrap; }
-.nc-bd-sqlpre {
-  margin: 0; flex: 1; min-width: 0; max-height: 78px; overflow: auto;
-  font: 11.5px/1.55 var(--mono); color: var(--text); white-space: pre-wrap; word-break: break-all;
-  user-select: text; -webkit-user-select: text;
-}
+.nc-bd-grid select:focus, .nc-bd-grid input:focus { border-color: var(--accent); outline: none; }
