@@ -50,7 +50,7 @@ const NavicatPanel = {
       dragTable: null,
       dragJoin: null,
       dragPos: null,
-      focusTarget: null,
+      hoverJoin: null,
       ctx: { show: false, x: 0, y: 0, items: [] },
       stemOpen: false,
       mobileTree: false,
@@ -132,6 +132,12 @@ const NavicatPanel = {
       (this.design.columns || []).forEach(c => { if (c.type) set.add(c.type); });
       return [...set];
     },
+    // 查询创建工具左侧的表面板：显示全部表，可搜索，已加的标状态
+    builderLeftTables() {
+      const f = String((this.build && this.build.search) || "").toLowerCase();
+      return (this.schema.tables || []).filter(t => !f || String(t.name).toLowerCase().includes(f));
+    },
+    builderEdited() { return !!(this.build && this.build.edited); },
   },
 
   watch: {
@@ -143,6 +149,9 @@ const NavicatPanel = {
         if (v === "query" && this.$refs.cmQuery) this.$refs.cmQuery.refresh();
       });
     },
+    // 画布一变（勾选字段 / 连线 / 别名），没手动改过的 SQL 自动重新生成
+    "build.tables": { deep: true, handler() { this.syncBuilderSql(); } },
+    "build.joins": { deep: true, handler() { this.syncBuilderSql(); } },
   },
 
   mounted() {
@@ -800,62 +809,41 @@ const NavicatPanel = {
       } catch (e) { this.toast("保存失败"); }
     },
 
-    /* ---------------- 查询创建工具 ---------------- */
+    /* ---------------- 查询创建工具（Navicat 同款标签页） ---------------- */
     blankBuilder() {
       return {
-        tab: "SELECT",
-        tables: [],
-        joins: [],
-        select: [{ expr: "", alias: "" }],
-        from: "",
-        where: [{ col: "", op: "=", val: "" }],
-        group: "",
-        having: "",
-        order: [{ col: "", dir: "ASC" }],
-        limitOffset: "",
-        limitCount: "",
+        tables: [], joins: [],
+        sql: "", edited: false, search: "",
+        tab: "sql", result: null, msg: "", info: "", running: false, history: [],
       };
     },
     openBuilder() {
+      if (!this.build || !this.build.tables) this.build = this.blankBuilder();
+      this.ensureTab({ id: "builder", kind: "builder", title: "查询创建工具", icon: "list" });
+    },
+    clearBuilder() {
       this.build = this.blankBuilder();
-      this.dlg = "builder";
+      this.toast("画布已清空");
     },
-    addBuildRow(which) {
-      if (which === "select") this.build.select.push({ expr: "", alias: "" });
-      else if (which === "where") this.build.where.push({ col: "", op: "=", val: "" });
-      else if (which === "order") this.build.order.push({ col: "", dir: "ASC" });
+    isBuildAdded(name) { return this.build.tables.some(t => t.name === name); },
+    toggleBuildTable(name) {
+      const added = this.build.tables.find(t => t.name === name);
+      if (added) this.removeBuildTable(added);
+      else this.addBuildTableByName(name);
     },
-    removeBuildRow(which, i) {
-      if (this.build[which].length > 1) this.build[which].splice(i, 1);
-    },
-    /* ---- 可视化表连接 ---- */
     addBuildTable(t) {
-      if (this.build.tables.some(x => x.name === t.name)) return;
+      if (this.isBuildAdded(t.name)) return;
       const n = this.build.tables.length;
       this.build.tables.push({
         id: "t" + Date.now() + "_" + n,
         name: t.name, alias: "",
-        x: 16 + (n % 2) * 200, y: 14 + Math.floor(n / 2) * 168,
-        columns: (t.columns || []).map(c => ({ name: c.name, key: c.key || "" })),
+        x: 24 + (n % 3) * 216, y: 18 + Math.floor(n / 3) * 200,
+        columns: (t.columns || []).map(c => ({ name: c.name, key: c.key || "", checked: true })),
       });
     },
     addBuildTableByName(name) {
       const t = this.schema.tables.find(x => x.name === name);
       if (t) this.addBuildTable(t);
-    },
-    // 左边字段点一下插到当前正在填的输入框里；没有焦点就加到 SELECT
-    insertField(ref) {
-      const f = this.focusTarget;
-      if (f && typeof f === "object" && "expr" in f) {
-        f.expr = f.expr ? f.expr + ", " + ref : ref;
-        return;
-      }
-      if (f && typeof f === "object" && "col" in f) {
-        f.col = ref;
-        return;
-      }
-      this.build.select.push({ expr: ref, alias: "" });
-      this.build.tab = "SELECT";
     },
     removeBuildTable(t) {
       this.build.tables = this.build.tables.filter(x => x !== t);
@@ -865,13 +853,13 @@ const NavicatPanel = {
     colRef(t, col) { return (t.alias || t.name) + "." + col; },
     colAnchor(t, colName, side) {
       const i = Math.max(0, t.columns.findIndex(c => c.name === colName));
-      return { x: side === "r" ? t.x + 158 : t.x, y: t.y + 27 + i * 20 + 10 };
+      return { x: side === "r" ? t.x + 180 : t.x, y: t.y + 30 + i * 22 + 11 };
     },
     // 连线两端各自挑离对方更近的那条边，避免线绕到表框后面
     joinEnds(j) {
       const a = this.tableById(j.a.tid), b = this.tableById(j.b.tid);
       if (!a || !b) return null;
-      const right = (b.x + 79) > (a.x + 79);
+      const right = (b.x + 90) > (a.x + 90);
       return {
         p1: this.colAnchor(a, j.a.col, right ? "r" : "l"),
         p2: this.colAnchor(b, j.b.col, right ? "l" : "r"),
@@ -880,7 +868,7 @@ const NavicatPanel = {
     joinPath(j) {
       const e = this.joinEnds(j);
       if (!e) return "";
-      const dx = Math.max(28, Math.abs(e.p2.x - e.p1.x) / 2);
+      const dx = Math.max(30, Math.abs(e.p2.x - e.p1.x) / 2);
       return `M ${e.p1.x} ${e.p1.y} C ${e.p1.x + dx} ${e.p1.y}, ` +
              `${e.p2.x - dx} ${e.p2.y}, ${e.p2.x} ${e.p2.y}`;
     },
@@ -889,71 +877,112 @@ const NavicatPanel = {
       if (!e) return { x: 0, y: 0 };
       return { x: Math.round((e.p1.x + e.p2.x) / 2), y: Math.round((e.p1.y + e.p2.y) / 2) };
     },
+    joinLabel(j) {
+      const a = this.tableById(j.a.tid), b = this.tableById(j.b.tid);
+      if (!a || !b) return "";
+      const name = { INNER: "内连接", LEFT: "左连接", RIGHT: "右连接" }[j.type] || "内连接";
+      return `${name} ${this.colRef(a, j.a.col)} = ${this.colRef(b, j.b.col)}`;
+    },
     cycleJoin(j) {
       const order = ["INNER", "LEFT", "RIGHT"];
       j.type = order[(order.indexOf(j.type) + 1) % order.length];
     },
     removeJoin(j) { this.build.joins = this.build.joins.filter(x => x !== j); },
+
+    /* ---- 画布拖拽：鼠标和触屏统一走 Pointer Events ----
+       按下时把指针捕获到画布，后续 move/up 都在画布上收到；
+       用 elementFromPoint 找悬停字段（触屏的 pointerup 原本只会落在
+       起点元素上）。没拖动就抬起时进入“选中”状态，再点一下目标
+       字段也能连线（手机上点-点连线更好用）。 */
     startMoveTable(ev, t) {
-      const r = this.$refs.canvas.getBoundingClientRect();
+      const cv = this.$refs.canvas;
+      if (!cv) return;
+      const r = cv.getBoundingClientRect();
       this.dragTable = { t, dx: ev.clientX - r.left - t.x, dy: ev.clientY - r.top - t.y };
+      try { cv.setPointerCapture(ev.pointerId); } catch (e) {}
       ev.preventDefault();
     },
     startJoin(ev, t, c) {
-      const r = this.$refs.canvas.getBoundingClientRect();
-      this.dragJoin = { t, c };
-      this.dragPos = { x: ev.clientX - r.left, y: ev.clientY - r.top };
+      // 已经“选中”了一个源字段：这次点的是目标字段（点-点连线）
+      if (this.dragJoin && !this.dragJoin.dragging) {
+        const from = this.dragJoin;
+        if (from.t.id !== t.id) this.makeJoin(from, { t, c });
+        this.dragJoin = null; this.dragPos = null; this.hoverJoin = null;
+        return;
+      }
+      const cv = this.$refs.canvas;
+      if (!cv) return;
+      this.dragJoin = { t, c, dragging: false, sx: ev.clientX, sy: ev.clientY };
+      try { cv.setPointerCapture(ev.pointerId); } catch (e) {}
       ev.preventDefault();
     },
+    makeJoin(from, to) {
+      if (!from || !to || from.t.id === to.t.id) return;
+      const dup = this.build.joins.some(j =>
+        (j.a.tid === from.t.id && j.a.col === from.c.name &&
+         j.b.tid === to.t.id && j.b.col === to.c.name) ||
+        (j.b.tid === from.t.id && j.b.col === from.c.name &&
+         j.a.tid === to.t.id && j.a.col === to.c.name));
+      if (dup) return;
+      this.build.joins.push({
+        id: "j" + Date.now(), type: "INNER",
+        a: { tid: from.t.id, col: from.c.name },
+        b: { tid: to.t.id, col: to.c.name },
+      });
+    },
+    joinTargetAt(ev) {
+      const el = document.elementFromPoint(ev.clientX, ev.clientY);
+      const col = el && el.closest ? el.closest(".nc-tcol") : null;
+      if (!col) return null;
+      const t = this.tableById(col.dataset.tid);
+      const c = t && t.columns.find(x => x.name === col.dataset.col);
+      return (t && c) ? { t, c } : null;
+    },
     onCanvasMove(ev) {
-      const r = this.$refs.canvas.getBoundingClientRect();
+      const cv = this.$refs.canvas;
+      if (!cv) return;
+      const r = cv.getBoundingClientRect();
       const x = ev.clientX - r.left, y = ev.clientY - r.top;
       if (this.dragTable) {
         this.dragTable.t.x = Math.max(0, Math.round(x - this.dragTable.dx));
         this.dragTable.t.y = Math.max(0, Math.round(y - this.dragTable.dy));
       } else if (this.dragJoin) {
-        this.dragPos = { x, y };
+        if (!this.dragJoin.dragging &&
+            Math.hypot(ev.clientX - this.dragJoin.sx, ev.clientY - this.dragJoin.sy) > 6)
+          this.dragJoin.dragging = true;
+        if (this.dragJoin.dragging) {
+          this.dragPos = { x, y };
+          const hit = this.joinTargetAt(ev);
+          this.hoverJoin = (hit && hit.t.id !== this.dragJoin.t.id) ? hit : null;
+        }
       }
     },
-    endJoin(ev, t, c) {
+    onCanvasUp(ev) {
+      if (this.dragTable) { this.dragTable = null; return; }
+      if (!this.dragJoin) return;
       const from = this.dragJoin;
-      this.dragJoin = null;
-      this.dragPos = null;
-      if (!from || from.t.id === t.id) return;
-      const dup = this.build.joins.some(j =>
-        (j.a.tid === from.t.id && j.a.col === from.c.name &&
-         j.b.tid === t.id && j.b.col === c.name) ||
-        (j.b.tid === from.t.id && j.b.col === from.c.name &&
-         j.a.tid === t.id && j.a.col === c.name));
-      if (dup) return;
-      this.build.joins.push({
-        id: "j" + Date.now(),
-        type: "INNER",
-        a: { tid: from.t.id, col: from.c.name },
-        b: { tid: t.id, col: c.name },
-      });
-    },
-    onCanvasUp() { this.dragTable = null; this.dragJoin = null; this.dragPos = null; },
-    dragLinePath() {
-      if (!this.dragJoin || !this.dragPos) return "";
-      const t = this.dragJoin.t;
-      const side = this.dragPos.x >= t.x + 79 ? "r" : "l";
-      const p1 = this.colAnchor(t, this.dragJoin.c.name, side);
-      return `M ${p1.x} ${p1.y} L ${this.dragPos.x} ${this.dragPos.y}`;
-    },
-    availableColumns() {
-      const out = [];
-      for (const t of this.build.tables) {
-        for (const c of t.columns) out.push(this.colRef(t, c.name));
+      if (from.dragging) {
+        const hit = ev ? this.joinTargetAt(ev) : null;
+        if (hit && hit.t.id !== from.t.id) this.makeJoin(from, hit);
+        this.dragJoin = null; this.dragPos = null; this.hoverJoin = null;
       }
-      return out;
+      // 没拖动就抬起：保持“选中”，等下一次点目标字段
+    },
+    dragLinePath() {
+      if (!this.dragJoin) return "";
+      const t = this.dragJoin.t;
+      const p = this.dragPos || this.colAnchor(t, this.dragJoin.c.name, "r");
+      const side = p.x >= t.x + 90 ? "r" : "l";
+      const a = this.colAnchor(t, this.dragJoin.c.name, side);
+      return `M ${a.x} ${a.y} L ${p.x} ${p.y}`;
     },
 
-    builderSql() {
+    /* ---- SQL 生成 / 运行 ---- */
+    genSql() {
       const b = this.build;
-      const sel = b.select.map(s => (s.expr || "").trim()
-        ? (s.alias ? `${s.expr.trim()} AS ${this.ident(s.alias.trim())}` : s.expr.trim()) : "")
-        .filter(Boolean);
+      const sel = [];
+      for (const t of b.tables)
+        for (const c of t.columns) if (c.checked) sel.push(this.colRef(t, c.name));
       let sql = "SELECT " + (sel.length ? sel.join(", ") : "*");
       if (b.tables.length) {
         const first = b.tables[0];
@@ -961,34 +990,58 @@ const NavicatPanel = {
         for (const j of b.joins) {
           const ta = this.tableById(j.a.tid), tb = this.tableById(j.b.tid);
           if (!ta || !tb) continue;
-          from += `\n${j.type} JOIN ${this.ident(tb.name)}` +
+          from += "\n" + j.type + " JOIN " + this.ident(tb.name) +
                   (tb.alias ? " " + tb.alias : "") +
-                  ` ON ${this.colRef(ta, j.a.col)} = ${this.colRef(tb, j.b.col)}`;
+                  " ON " + this.colRef(ta, j.a.col) + " = " + this.colRef(tb, j.b.col);
         }
         sql += "\nFROM " + from;
-      } else if (b.from.trim()) {
-        sql += "\nFROM " + b.from.trim();
       }
-      const wh = b.where.filter(w => w.col.trim() && w.val !== "")
-        .map(w => `${w.col.trim()} ${w.op} ${/^\d+(\.\d+)?$/.test(String(w.val).trim()) ? w.val : this.lit(w.val)}`);
-      if (wh.length) sql += "\nWHERE " + wh.join(" AND ");
-      if (b.group.trim()) sql += "\nGROUP BY " + b.group.trim();
-      if (b.having.trim()) sql += "\nHAVING " + b.having.trim();
-      const ord = b.order.filter(o => o.col.trim()).map(o => `${o.col.trim()} ${o.dir}`);
-      if (ord.length) sql += "\nORDER BY " + ord.join(", ");
-      if (String(b.limitCount).trim() !== "") {
-        sql += "\nLIMIT " + (String(b.limitOffset).trim() !== ""
-          ? `${b.limitOffset}, ${b.limitCount}` : b.limitCount);
-      }
-      return sql;
+      return sql + ";";
     },
-    applyBuilder() {
-      this.sqlText = this.builderSql();
-      this.dlg = "";
+    syncBuilderSql() {
+      const b = this.build;
+      if (b && !b.edited) b.sql = this.genSql();
+    },
+    regenBuilder() {
+      this.build.edited = false;
+      this.syncBuilderSql();
+      this.toast("已按画布重新生成 SQL");
+    },
+    async runBuilder(explain) {
+      const b = this.build;
+      const sql = String(b.sql || "").trim().replace(/;+\s*$/, "");
+      if (!sql) { this.toast("先在下面生成或编写 SQL"); return; }
+      b.running = true; b.result = null; b.msg = ""; b.info = "";
+      const finalSql = explain ? "EXPLAIN " + sql : sql;
+      try {
+        const d = await this.api("/api/sql", { method: "POST", body: { sql: finalSql + ";", db: this.db } });
+        const results = d.results || [];
+        const err = results.find(r => r.type === "error");
+        const rowsRes = [...results].reverse().find(r => r.type === "rows");
+        const ok = results.filter(r => r.type === "ok");
+        b.result = rowsRes || null;
+        b.info = rowsRes ? `${rowsRes.rowCount} 行 · ${rowsRes.ms || 0} ms`
+          : ok.length ? `执行成功${ok.reduce((a, r) => a + (r.affected || 0), 0) ? " · 影响 " +
+              ok.reduce((a, r) => a + (r.affected || 0), 0) + " 行" : ""}` : "";
+        b.msg = err ? err.msg : results.map(r =>
+          r.type === "rows" ? `返回 ${r.rowCount} 行（${r.ms || 0} ms）`
+          : r.type === "ok" ? `执行成功，影响 ${r.affected || 0} 行` : r.msg).join("\n");
+        b.history.push({ at: new Date().toTimeString().slice(0, 8), sql: finalSql,
+                         ok: !err, info: err ? err.msg : b.info });
+        if (b.history.length > 30) b.history.shift();
+        b.tab = err ? "history" : "result";
+        if (!err) { this.$emit("query", finalSql); this.$emit("changed"); }
+      } catch (e) {
+        b.msg = e.message; b.tab = "history";
+        b.history.push({ at: new Date().toTimeString().slice(0, 8), sql: finalSql, ok: false, info: e.message });
+      } finally { b.running = false; }
+    },
+    copyBuilderSql() { this.copyText(this.build.sql || ""); },
+    sendBuilderToQuery() {
+      this.sqlText = String(this.build.sql || "").trim();
       this.newQueryTab();
-      this.$nextTick(() => {
-        if (this.$refs.cmQuery) this.$refs.cmQuery.setValue(this.sqlText);
-      });
+      this.$nextTick(() => { if (this.$refs.cmQuery) this.$refs.cmQuery.setValue(this.sqlText); });
+      this.toast("已把 SQL 放到查询页");
     },
 
     /* ---------------- 菜单 / 工具栏 ---------------- */
@@ -1195,8 +1248,9 @@ const NavicatPanel = {
       }
       if (kind === "canvas") {
         return [
-          { label: "添加表", icon: "plus", action: () => this.toast("从左边「＋ 添加表」里选一张表") },
-          { label: "清空画布", icon: "eraser", danger: true, action: () => { this.build.tables = []; this.build.joins = []; } },
+          { label: "添加表", icon: "plus", action: () => this.toast("从左边「表」面板点一张表加进画布") },
+          { label: "重新生成 SQL", icon: "refresh", action: () => this.regenBuilder() },
+          { label: "清空画布", icon: "eraser", danger: true, action: () => this.clearBuilder() },
         ];
       }
       if (kind === "tab") {

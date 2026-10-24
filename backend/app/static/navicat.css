@@ -415,27 +415,6 @@ tr.added td { background: rgba(46,160,67,.06); }
 .nc-field input { height: 28px; border: 1px solid var(--line-strong); border-radius: 4px;
   background: var(--panel); color: var(--text); font: inherit; padding: 0 8px; }
 .nc-check { display: flex; align-items: center; gap: 7px; margin: 8px 0; color: var(--text); font-size: 12px; }
-.nc-build-tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--line); overflow-x: auto; flex: 0 0 auto; }
-.nc-build-tabs button {
-  border: 0; border-bottom: 2px solid transparent; background: transparent;
-  color: var(--muted); font: inherit; font-size: 12px; padding: 6px 12px; cursor: pointer;
-  white-space: nowrap;
-}
-.nc-build-tabs button.on { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
-.nc-build-body { min-height: 120px; }
-.nc-build-row { display: flex; gap: 6px; margin-bottom: 6px; align-items: center; }
-.nc-build-row input, .nc-build-row select, .nc-wide-input {
-  height: 28px; border: 1px solid var(--line-strong); border-radius: 4px;
-  background: var(--panel); color: var(--text); font: inherit; padding: 0 8px;
-}
-.nc-build-row input { flex: 1; min-width: 0; }
-.nc-build-row select { width: 90px; flex: 0 0 auto; }
-.nc-wide-input { width: 100%; box-sizing: border-box; }
-.nc-preview {
-  margin: 10px 0 0; padding: 9px 12px; max-height: 104px; overflow: auto;
-  background: var(--btn-bg); border: 1px solid var(--line); border-radius: 6px;
-  font: 12px/1.6 var(--mono); color: var(--text); white-space: pre-wrap;
-}
 .nc-run-msg { margin-top: 10px; font-size: 12px; color: var(--muted); }
 
 /* ---- 做题页容器 ---- */
@@ -486,67 +465,77 @@ tr.added td { background: rgba(46,160,67,.06); }
   .nc-design-top { gap: 8px; }
 }
 
-/* ---- 查询创建工具：上方图形化 + 下方表字段/页签 ---- */
-.nc-dlg.builder { width: min(940px, 96vw); }
-.nc-build-bottom {
-  display: flex; gap: 10px; height: 214px; min-height: 180px; margin-top: 10px;
+/* ---- 查询创建工具（标签页版，Navicat 同款：表面板 + 点阵画布 + SQL 预览） ---- */
+.nc-bd-bar {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 8px 12px; border-bottom: 1px solid var(--line); background: var(--panel-2);
 }
-.nc-bt-list {
-  flex: 0 0 178px; overflow: auto; padding-right: 6px;
-  border-right: 1px solid var(--line);
+.nc-bd-addsel {
+  height: 28px; border: 1px solid var(--line-strong); border-radius: 5px;
+  background: var(--panel); color: var(--text); font: inherit; font-size: 12.5px; padding: 0 8px;
 }
-.nc-bt-h {
-  display: flex; align-items: center; justify-content: space-between; gap: 6px;
-  font-size: 11.5px; font-weight: 600; color: var(--muted); padding: 0 0 6px;
-  white-space: nowrap;
+.nc-bd-bar .nc-btn.dirty { border-color: var(--err); color: var(--err); }
+.nc-bd-tip { font-size: 11.5px; color: var(--muted); }
+.nc-bd-body { flex: 1 1 auto; min-height: 0; display: flex; }
+.nc-bd-left {
+  flex: 0 0 196px; display: flex; flex-direction: column; min-height: 0;
+  border-right: 1px solid var(--line); background: var(--panel);
 }
-.nc-bt-add {
-  height: 22px; max-width: 96px; border: 1px solid var(--line-strong); border-radius: 4px;
-  background: var(--panel); color: var(--text); font: 11px var(--font, inherit); padding: 0 4px;
+.nc-bd-left-h {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 6px;
+  padding: 9px 10px 6px; font-size: 11.5px; font-weight: 700;
+  color: var(--muted); letter-spacing: .4px;
 }
-.nc-bt-group { margin-bottom: 8px; }
-.nc-bt-gname {
-  display: flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 600;
-  color: var(--accent); padding: 3px 2px;
+.nc-bd-search { margin: 0 8px 6px; flex: 0 0 auto; }
+.nc-bd-list { flex: 1; min-height: 0; overflow: auto; padding: 0 6px 8px; }
+.nc-bd-trow {
+  display: flex; align-items: center; gap: 7px; width: 100%;
+  border: 0; background: transparent; color: var(--text); font: inherit; font-size: 12.5px;
+  padding: 5px 8px; border-radius: 6px; cursor: pointer; text-align: left;
 }
-.nc-bt-gname span:first-of-type { flex: 1; min-width: 0; overflow: hidden;
-  text-overflow: ellipsis; white-space: nowrap; }
-.nc-bt-alias { font: 11px var(--mono); color: var(--muted); }
-.nc-bt-col {
-  display: flex; align-items: center; gap: 5px; width: 100%;
-  border: 0; background: transparent; color: var(--text);
-  font: 11.5px var(--font, inherit); padding: 3px 6px; border-radius: 4px;
-  cursor: pointer; text-align: left;
+.nc-bd-trow .e-icon { color: var(--accent); flex: 0 0 auto; }
+.nc-bd-trow:hover { background: var(--accent-weak); }
+.nc-bd-tname {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-family: var(--mono);
 }
-.nc-bt-col:hover { background: var(--accent-weak); color: var(--accent); }
-.nc-bt-col.pk { font-weight: 600; }
-.nc-build-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-.nc-build-body { flex: 1; min-height: 0; overflow: auto; padding-top: 10px; }
+.nc-bd-tadd {
+  flex: 0 0 auto; font-size: 10.5px; color: var(--muted);
+  border: 1px solid var(--line); border-radius: 999px; padding: 0 7px; line-height: 16px;
+}
+.nc-bd-trow.added { background: var(--accent-weak); }
+.nc-bd-trow.added .nc-bd-tname { color: var(--accent); font-weight: 600; }
+.nc-bd-trow.added .nc-bd-tadd { color: var(--accent); border-color: var(--accent); }
+
+.nc-bd-canvas { flex: 1 1 auto; min-width: 0; height: auto; min-height: 220px; }
 .nc-canvas {
-  position: relative; flex: 1; min-width: 0; height: 196px; overflow: auto;
-  background:
-    linear-gradient(var(--line) 1px, transparent 1px) 0 0 / 20px 20px,
-    linear-gradient(90deg, var(--line) 1px, transparent 1px) 0 0 / 20px 20px,
-    var(--panel-2);
-  border: 1px solid var(--line); border-radius: 6px;
-  touch-action: none;
+  position: relative; overflow: auto; background-color: var(--panel-2);
+  background-image: radial-gradient(circle, #c4ccd4 1px, transparent 1px);
+  background-size: 16px 16px; background-position: 8px 8px;
+  border: 0;
 }
-.nc-lines { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+[data-theme="dark"] .nc-canvas { background-image: radial-gradient(circle, #2d333b 1px, transparent 1px); }
+.nc-lines { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 1; }
 .nc-line { fill: none; stroke: var(--accent); stroke-width: 2; }
-.nc-line.temp { stroke-dasharray: 5 4; opacity: .8; }
+.nc-line.temp { stroke-dasharray: 6 4; opacity: .85; }
 .nc-tbox {
-  position: absolute; width: 158px; background: var(--panel);
-  border: 1px solid var(--line-strong); border-radius: 6px;
-  box-shadow: 0 2px 8px rgba(0,0,0,.10); overflow: hidden; user-select: none;
+  position: absolute; width: 180px; background: var(--panel);
+  border: 1px solid var(--line-strong); border-radius: 8px;
+  box-shadow: 0 3px 12px rgba(1, 8, 24, .14); overflow: hidden; user-select: none; z-index: 2;
 }
 .nc-tbox-h {
-  display: flex; align-items: center; gap: 5px; padding: 4px 6px;
-  background: var(--accent-weak); color: var(--accent);
-  font-size: 11.5px; font-weight: 600; cursor: move;
+  display: flex; align-items: center; gap: 6px; height: 30px; padding: 0 8px;
+  background: linear-gradient(180deg, #eaf3ff, var(--accent-weak)); color: var(--accent);
+  font-size: 12px; font-weight: 700; cursor: move; border-bottom: 1px solid var(--line);
+  touch-action: none;
 }
-.nc-tbox-n { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+[data-theme="dark"] .nc-tbox-h { background: linear-gradient(180deg, #1c2a3f, var(--accent-weak)); }
+.nc-tbox-n {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-family: var(--mono);
+}
 .nc-tbox-alias {
-  width: 46px; height: 18px; border: 1px solid var(--line-strong); border-radius: 3px;
+  width: 44px; height: 19px; border: 1px solid var(--line-strong); border-radius: 4px;
   background: var(--panel); color: var(--text); font: 11px var(--mono); padding: 0 4px;
 }
 .nc-tbox-x {
@@ -554,39 +543,84 @@ tr.added td { background: rgba(46,160,67,.06); }
   font-size: 14px; line-height: 1; padding: 0 2px;
 }
 .nc-tbox-x:hover { color: var(--err); }
-.nc-tbox-cols { max-height: 132px; overflow: auto; }
+.nc-tbox-cols { max-height: 176px; overflow: auto; }
 .nc-tcol {
-  display: flex; align-items: center; gap: 5px; height: 20px; padding: 0 7px;
-  font-size: 11.5px; color: var(--text); cursor: crosshair; white-space: nowrap;
+  display: flex; align-items: center; gap: 5px; height: 22px; padding: 0 8px;
+  font: 11.5px var(--mono); color: var(--text); cursor: crosshair; white-space: nowrap;
+  touch-action: none;
 }
-.nc-tcol:hover { background: var(--accent-weak); color: var(--accent); }
-.nc-tcol-k {
-  flex: 0 0 16px; font: 600 9px/14px var(--mono); color: #bf8700;
-}
-.nc-tcol.pk { font-weight: 600; }
+.nc-tcol:hover { background: var(--accent-weak); }
+.nc-tcol.pk .nc-tcol-n { font-weight: 700; }
+.nc-tcol.src { outline: 1px dashed var(--accent); background: var(--accent-weak); }
+.nc-tcol.drop { background: var(--accent-weak); box-shadow: inset 0 0 0 2px var(--accent); }
+.nc-tcol-ck { flex: 0 0 auto; accent-color: var(--accent); margin: 0; cursor: pointer; }
+.nc-tcol-k { flex: 0 0 18px; font: 700 9px/14px var(--mono); color: #bf8700; }
+.nc-tcol-n { overflow: hidden; text-overflow: ellipsis; }
 .nc-join-tag {
   position: absolute; transform: translate(-50%, -50%); display: flex; align-items: center;
-  gap: 2px; background: var(--panel); border: 1px solid var(--accent);
-  border-radius: 999px; padding: 1px 3px 1px 6px; z-index: 3;
+  gap: 2px; background: var(--panel); border: 1px solid var(--accent); border-radius: 999px;
+  padding: 2px 4px 2px 8px; z-index: 3; box-shadow: 0 2px 8px rgba(1, 8, 24, .15); max-width: 70vw;
 }
 .nc-join-type {
   border: 0; background: transparent; color: var(--accent); cursor: pointer;
-  font: 600 10px var(--mono); padding: 0;
+  font: 11px var(--mono); padding: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .nc-join-x {
   border: 0; background: transparent; color: var(--muted); cursor: pointer;
-  font-size: 12px; line-height: 1; padding: 0 2px;
+  font-size: 12px; line-height: 1; padding: 0 3px;
 }
 .nc-join-x:hover { color: var(--err); }
 .nc-canvas-empty {
   position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
-  color: var(--muted); font-size: 12px; pointer-events: none; text-align: center; padding: 20px;
+  color: var(--muted); font-size: 12.5px; pointer-events: none; text-align: center;
+  padding: 24px; line-height: 2;
 }
+
+/* 底部：SQL 预览（可编辑）/ 结果 / 历史 */
+.nc-bd-bottom {
+  flex: 0 0 auto; display: flex; flex-direction: column; min-height: 150px; max-height: 42%;
+  border-top: 1px solid var(--line); background: var(--panel);
+  position: relative; z-index: 5;   /* 画布是定位元素，别让它盖住底部按钮 */
+}
+.nc-bd-btabs {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 2px; flex-wrap: wrap;
+  padding: 4px 8px; border-bottom: 1px solid var(--line); background: var(--panel-2);
+}
+.nc-bd-btabs > button {
+  border: 0; background: transparent; color: var(--muted); font: inherit;
+  font-size: 12px; padding: 5px 12px; cursor: pointer; border-radius: 5px 5px 0 0;
+  display: inline-flex; align-items: center; gap: 5px;
+}
+.nc-bd-btabs > button.on { color: var(--accent); font-weight: 600; box-shadow: inset 0 -2px 0 var(--accent); }
+.nc-bd-btabs .nc-run { margin-left: 8px; }
+.nc-bd-btabs .nc-btn { margin-left: 4px; }
+.nc-bd-sql {
+  flex: 1; min-height: 84px; max-height: 26vh; resize: vertical; border: 0; outline: none;
+  padding: 10px 12px; background: var(--panel); color: var(--text);
+  font: 12.5px/1.7 var(--mono); user-select: text; -webkit-user-select: text;
+}
+.nc-bd-bottom > .nc-grid-wrap { flex: 1; min-height: 0; }
+.nc-bd-hist {
+  flex: 1; min-height: 0; overflow: auto; padding: 8px 10px; display: flex;
+  flex-direction: column; gap: 6px;
+}
+.nc-bd-hitem {
+  display: flex; align-items: baseline; gap: 8px; font-size: 11.5px;
+  padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-2);
+}
+.nc-bd-hitem.err { border-color: var(--err); }
+.nc-bd-hitem.err .nc-bd-hinfo { color: var(--err); }
+.nc-bd-hat { flex: 0 0 auto; font-family: var(--mono); color: var(--muted); }
+.nc-bd-hsql {
+  margin: 0; flex: 1; min-width: 0; font: 11.5px/1.5 var(--mono); color: var(--text);
+  white-space: pre-wrap; word-break: break-all; user-select: text; -webkit-user-select: text;
+}
+.nc-bd-hinfo { flex: 0 0 auto; color: var(--muted); }
 
 /* ============ 桌面应用手感：不可选中 + 自建右键菜单 ============ */
 .nc { user-select: none; -webkit-user-select: none; }
 .nc input, .nc textarea, .nc select,
-.nc .CodeMirror, .nc .nc-preview, .nc .nc-msg, .nc .nc-code {
+.nc .CodeMirror, .nc .nc-bd-sql, .nc .nc-bd-hsql, .nc .nc-msg, .nc .nc-code {
   user-select: text; -webkit-user-select: text;
 }
 
@@ -632,7 +666,7 @@ tr.added td { background: rgba(46,160,67,.06); }
   .nc-tool-mobile { display: flex; }
   .nc-side-h { height: 36px; }
   .nc-side .nc-node { padding: 7px 8px; font-size: 13px; }
-  .nc-side .nc-bt-col, .nc-side .nc-count { font-size: 11px; }
+  .nc-side .nc-count { font-size: 11px; }
   .nc-side-f { padding: 8px; }
   .nc-search input { height: 30px; }
   /* 对象列表：手机上只留名称和行数 */
@@ -655,18 +689,21 @@ tr.added td { background: rgba(46,160,67,.06); }
   .nc-form input, .nc-form select { min-width: 120px; }
   /* 弹窗铺满 */
   .nc-mask { padding: 8px; }
-  .nc-dlg, .nc-dlg.wide, .nc-dlg.builder { width: 100%; max-height: 96%; padding: 12px; }
-  .nc-canvas { height: 168px; }
-  .nc-build-bottom { flex-direction: column; height: auto; min-height: 0; gap: 8px; }
-  .nc-bt-list {
-    flex: 0 0 auto; max-height: 132px; border-right: 0;
-    border-bottom: 1px solid var(--line); padding: 0 0 6px;
+  .nc-dlg, .nc-dlg.wide { width: 100%; max-height: 96%; padding: 12px; }
+  /* 查询创建工具：表盘横向小卡片，画布和 SQL 区分屏 */
+  .nc-bd-body { flex-direction: column; }
+  .nc-bd-left {
+    flex: 0 0 auto; max-height: 118px; border-right: 0;
+    border-bottom: 1px solid var(--line);
   }
-  .nc-build-main { min-height: 190px; }
-  .nc-build-body { padding-top: 8px; }
-  .nc-build-row { flex-wrap: wrap; }
-  .nc-build-row input { min-width: 120px; }
-  .nc-preview { max-height: 84px; font-size: 11px; }
+  .nc-bd-list { display: flex; flex-wrap: wrap; gap: 4px; }
+  .nc-bd-trow { width: auto; }
+  .nc-bd-tname { max-width: 108px; }
+  .nc-bd-canvas { min-height: 300px; }
+  .nc-bd-bottom { max-height: 46%; min-height: 128px; }
+  .nc-bd-sql { min-height: 72px; }
+  /* 运行按钮放第一行最左，避免被底部标签栏挡住 */
+  .nc-bd-btabs .nc-run { order: -1; margin-left: 0; margin-right: 4px; }
   .nc-info { display: none; }
   .nc-status { font-size: 10.5px; }
 }

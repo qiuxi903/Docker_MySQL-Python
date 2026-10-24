@@ -28,7 +28,7 @@ html[data-theme="light"] body { background: #f6f8fa; }
 <link rel="stylesheet" href="/vendor/codemirror/addon/hint/show-hint.css">
 <link rel="stylesheet" href="/fonts/misans/misans.css">
 <link rel="stylesheet" href="/style.css?v=159">
-  <link rel="stylesheet" href="/navicat.css?v=10">
+  <link rel="stylesheet" href="/navicat.css?v=14">
 </head>
 <body>
 <div id="app" v-cloak>
@@ -2547,6 +2547,139 @@ INSERT INTO course VALUES (1,'数学');</pre>
         </div>
       </div>
 
+      <!-- 查询创建工具（Navicat 同款：左边表面板 + 点阵画布 + 底部 SQL 预览） -->
+      <div v-else-if="active === 'builder'" class="nc-page nc-builder">
+        <div class="nc-bd-bar">
+          <select class="nc-bd-addsel" title="添加表到画布"
+                  @change="addBuildTableByName($event.target.value); $event.target.value = ''">
+            <option value="">＋ 添加表…</option>
+            <option v-for="t in schema.tables" :key="t.name" :value="t.name"
+                    :disabled="isBuildAdded(t.name)">{{ t.name }}</option>
+          </select>
+          <button class="nc-btn" @click="clearBuilder"><e-icon name="eraser" :size="13"></e-icon> 清空画布</button>
+          <button class="nc-btn" :class="{ dirty: builderEdited }" @click="regenBuilder"
+                  :title="builderEdited ? 'SQL 被手动改过，点这里按画布重新生成' : '按画布重新生成 SQL'">
+            <e-icon name="refresh" :size="13"></e-icon> 重新生成 SQL</button>
+          <span class="nc-vsep"></span>
+          <button class="nc-btn" @click="sendBuilderToQuery"><e-icon name="share" :size="13"></e-icon> 发送到查询页</button>
+          <span class="spacer"></span>
+          <span class="nc-bd-tip m-hide">勾选字段出现在 SELECT · 把字段名拖到另一张表的字段上建立连接 · 点连接标签切换类型</span>
+        </div>
+
+        <div class="nc-bd-body">
+          <!-- 左：表（全部表，可搜索，点击添加/移出画布） -->
+          <aside class="nc-bd-left">
+            <div class="nc-bd-left-h">
+              <span>表</span>
+              <span class="nc-count">{{ schema.tables.length }}</span>
+            </div>
+            <div class="nc-search nc-bd-search">
+              <e-icon name="search" :size="12"></e-icon>
+              <input v-model.trim="build.search" placeholder="搜索表…">
+            </div>
+            <div class="nc-bd-list">
+              <button v-for="t in builderLeftTables" :key="t.name" class="nc-bd-trow"
+                      :class="{ added: isBuildAdded(t.name) }"
+                      :title="isBuildAdded(t.name) ? '点击从画布移除 ' + t.name : '点击添加 ' + t.name + ' 到画布'"
+                      @click="toggleBuildTable(t.name)">
+                <e-icon name="table" :size="13"></e-icon>
+                <span class="nc-bd-tname">{{ t.name }}</span>
+                <span class="nc-bd-tadd">{{ isBuildAdded(t.name) ? '已添加' : '添加' }}</span>
+              </button>
+              <div v-if="!builderLeftTables.length" class="nc-empty">没有匹配的表</div>
+            </div>
+          </aside>
+
+          <!-- 右：点阵画布（Navicat 查询创建工具同款） -->
+          <div class="nc-canvas nc-bd-canvas" ref="canvas"
+               @pointermove="onCanvasMove" @pointerup="onCanvasUp"
+               @pointercancel="onCanvasUp"
+               @contextmenu.prevent.stop="openCtx($event, 'canvas')">
+            <svg class="nc-lines">
+              <path v-for="j in build.joins" :key="j.id" :d="joinPath(j)" class="nc-line"></path>
+              <path v-if="dragJoin" :d="dragLinePath()" class="nc-line temp"></path>
+            </svg>
+            <div v-for="j in build.joins" :key="'m' + j.id" class="nc-join-tag"
+                 :style="{ left: joinMid(j).x + 'px', top: joinMid(j).y + 'px' }">
+              <button class="nc-join-type" title="点击切换 内连接 / 左连接 / 右连接"
+                      @click="cycleJoin(j)">{{ joinLabel(j) }}</button>
+              <button class="nc-join-x" title="删除连接" @click="removeJoin(j)">×</button>
+            </div>
+            <div v-for="t in build.tables" :key="t.id" class="nc-tbox"
+                 :style="{ left: t.x + 'px', top: t.y + 'px' }">
+              <div class="nc-tbox-h" title="按住拖动表" @pointerdown="startMoveTable($event, t)">
+                <e-icon name="table" :size="12"></e-icon>
+                <span class="nc-tbox-n">{{ t.name }}</span>
+                <input class="nc-tbox-alias" v-model.trim="t.alias" placeholder="别名"
+                       title="表别名（可选）" @pointerdown.stop>
+                <button class="nc-tbox-x" title="移除这张表"
+                        @click.stop="removeBuildTable(t)">×</button>
+              </div>
+              <div class="nc-tbox-cols">
+                <div v-for="c in t.columns" :key="c.name" class="nc-tcol"
+                     :class="{ pk: c.key === 'PRI', drop: hoverJoin && hoverJoin.t.id === t.id && hoverJoin.c.name === c.name,
+                               src: dragJoin && !dragJoin.dragging && dragJoin.t.id === t.id && dragJoin.c.name === c.name }"
+                     :data-tid="t.id" :data-col="c.name"
+                     :title="'按住拖到另一张表的字段上建立连接（手机：点一下再点目标字段）'"
+                     @pointerdown.stop="startJoin($event, t, c)">
+                  <input type="checkbox" class="nc-tcol-ck" v-model="c.checked"
+                         title="勾选后进入 SELECT 列表" @pointerdown.stop @click.stop>
+                  <span class="nc-tcol-k">{{ c.key === 'PRI' ? 'PK' : '' }}</span>
+                  <span class="nc-tcol-n">{{ c.name }}</span>
+                </div>
+              </div>
+            </div>
+            <div v-if="!build.tables.length" class="nc-canvas-empty">
+              从左边「表」面板点一张表加进来；<br>把一个字段拖到另一张表的字段上就能建立连接
+            </div>
+          </div>
+        </div>
+
+        <!-- 底部：SQL 预览（可编辑）/ 结果 / 历史 -->
+        <div class="nc-bd-bottom">
+          <div class="nc-bd-btabs">
+            <button :class="{ on: build.tab === 'sql' }" @click="build.tab = 'sql'">SQL 预览</button>
+            <button :class="{ on: build.tab === 'result' }" @click="build.tab = 'result'">结果</button>
+            <button :class="{ on: build.tab === 'history' }" @click="build.tab = 'history'">
+              历史<span v-if="build.history.length" class="nc-count">{{ build.history.length }}</span>
+            </button>
+            <span class="nc-muted m-hide" v-if="build.info">{{ build.info }}</span>
+            <span class="spacer"></span>
+            <button class="nc-run" :disabled="build.running" @click="runBuilder(false)">
+              <e-icon name="play" :size="12"></e-icon> {{ build.running ? '运行中…' : '运行' }}
+            </button>
+            <button class="nc-btn" @click="runBuilder(true)">解释</button>
+            <button class="nc-btn" @click="copyBuilderSql">复制</button>
+          </div>
+          <textarea v-show="build.tab === 'sql'" class="nc-bd-sql" v-model="build.sql"
+                    spellcheck="false" @input="build.edited = true"
+                    placeholder="SQL 会按画布自动生成；也可以直接在这里改，改过就不再自动更新（点「重新生成 SQL」恢复）"></textarea>
+          <div v-show="build.tab === 'result'" class="nc-grid-wrap">
+            <table v-if="build.result && build.result.columns.length" class="nc-grid">
+              <thead>
+                <tr><th class="rowid">#</th><th v-for="c in build.result.columns" :key="c">{{ c }}</th></tr>
+              </thead>
+              <tbody>
+                <tr v-for="(r, i) in build.result.rows" :key="i">
+                  <td class="rowid">{{ i + 1 }}</td>
+                  <td v-for="(v, j) in r" :key="j" :class="{ null: v === null }">{{ v === null ? 'NULL' : v }}</td>
+                </tr>
+              </tbody>
+            </table>
+            <div v-else class="nc-empty">{{ build.msg || '点「运行」执行上面的 SQL' }}</div>
+          </div>
+          <div v-show="build.tab === 'history'" class="nc-bd-hist">
+            <div v-for="(h, i) in build.history.slice().reverse()" :key="i"
+                 class="nc-bd-hitem" :class="{ err: !h.ok }">
+              <span class="nc-bd-hat">{{ h.at }}</span>
+              <pre class="nc-bd-hsql">{{ h.sql }}</pre>
+              <span class="nc-bd-hinfo">{{ h.ok ? h.info : h.info }}</span>
+            </div>
+            <div v-if="!build.history.length" class="nc-empty">还没有运行记录；运行过的 SQL 会记在这里</div>
+          </div>
+        </div>
+      </div>
+
       <!-- 表 / 视图数据 -->
       <div v-else-if="currentTab && (currentTab.kind === 'table' || currentTab.kind === 'view')"
            class="nc-page nc-tabledata">
@@ -2838,149 +2971,6 @@ INSERT INTO course VALUES (1,'数学');</pre>
   </div>
 
   <!-- 查询创建工具 -->
-  <div class="nc-mask" v-if="dlg === 'builder'" @click.self="dlg = ''">
-    <div class="nc-dlg builder">
-      <div class="nc-dlg-h">
-        查询创建工具
-        <button class="nc-dlg-x" @click="dlg = ''">×</button>
-      </div>
-
-      <!-- 上方：图形化表连接（始终显示，只有这里能拖） -->
-      <div class="nc-canvas" ref="canvas"
-           @pointermove="onCanvasMove" @pointerup="onCanvasUp" @pointerleave="onCanvasUp"
-           @contextmenu.prevent.stop="openCtx($event, 'canvas')">
-        <svg class="nc-lines">
-          <path v-for="j in build.joins" :key="j.id" :d="joinPath(j)" class="nc-line"></path>
-          <path v-if="dragJoin" :d="dragLinePath()" class="nc-line temp"></path>
-        </svg>
-        <div v-for="j in build.joins" :key="'m' + j.id" class="nc-join-tag"
-             :style="{ left: joinMid(j).x + 'px', top: joinMid(j).y + 'px' }">
-          <button class="nc-join-type" title="点击切换 INNER / LEFT / RIGHT"
-                  @click="cycleJoin(j)">{{ j.type }}</button>
-          <button class="nc-join-x" title="删除连接" @click="removeJoin(j)">×</button>
-        </div>
-        <div v-for="t in build.tables" :key="t.id" class="nc-tbox"
-             :style="{ left: t.x + 'px', top: t.y + 'px' }">
-          <div class="nc-tbox-h" @pointerdown="startMoveTable($event, t)">
-            <e-icon name="table" :size="12"></e-icon>
-            <span class="nc-tbox-n">{{ t.name }}</span>
-            <input class="nc-tbox-alias" v-model.trim="t.alias" placeholder="别名"
-                   @pointerdown.stop>
-            <button class="nc-tbox-x" title="移除这张表"
-                    @click.stop="removeBuildTable(t)">×</button>
-          </div>
-          <div class="nc-tbox-cols">
-            <div v-for="c in t.columns" :key="c.name" class="nc-tcol"
-                 :class="{ pk: c.key === 'PRI' }"
-                 @pointerdown.stop="startJoin($event, t, c)"
-                 @pointerup.stop="endJoin($event, t, c)">
-              <span class="nc-tcol-k">{{ c.key === 'PRI' ? 'PK' : '' }}</span>{{ c.name }}
-            </div>
-          </div>
-        </div>
-        <div v-if="!build.tables.length" class="nc-canvas-empty">
-          从下面左边点表名加进来，再从一个字段拖到另一个字段就连上了
-        </div>
-      </div>
-
-      <!-- 下方：左边表与字段，右边各页签（自己输入 / 选择） -->
-      <div class="nc-build-bottom">
-        <div class="nc-bt-list">
-          <div class="nc-bt-h">
-            表 / 字段
-            <select class="nc-bt-add" @change="addBuildTableByName($event.target.value); $event.target.value = ''">
-              <option value="">＋ 添加表</option>
-              <option v-for="t in schema.tables" :key="t.name" :value="t.name"
-                      :disabled="build.tables.some(x => x.name === t.name)">{{ t.name }}</option>
-            </select>
-          </div>
-          <div v-for="t in build.tables" :key="t.id" class="nc-bt-group">
-            <div class="nc-bt-gname">
-              <e-icon name="table" :size="12"></e-icon>
-              <span>{{ t.name }}</span>
-              <span v-if="t.alias" class="nc-bt-alias">{{ t.alias }}</span>
-              <button class="nc-mini danger" title="移除这张表"
-                      @click="removeBuildTable(t)">×</button>
-            </div>
-            <button v-for="c in t.columns" :key="c.name" class="nc-bt-col"
-                    :class="{ pk: c.key === 'PRI' }"
-                    :title="'插入 ' + colRef(t, c.name)"
-                    @click="insertField(colRef(t, c.name))">
-              <span class="nc-tcol-k">{{ c.key === 'PRI' ? 'PK' : '' }}</span>{{ c.name }}
-            </button>
-          </div>
-          <div v-if="!build.tables.length" class="nc-muted">还没有加入表</div>
-        </div>
-
-        <div class="nc-build-main">
-          <div class="nc-build-tabs">
-            <button v-for="t in ['SELECT','FROM','WHERE','GROUP BY','HAVING','ORDER BY','LIMIT']"
-                    :key="t" :class="{ on: build.tab === t }" @click="build.tab = t">{{ t }}</button>
-          </div>
-          <div class="nc-build-body">
-            <template v-if="build.tab === 'SELECT'">
-              <div v-for="(s, i) in build.select" :key="i" class="nc-build-row">
-                <input v-model="s.expr" list="nc-col-list" placeholder="字段或表达式，如 e.name"
-                       @focus="focusTarget = s">
-                <input v-model="s.alias" placeholder="别名（可选）" @focus="focusTarget = s">
-                <button class="nc-mini danger" @click="removeBuildRow('select', i)">×</button>
-              </div>
-              <button class="nc-add-col" @click="addBuildRow('select')">＋ 添加字段</button>
-            </template>
-            <template v-else-if="build.tab === 'FROM'">
-              <p class="nc-hint">表已经在上面加好了，这里一般不用填。要手写就填在下面。</p>
-              <input class="nc-wide-input" v-model="build.from"
-                     placeholder="例如 t_employee e（上面加了表时以图形化连接为准）">
-            </template>
-            <template v-else-if="build.tab === 'WHERE'">
-              <div v-for="(w, i) in build.where" :key="i" class="nc-build-row">
-                <input v-model="w.col" list="nc-col-list" placeholder="字段" @focus="focusTarget = w">
-                <select v-model="w.op">
-                  <option>=</option><option>&gt;</option><option>&lt;</option>
-                  <option>&gt;=</option><option>&lt;=</option><option>&lt;&gt;</option>
-                  <option>LIKE</option><option>IN</option>
-                </select>
-                <input v-model="w.val" placeholder="值" @focus="focusTarget = w">
-                <button class="nc-mini danger" @click="removeBuildRow('where', i)">×</button>
-              </div>
-              <button class="nc-add-col" @click="addBuildRow('where')">＋ 添加条件</button>
-            </template>
-            <template v-else-if="build.tab === 'GROUP BY'">
-              <input class="nc-wide-input" v-model="build.group" list="nc-col-list"
-                     placeholder="字段，逗号分隔">
-            </template>
-            <template v-else-if="build.tab === 'HAVING'">
-              <input class="nc-wide-input" v-model="build.having" placeholder="如 COUNT(*) > 2">
-            </template>
-            <template v-else-if="build.tab === 'ORDER BY'">
-              <div v-for="(o, i) in build.order" :key="i" class="nc-build-row">
-                <input v-model="o.col" list="nc-col-list" placeholder="字段" @focus="focusTarget = o">
-                <select v-model="o.dir"><option>ASC</option><option>DESC</option></select>
-                <button class="nc-mini danger" @click="removeBuildRow('order', i)">×</button>
-              </div>
-              <button class="nc-add-col" @click="addBuildRow('order')">＋ 添加排序</button>
-            </template>
-            <template v-else>
-              <div class="nc-build-row">
-                <input v-model="build.limitOffset" placeholder="偏移（可空）">
-                <input v-model="build.limitCount" placeholder="条数">
-              </div>
-            </template>
-          </div>
-        </div>
-      </div>
-
-      <datalist id="nc-col-list">
-        <option v-for="c in availableColumns()" :key="c" :value="c"></option>
-      </datalist>
-      <pre class="nc-preview">{{ builderSql() }}</pre>
-      <div class="nc-dlg-f">
-        <button class="nc-btn" @click="dlg = ''">取消</button>
-        <button class="nc-btn primary" @click="applyBuilder">生成 SQL 并放到查询页</button>
-      </div>
-    </div>
-  </div>
-
   <div class="nc-mask" v-if="dlg === 'runRoutine'" @click.self="dlg = ''">
     <div class="nc-dlg">
       <div class="nc-dlg-h">
@@ -3034,7 +3024,7 @@ INSERT INTO course VALUES (1,'数学');</pre>
 </div>
 </script>
 
-<script src="/navicat.js?v=1"></script>
+<script src="/navicat.js?v=2"></script>
 <script src="/app.js?v=165"></script>
 </body>
 </html>
