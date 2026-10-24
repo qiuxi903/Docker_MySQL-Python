@@ -783,8 +783,8 @@ tr.added td { background: rgba(46,160,67,.06); }
   }
 }
 
-/* ---- 查询创建工具：Navicat 经典准则网格（显示/字段/别名/排序/条件/或） ---- */
-.nc-bd-grid { border-collapse: collapse; width: 100%; min-width: 560px; background: var(--panel); }
+/* ---- 查询创建工具：Navicat 同款准则网格（显示/表/字段/别名/汇总/排序/条件/或） ---- */
+.nc-bd-grid { border-collapse: collapse; width: 100%; min-width: 760px; background: var(--panel); }
 .nc-bd-grid th {
   position: sticky; top: 0; z-index: 1; background: var(--panel-2);
   font-size: 11px; color: var(--muted); font-weight: 700; text-align: left;
@@ -795,15 +795,26 @@ tr.added td { background: rgba(46,160,67,.06); }
   vertical-align: middle; white-space: nowrap;
 }
 .nc-bd-grid tr:hover td { background: var(--row-hover); }
-.nc-bd-grid .w-show { width: 46px; text-align: center; }
-.nc-bd-grid .w-field { font: 11.5px var(--mono); min-width: 150px; }
-.nc-bd-grid tr.pk .w-field { font-weight: 700; }
-.nc-bd-grid .w-alias { width: 104px; }
-.nc-bd-grid .w-sort { width: 84px; }
-.nc-bd-grid .w-cond, .nc-bd-grid .w-or { width: 138px; min-width: 96px; }
+.nc-bd-grid .w-show { width: 42px; text-align: center; }
+.nc-bd-grid .w-table { width: 104px; }
+.nc-bd-grid .w-field { min-width: 128px; }
+.nc-bd-grid .w-field select { width: 104px; }
+.nc-bd-grid .w-alias { width: 92px; }
+.nc-bd-grid .w-agg { width: 106px; }
+.nc-bd-grid .w-sort { width: 82px; }
+.nc-bd-grid .w-cond, .nc-bd-grid .w-or { width: 126px; min-width: 92px; }
+.nc-bd-grid .w-del { width: 24px; }
 .nc-bd-grid select, .nc-bd-grid input {
   height: 24px; width: 100%; box-sizing: border-box;
   border: 1px solid var(--line); border-radius: 4px;
   background: var(--panel); color: var(--text); font: 11.5px var(--mono); padding: 0 5px;
 }
 .nc-bd-grid select:focus, .nc-bd-grid input:focus { border-color: var(--accent); outline: none; }
+/* 新行（选表 + 字段） */
+.nc-bd-newrow td { height: 27px; }
+.nc-bd-newrow select { color: var(--muted); }
+.nc-bd-rowdel {
+  border: 0; background: transparent; color: var(--muted); cursor: pointer;
+  font-size: 13px; line-height: 1; padding: 0 3px;
+}
+.nc-bd-rowdel:hover { color: var(--err); }

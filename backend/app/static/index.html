@@ -28,7 +28,7 @@ html[data-theme="light"] body { background: #f6f8fa; }
 <link rel="stylesheet" href="/vendor/codemirror/addon/hint/show-hint.css">
 <link rel="stylesheet" href="/fonts/misans/misans.css">
 <link rel="stylesheet" href="/style.css?v=159">
-  <link rel="stylesheet" href="/navicat.css?v=16">
+  <link rel="stylesheet" href="/navicat.css?v=17">
 </head>
 <body>
 <div id="app" v-cloak>
@@ -2597,10 +2597,11 @@ INSERT INTO course VALUES (1,'数学');</pre>
                        :class="{ pk: c.key === 'PRI', drop: hoverJoin && hoverJoin.t.id === t.id && hoverJoin.c.name === c.name,
                                  src: dragJoin && !dragJoin.dragging && dragJoin.t.id === t.id && dragJoin.c.name === c.name }"
                        :data-tid="t.id" :data-col="c.name"
-                       title="按住拖到另一张表的字段上建立连接（手机：点一下再点目标字段）"
+                       title="按住拖到另一张表的字段上建立连接（手机：点一下再点目标字段）；勾选进入 SELECT"
                        @pointerdown.stop="startJoin($event, t, c)">
-                    <input type="checkbox" class="nc-tcol-ck" v-model="c.checked"
-                           title="勾选后进入 SELECT 列表" @pointerdown.stop @click.stop>
+                    <input type="checkbox" class="nc-tcol-ck" :checked="isFieldOn(t, c.name)"
+                           title="勾选后进入 SELECT 列表" @pointerdown.stop @click.stop
+                           @change="toggleBuildField(t, c.name)">
                     <span v-if="c.key === 'PRI'" class="nc-key" title="主键">
                       <svg viewBox="0 0 24 24"><path d="M12.65 10C11.83 7.67 9.82 6 7.5 6 4.46 6 2 8.46 2 11.5S4.46 17 7.5 17c2.32 0 4.33-1.67 5.15-4H17v4h4v-4h2v-4H12.65zM7.5 15A3.5 3.5 0 1 1 11 11.5 3.5 3.5 0 0 1 7.5 15z"/></svg>
                     </span>
@@ -2616,50 +2617,97 @@ INSERT INTO course VALUES (1,'数学');</pre>
 
             <div class="nc-bd-pane-h">
               <span class="nc-bd-pane-t">准则</span>
-              <span class="nc-muted m-hide">「显示」勾选进入 SELECT · 点「条件 / 或」格子选操作符和值 —— 全程不用写 SQL</span>
+              <span class="nc-muted m-hide">在图表勾字段、或在这里选「表 + 字段」加行 · 「汇总」选 SUM/COUNT 等聚合 —— 全程不用写 SQL</span>
             </div>
             <div class="nc-bd-grid-wrap">
               <table v-if="build.tables.length" class="nc-bd-grid">
                 <thead>
                   <tr>
                     <th class="w-show">显示</th>
+                    <th class="w-table">表</th>
                     <th class="w-field">字段</th>
                     <th class="w-alias">别名</th>
+                    <th class="w-agg">汇总</th>
                     <th class="w-sort">排序</th>
                     <th class="w-cond">条件</th>
                     <th class="w-or">或</th>
+                    <th class="w-del"></th>
                   </tr>
                 </thead>
                 <tbody>
-                  <template v-for="t in build.tables" :key="t.id">
-                    <tr v-for="c in t.columns" :key="t.id + '.' + c.name"
-                        :class="{ pk: c.key === 'PRI' }">
-                      <td class="w-show"><input type="checkbox" class="nc-tcol-ck" v-model="c.checked"></td>
-                      <td class="w-field" :title="(t.alias || t.name) + '.' + c.name">
-                        {{ (t.alias || t.name) + '.' + c.name }}
-                        <span v-if="c.key === 'PRI'" class="nc-key" title="主键">
-                          <svg viewBox="0 0 24 24"><path d="M12.65 10C11.83 7.67 9.82 6 7.5 6 4.46 6 2 8.46 2 11.5S4.46 17 7.5 17c2.32 0 4.33-1.67 5.15-4H17v4h4v-4h2v-4H12.65zM7.5 15A3.5 3.5 0 1 1 11 11.5 3.5 3.5 0 0 1 7.5 15z"/></svg>
-                        </span>
-                      </td>
-                      <td class="w-alias"><input v-model.trim="c.alias" placeholder="—"></td>
-                      <td class="w-sort">
-                        <select v-model="c.sort">
-                          <option value="">无</option><option value="ASC">升序</option><option value="DESC">降序</option>
-                        </select>
-                      </td>
-                      <td class="w-cond">
-                        <button type="button" class="nc-condcell" :class="{ set: condText(c, '') }"
-                                @click.stop="openCond($event, t, c, '')">{{ condText(c, '') || '无条件' }}</button>
-                      </td>
-                      <td class="w-or">
-                        <button type="button" class="nc-condcell" :class="{ set: condText(c, 'or') }"
-                                @click.stop="openCond($event, t, c, 'or')">{{ condText(c, 'or') || '—' }}</button>
-                      </td>
-                    </tr>
-                  </template>
+                  <tr v-for="r in build.rows" :key="r.tid + '.' + r.col"
+                      :data-row="(tableById(r.tid) ? (tableById(r.tid).alias || tableById(r.tid).name) : '') + '.' + r.col">
+                    <td class="w-show"><input type="checkbox" class="nc-tcol-ck" v-model="r.show"
+                                              title="勾选进入 SELECT"></td>
+                    <td class="w-table">
+                      <select :value="r.tid" title="换表"
+                              @change="rowSetTable(r, $event.target.value)">
+                        <option v-for="t in build.tables" :key="t.id" :value="t.id">{{ t.alias || t.name }}</option>
+                      </select>
+                    </td>
+                    <td class="w-field">
+                      <select :value="r.col" title="换字段"
+                              @change="rowSetCol(r, $event.target.value)">
+                        <option value="*">*</option>
+                        <option v-for="c in (tableById(r.tid) || { columns: [] }).columns"
+                                :key="c.name" :value="c.name">{{ c.name }}</option>
+                      </select>
+                      <span v-if="keyOf(tableById(r.tid), r.col) === 'PRI'" class="nc-key" title="主键">
+                        <svg viewBox="0 0 24 24"><path d="M12.65 10C11.83 7.67 9.82 6 7.5 6 4.46 6 2 8.46 2 11.5S4.46 17 7.5 17c2.32 0 4.33-1.67 5.15-4H17v4h4v-4h2v-4H12.65zM7.5 15A3.5 3.5 0 1 1 11 11.5 3.5 3.5 0 0 1 7.5 15z"/></svg>
+                      </span>
+                    </td>
+                    <td class="w-alias"><input v-model.trim="r.alias" placeholder="—" title="输出列别名"></td>
+                    <td class="w-agg">
+                      <select v-model="r.agg" title="聚合函数（选了以后：聚合进 SELECT，没聚合的显示字段进 GROUP BY，聚合行的条件进 HAVING）">
+                        <option value="">无</option>
+                        <option value="SUM">合计 SUM</option>
+                        <option value="COUNT">计数 COUNT</option>
+                        <option value="AVG">平均 AVG</option>
+                        <option value="MAX">最大 MAX</option>
+                        <option value="MIN">最小 MIN</option>
+                      </select>
+                    </td>
+                    <td class="w-sort">
+                      <select v-model="r.sort">
+                        <option value="">无</option><option value="ASC">升序</option><option value="DESC">降序</option>
+                      </select>
+                    </td>
+                    <td class="w-cond">
+                      <button type="button" class="nc-condcell" :class="{ set: condText(r, '') }"
+                              @click.stop="openCond($event, r, '')">{{ condText(r, '') || '无条件' }}</button>
+                    </td>
+                    <td class="w-or">
+                      <button type="button" class="nc-condcell" :class="{ set: condText(r, 'or') }"
+                              @click.stop="openCond($event, r, 'or')">{{ condText(r, 'or') || '—' }}</button>
+                    </td>
+                    <td class="w-del">
+                      <button class="nc-bd-rowdel" title="删除这行" @click="removeBuildRow(r)">×</button>
+                    </td>
+                  </tr>
+                  <!-- 新行：先选表、再选字段，选完落成一行（Navicat 同款） -->
+                  <tr class="nc-bd-newrow">
+                    <td class="w-show"></td>
+                    <td class="w-table">
+                      <select v-model="newRow.tid" title="选择表">
+                        <option value="">表…</option>
+                        <option v-for="t in build.tables" :key="t.id" :value="t.id">{{ t.alias || t.name }}</option>
+                      </select>
+                    </td>
+                    <td class="w-field" :colspan="newRow.tid ? 1 : 7">
+                      <select v-if="newRow.tid" v-model="newRow.col" title="选择字段（* 配合「汇总·计数」就是 COUNT(*)）"
+                              @change="commitNewRow($event.target.value)">
+                        <option value="">选择字段…</option>
+                        <option value="*">*（全部行数 COUNT(*)）</option>
+                        <option v-for="c in (tableById(newRow.tid) || { columns: [] }).columns"
+                                :key="c.name" :value="c.name">{{ c.name }}</option>
+                      </select>
+                      <span v-else class="nc-muted">在这里选「表 + 字段」加一行，或在图表里勾字段</span>
+                    </td>
+                    <td v-if="newRow.tid" colspan="6" class="nc-muted">选好字段自动成行</td>
+                  </tr>
                 </tbody>
               </table>
-              <div v-else class="nc-empty">先在左边「对象」窗格点一张表，准则会自动列出它的全部字段</div>
+              <div v-else class="nc-empty">先在左边「对象」窗格点一张表（拖入后是 SELECT *），再勾字段或在这里选</div>
             </div>
 
             <div class="nc-bd-pane-h">
@@ -3070,7 +3118,7 @@ INSERT INTO course VALUES (1,'数学');</pre>
 </div>
 </script>
 
-<script src="/navicat.js?v=4"></script>
+<script src="/navicat.js?v=5"></script>
 <script src="/app.js?v=165"></script>
 </body>
 </html>

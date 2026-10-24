@@ -47,6 +47,7 @@ const NavicatPanel = {
       // 弹窗
       dlg: "",
       build: this.blankBuilder(),
+      newRow: { tid: "", col: "" },
       builderMode: false,
       condPop: null,
       buildDragName: "",
@@ -165,9 +166,10 @@ const NavicatPanel = {
         if (v === "query" && this.$refs.cmQuery) this.$refs.cmQuery.refresh();
       });
     },
-    // 画布一变（勾选字段 / 连线 / 别名 / 条件），生成的 SQL 自动刷新
+    // 图表 / 准则一变（勾字段、选汇总、连线、条件），生成的 SQL 自动刷新
     "build.tables": { deep: true, handler() { this.syncBuilderSql(); } },
     "build.joins": { deep: true, handler() { this.syncBuilderSql(); } },
+    "build.rows": { deep: true, handler() { this.syncBuilderSql(); } },
     builderMode(v) {
       if (v) this.syncBuilderSql();
     },
@@ -834,7 +836,8 @@ const NavicatPanel = {
 
     /* ---------------- 查询创建工具（Navicat 同款：内嵌在查询页，工具栏按钮切换） ---------------- */
     blankBuilder() {
-      return { tables: [], joins: [], sql: "", search: "" };
+      // rows：准则网格的行，逐行选 表.字段（拖入表不会自动选字段，和 Navicat 一样）
+      return { tables: [], joins: [], rows: [], sql: "", search: "" };
     },
     openBuilder() {
       if (!this.build || !this.build.tables) this.build = this.blankBuilder();
@@ -859,8 +862,7 @@ const NavicatPanel = {
         id: "t" + Date.now() + "_" + n,
         name: t.name, alias: "",
         x: 24 + (n % 3) * 216, y: 18 + Math.floor(n / 3) * 200,
-        columns: (t.columns || []).map(c => ({ name: c.name, key: c.key || "", checked: true,
-                                          alias: "", sort: "", op: "", val: "", op2: "", val2: "" })),
+        columns: (t.columns || []).map(c => ({ name: c.name, key: c.key || "" })),
       };
       this.build.tables.push(nt);
       this.autoJoinFks(nt);   // Navicat 同款：按外键自动连线
@@ -905,10 +907,55 @@ const NavicatPanel = {
     removeBuildTable(t) {
       this.build.tables = this.build.tables.filter(x => x !== t);
       this.build.joins = this.build.joins.filter(j => j.a.tid !== t.id && j.b.tid !== t.id);
+      this.build.rows = this.build.rows.filter(r => r.tid !== t.id);
     },
     tableById(id) { return this.build.tables.find(t => t.id === id) || null; },
+    // Navicat 生成的 SQL 用 emp.SAL 这种裸引用，不加反引号
     colRef(t, col) {
-      return this.ident(t.alias || t.name) + "." + this.ident(col);
+      const base = t.alias || t.name;
+      return col === "*" ? base + ".*" : base + "." + col;
+    },
+
+    /* ---- 准则网格的行：拖入表不选任何字段，行是逐个挑出来的 ---- */
+    rowByField(tid, col) {
+      return this.build.rows.find(r => r.tid === tid && r.col === col) || null;
+    },
+    keyOf(t, col) {
+      const c = t && (t.columns || []).find(x => x.name === col);
+      return (c && c.key) || "";
+    },
+    // 图表卡片上勾字段 = 添加/移除一行（显示默认勾上）
+    toggleBuildField(t, col) {
+      const row = this.rowByField(t.id, col);
+      if (row) this.build.rows = this.build.rows.filter(r => r !== row);
+      else this.addBuildRow(t.id, col);
+    },
+    isFieldOn(t, col) { return !!this.rowByField(t.id, col); },
+    addBuildRow(tid, col) {
+      if (!col || this.rowByField(tid, col)) return;
+      this.build.rows.push({ tid, col, show: true, alias: "", agg: "",
+                             sort: "", op: "", val: "", op2: "", val2: "" });
+    },
+    rowSetTable(r, tid) {
+      if (!tid || tid === r.tid) return;
+      r.tid = tid;
+      r.col = "";
+      r.alias = ""; r.agg = ""; r.sort = ""; r.op = ""; r.val = ""; r.op2 = ""; r.val2 = "";
+    },
+    rowSetCol(r, col) {
+      if (!col) return;
+      const dup = this.rowByField(r.tid, col);
+      if (dup && dup !== r) { this.toast("这个字段已经在准则里了"); return; }
+      r.col = col;
+    },
+    removeBuildRow(r) { this.build.rows = this.build.rows.filter(x => x !== r); },
+    // 网格最后一行「新行」：先选表再选字段，选完落成一行
+    commitNewRow(col) {
+      const nw = this.newRow;
+      if (!nw.tid || !col) return;
+      if (this.rowByField(nw.tid, col)) { this.toast("这个字段已经在准则里了"); nw.col = ""; return; }
+      this.addBuildRow(nw.tid, col);
+      nw.tid = ""; nw.col = "";
     },
     colAnchor(t, colName, side) {
       const i = Math.max(0, t.columns.findIndex(c => c.name === colName));
@@ -1036,7 +1083,9 @@ const NavicatPanel = {
       return `M ${a.x} ${a.y} L ${p.x} ${p.y}`;
     },
 
-    /* ---- SQL 生成（格式化多行；「条件」和「或」先各自 OR，字段之间 AND） ---- */
+    /* ---- SQL 生成（Navicat 同款：裸引用；汇总行进 SELECT 聚合，未聚合的显示行进
+       GROUP BY，聚合行的条件进 HAVING、普通行的条件进 WHERE；「条件」「或」先各自
+       OR，不同字段之间 AND） ---- */
     condSql(ref, op, val) {
       if (!op) return "";
       if (/^IS/i.test(op)) return ref + " " + op.toUpperCase();
@@ -1053,40 +1102,85 @@ const NavicatPanel = {
       const raw = /^-?\d+(\.\d+)?$/.test(v) || /^[\('"]/.test(v);
       return ref + " " + op + " " + (raw ? v : this.lit(v));
     },
+    // 行的表达式：有汇总就包一层聚合函数（* 与聚合组合成 COUNT(*)）
+    rowExpr(t, r) {
+      if (!r.agg) return this.colRef(t, r.col);
+      if (r.col === "*") return r.agg + "(*)";
+      return r.agg + "(" + this.colRef(t, r.col) + ")";
+    },
+    rowConds(r) {
+      const t = this.tableById(r.tid);
+      const ref = this.rowExpr(t, r);
+      const c1 = this.condSql(ref, r.op, r.val);
+      const c2 = this.condSql(ref, r.op2, r.val2);
+      if (c1 && c2) return "(" + c1 + " OR " + c2 + ")";
+      return c1 || c2;
+    },
     genSql() {
       const b = this.build;
       if (!b.tables.length) return "";
+      // SELECT：勾了「显示」的行（没有任何行就 SELECT *）
       const sel = [];
-      for (const t of b.tables)
-        for (const c of t.columns)
-          if (c.checked)
-            sel.push("  " + this.colRef(t, c.name) + (c.alias ? " AS " + this.ident(c.alias) : ""));
-      let sql = "SELECT" + (sel.length ? "\n" + sel.join(",\n") : " *");
+      for (const r of b.rows) {
+        if (!r.show || !r.col || !this.tableById(r.tid)) continue;
+        const t = this.tableById(r.tid);
+        sel.push(this.rowExpr(t, r) + (r.alias ? " AS " + r.alias : ""));
+      }
+      let sql = "SELECT " + (sel.length ? sel.join(", ") : "*");
+      // FROM + JOIN：从第一张表沿连线把表一张张挂进来（连线方向可能反着），
+      // 没连到的表用逗号并列；成环的多余连线不重复 JOIN
       const first = b.tables[0];
-      let from = this.ident(first.name) + (first.alias ? " " + this.ident(first.alias) : "");
-      for (const j of b.joins) {
-        const ta = this.tableById(j.a.tid), tb = this.tableById(j.b.tid);
-        if (!ta || !tb) continue;
-        from += "\n  " + j.type + " JOIN " + this.ident(tb.name) +
-                (tb.alias ? " " + this.ident(tb.alias) : "") +
-                " ON " + this.colRef(ta, j.a.col) + " = " + this.colRef(tb, j.b.col);
+      const inFrom = new Set([first.id]);
+      let from = first.name + (first.alias ? " " + first.alias : "");
+      const pending = b.joins.slice();
+      let progressed = true;
+      while (pending.length && progressed) {
+        progressed = false;
+        for (let i = 0; i < pending.length; i++) {
+          const j = pending[i];
+          const ta = this.tableById(j.a.tid), tb = this.tableById(j.b.tid);
+          if (!ta || !tb) { pending.splice(i, 1); i--; continue; }
+          let side = null;
+          if (inFrom.has(j.a.tid) && !inFrom.has(j.b.tid)) side = tb;
+          else if (inFrom.has(j.b.tid) && !inFrom.has(j.a.tid)) side = ta;
+          if (!side) continue;
+          from += " " + j.type + " JOIN " + side.name + (side.alias ? " " + side.alias : "") +
+                  " ON " + this.colRef(ta, j.a.col) + " = " + this.colRef(tb, j.b.col);
+          inFrom.add(side.id);
+          pending.splice(i, 1);
+          progressed = true;
+          break;
+        }
+      }
+      for (const t of b.tables) {
+        if (inFrom.has(t.id)) continue;
+        from += ", " + t.name + (t.alias ? " " + t.alias : "");
+        inFrom.add(t.id);
       }
       sql += "\nFROM " + from;
-      const parts = [];
-      for (const t of b.tables)
-        for (const c of t.columns) {
-          const ref = this.colRef(t, c.name);
-          const c1 = this.condSql(ref, c.op, c.val);
-          const c2 = this.condSql(ref, c.op2, c.val2);
-          if (c1 && c2) parts.push("(" + c1 + " OR " + c2 + ")");
-          else if (c1 || c2) parts.push(c1 || c2);
-        }
-      if (parts.length) sql += "\nWHERE\n  " + parts.join("\n  AND ");
+      // WHERE：普通行的条件；HAVING：汇总行的条件
+      const wheres = [], havings = [];
+      for (const r of b.rows) {
+        if (!r.col || !this.tableById(r.tid)) continue;
+        (r.agg ? havings : wheres).push(this.rowConds(r));
+      }
+      if (wheres.filter(Boolean).length) sql += "\nWHERE " + wheres.filter(Boolean).join(" AND ");
+      // GROUP BY：没汇总但显示了的字段（有汇总时才需要）
+      const hasAgg = b.rows.some(r => r.agg && r.col && this.tableById(r.tid));
+      const groups = [];
+      for (const r of b.rows) {
+        if (r.agg || !r.show || !r.col || !this.tableById(r.tid)) continue;
+        groups.push(this.colRef(this.tableById(r.tid), r.col));
+      }
+      if (hasAgg && groups.length) sql += "\nGROUP BY " + groups.join(", ");
+      if (havings.filter(Boolean).length) sql += "\nHAVING " + havings.filter(Boolean).join(" AND ");
+      // ORDER BY
       const ords = [];
-      for (const t of b.tables)
-        for (const c of t.columns)
-          if (c.sort) ords.push(this.colRef(t, c.name) + " " + c.sort);
-      if (ords.length) sql += "\nORDER BY\n  " + ords.join(",\n  ");
+      for (const r of b.rows) {
+        if (!r.sort || !r.col || !this.tableById(r.tid)) continue;
+        ords.push(this.rowExpr(this.tableById(r.tid), r) + " " + r.sort);
+      }
+      if (ords.length) sql += "\nORDER BY " + ords.join(", ");
       return sql + ";";
     },
     syncBuilderSql() {
@@ -1099,21 +1193,22 @@ const NavicatPanel = {
 
     /* ---- 准则网格「条件 / 或」组合框弹层（不用自己打 SQL） ---- */
     condNeedVal(op) { return !!op && !/^IS/i.test(op); },
-    condText(c, which) {
-      const op = which === "or" ? c.op2 : c.op;
+    condText(r, which) {
+      const op = which === "or" ? r.op2 : r.op;
       if (!op) return "";
       if (/^IS/i.test(op)) return op;
-      const v = String((which === "or" ? c.val2 : c.val) || "").trim();
+      const v = String((which === "or" ? r.val2 : r.val) || "").trim();
       return op + (v ? " " + v : "");
     },
-    openCond(ev, t, c, which) {
-      const r = this.$el.getBoundingClientRect();
+    openCond(ev, r, which) {
+      const t = this.tableById(r.tid);
+      const rect = this.$el.getBoundingClientRect();
       this.condPop = {
-        tid: t.id, col: c.name, which,
-        label: (t.alias || t.name) + "." + c.name,
-        op: which === "or" ? (c.op2 || "") : (c.op || ""),
-        val: which === "or" ? (c.val2 || "") : (c.val || ""),
-        x: Math.round(ev.clientX - r.left), y: Math.round(ev.clientY - r.top),
+        tid: r.tid, col: r.col, which,
+        label: (t ? (t.alias || t.name) : "") + "." + r.col,
+        op: which === "or" ? (r.op2 || "") : (r.op || ""),
+        val: which === "or" ? (r.val2 || "") : (r.val || ""),
+        x: Math.round(ev.clientX - rect.left), y: Math.round(ev.clientY - rect.top),
       };
       this.$nextTick(() => this.clampCond());
     },
@@ -1139,11 +1234,10 @@ const NavicatPanel = {
       this.condPop = null;
     },
     writeCond(p, op, val) {
-      const t = this.tableById(p.tid);
-      const c = t && t.columns.find(x => x.name === p.col);
-      if (!c) return;
-      if (p.which === "or") { c.op2 = op; c.val2 = val; }
-      else { c.op = op; c.val = val; }
+      const r = this.rowByField(p.tid, p.col);
+      if (!r) return;
+      if (p.which === "or") { r.op2 = op; r.val2 = val; }
+      else { r.op = op; r.val = val; }
     },
 
     /* ---------------- 菜单 / 工具栏 ---------------- */
