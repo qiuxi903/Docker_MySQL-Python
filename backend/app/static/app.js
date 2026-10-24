@@ -215,6 +215,7 @@ const CmEditor = {
     }
     if (this.value) this.cm.setValue(this.value);
     this.cm.on("change", () => this.$emit("change", this.cm.getValue()));
+    this.smoothCaret(this.cm);
     // 网页字体或样式晚到时，CodeMirror 会沿用首次测量的行号栏宽度，
     // 字体一变宽行号就挤进正文；下一帧和字体加载完成后各重测一次。
     const refreshGutter = () => {
@@ -239,6 +240,36 @@ const CmEditor = {
     },
   },
   methods: {
+    /* 平滑插入符：CodeMirror 每次绘制都会重建光标元素，CSS 过渡不生效。
+       这里在光标移动后用 FLIP（先摆到旧位置再过渡回 0）让它“滑”过去，
+       手感类似 Word；移动距离越远滑得越快，系统开了减少动态效果就不做。 */
+    smoothCaret(cm) {
+      if (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+      let prev = null;
+      const apply = () => {
+        const el = cm.display && cm.display.cursorDiv &&
+                   cm.display.cursorDiv.querySelector(".CodeMirror-cursor");
+        if (!el || !el.isConnected) return;
+        const r = el.getBoundingClientRect();
+        const now = { x: r.left, y: r.top };
+        if (prev) {
+          const dx = prev.x - now.x, dy = prev.y - now.y;
+          const dist = Math.hypot(dx, dy);
+          if (dist > 0.5 && dist < 600) {
+            el.style.transition = "none";
+            el.style.transform = `translate(${dx}px, ${dy}px)`;
+            void el.offsetWidth;                 // 强制回流，保证过渡从旧位置起步
+            const dur = Math.min(140, 70 + dist * 0.35);
+            el.style.transition = `transform ${dur}ms cubic-bezier(.25,.7,.3,1)`;
+            el.style.transform = "";
+            el.addEventListener("transitionend",
+              () => { el.style.transition = ""; }, { once: true });
+          }
+        }
+        prev = now;
+      };
+      cm.on("cursorActivity", () => setTimeout(apply, 0));
+    },
     buildExtra(mode) {
       const extra = {
         "Ctrl-Enter": () => this.run && this.run(),
