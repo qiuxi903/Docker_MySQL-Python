@@ -28,7 +28,7 @@ html[data-theme="light"] body { background: #f6f8fa; }
 <link rel="stylesheet" href="/vendor/codemirror/addon/hint/show-hint.css">
 <link rel="stylesheet" href="/fonts/misans/misans.css">
 <link rel="stylesheet" href="/style.css?v=160">
-  <link rel="stylesheet" href="/navicat.css?v=19">
+  <link rel="stylesheet" href="/navicat.css?v=21">
 </head>
 <body>
 <div id="app" v-cloak>
@@ -2646,99 +2646,171 @@ INSERT INTO course VALUES (1,'数学');</pre>
               </div>
             </div>
 
-            <div class="nc-bd-pane-h">
-              <span class="nc-bd-pane-t">准则</span>
-              <span class="nc-muted m-hide">在图表勾字段、或在这里选「表 + 字段」加行 · 「汇总」选 SUM/COUNT 等聚合 —— 全程不用写 SQL</span>
-            </div>
-            <div class="nc-bd-grid-wrap">
-              <table v-if="build.tables.length" class="nc-bd-grid">
-                <thead>
-                  <tr>
-                    <th class="w-show">显示</th>
-                    <th class="w-table">表</th>
-                    <th class="w-field">字段</th>
-                    <th class="w-alias">别名</th>
-                    <th class="w-agg">汇总</th>
-                    <th class="w-sort">排序</th>
-                    <th class="w-cond">条件</th>
-                    <th class="w-or">或</th>
-                    <th class="w-del"></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr v-for="r in build.rows" :key="r.tid + '.' + r.col"
-                      :data-row="(tableById(r.tid) ? (tableById(r.tid).alias || tableById(r.tid).name) : '') + '.' + r.col">
-                    <td class="w-show"><input type="checkbox" class="nc-tcol-ck" v-model="r.show"
-                                              title="勾选进入 SELECT"></td>
-                    <td class="w-table">
-                      <select :value="r.tid" title="换表"
-                              @change="rowSetTable(r, $event.target.value)">
-                        <option v-for="t in build.tables" :key="t.id" :value="t.id">{{ t.alias || t.name }}</option>
-                      </select>
-                    </td>
-                    <td class="w-field">
-                      <select :value="r.col" title="换字段"
-                              @change="rowSetCol(r, $event.target.value)">
-                        <option value="*">*</option>
-                        <option v-for="c in (tableById(r.tid) || { columns: [] }).columns"
-                                :key="c.name" :value="c.name">{{ c.name }}</option>
-                      </select>
-                      <span v-if="keyOf(tableById(r.tid), r.col) === 'PRI'" class="nc-key" title="主键">
-                        <svg viewBox="0 0 24 24"><path d="M12.65 10C11.83 7.67 9.82 6 7.5 6 4.46 6 2 8.46 2 11.5S4.46 17 7.5 17c2.32 0 4.33-1.67 5.15-4H17v4h4v-4h2v-4H12.65zM7.5 15A3.5 3.5 0 1 1 11 11.5 3.5 3.5 0 0 1 7.5 15z"/></svg>
-                      </span>
-                    </td>
-                    <td class="w-alias"><input v-model.trim="r.alias" placeholder="—" title="输出列别名"></td>
-                    <td class="w-agg">
-                      <select v-model="r.agg" title="聚合函数（选了以后：聚合进 SELECT，没聚合的显示字段进 GROUP BY，聚合行的条件进 HAVING）">
-                        <option value="">无</option>
-                        <option value="SUM">合计 SUM</option>
-                        <option value="COUNT">计数 COUNT</option>
-                        <option value="AVG">平均 AVG</option>
-                        <option value="MAX">最大 MAX</option>
-                        <option value="MIN">最小 MIN</option>
-                      </select>
-                    </td>
-                    <td class="w-sort">
-                      <select v-model="r.sort">
-                        <option value="">无</option><option value="ASC">升序</option><option value="DESC">降序</option>
-                      </select>
-                    </td>
-                    <td class="w-cond">
-                      <button type="button" class="nc-condcell" :class="{ set: condText(r, '') }"
-                              @click.stop="openCond($event, r, '')">{{ condText(r, '') || '无条件' }}</button>
-                    </td>
-                    <td class="w-or">
-                      <button type="button" class="nc-condcell" :class="{ set: condText(r, 'or') }"
-                              @click.stop="openCond($event, r, 'or')">{{ condText(r, 'or') || '—' }}</button>
-                    </td>
-                    <td class="w-del">
-                      <button class="nc-bd-rowdel" title="删除这行" @click="removeBuildRow(r)">×</button>
-                    </td>
-                  </tr>
-                  <!-- 新行：先选表、再选字段，选完落成一行（Navicat 同款） -->
-                  <tr class="nc-bd-newrow">
-                    <td class="w-show"></td>
-                    <td class="w-table">
-                      <select v-model="newRow.tid" title="选择表">
-                        <option value="">表…</option>
-                        <option v-for="t in build.tables" :key="t.id" :value="t.id">{{ t.alias || t.name }}</option>
-                      </select>
-                    </td>
-                    <td class="w-field" :colspan="newRow.tid ? 1 : 7">
-                      <select v-if="newRow.tid" v-model="newRow.col" title="选择字段（* 配合「汇总·计数」就是 COUNT(*)）"
-                              @change="commitNewRow($event.target.value)">
-                        <option value="">选择字段…</option>
-                        <option value="*">*（全部行数 COUNT(*)）</option>
-                        <option v-for="c in (tableById(newRow.tid) || { columns: [] }).columns"
-                                :key="c.name" :value="c.name">{{ c.name }}</option>
-                      </select>
-                      <span v-else class="nc-muted">在这里选「表 + 字段」加一行，或在图表里勾字段</span>
-                    </td>
-                    <td v-if="newRow.tid" colspan="6" class="nc-muted">选好字段自动成行</td>
-                  </tr>
-                </tbody>
-              </table>
-              <div v-else class="nc-empty">先在左边「对象」窗格点一张表（拖入后是 SELECT *），再勾字段或在这里选</div>
+            <!-- 各子句独立页签（真 Navicat 布局）：SELECT / FROM / WHERE / GROUP BY / HAVING / ORDER BY / LIMIT -->
+            <div class="nc-bd-clauses">
+              <div class="nc-bd-ctabs">
+                <label class="nc-bd-dist" title="去重（SELECT DISTINCT）">
+                  <input type="checkbox" v-model="build.distinct"> DISTINCT
+                </label>
+                <button v-for="ct in clauseTabs()" :key="ct[0]" class="nc-bd-ctab"
+                        :class="{ on: build.tab === ct[0] }" @click="build.tab = ct[0]">{{ ct[1] }}</button>
+                <span class="spacer"></span>
+                <span class="nc-muted m-hide">每个子句一页 · 点「＋ 点击 *.* 以添加字段」挑字段</span>
+              </div>
+              <div class="nc-bd-cpane">
+
+                <!-- SELECT：字段 + 别名 -->
+                <div v-show="build.tab === 'select'" class="nc-cl-wrap">
+                  <table v-if="build.sel.length" class="nc-grid nc-cl-grid">
+                    <thead><tr><th>字段</th><th>别名</th><th></th></tr></thead>
+                    <tbody>
+                      <tr v-for="(r, i) in build.sel" :key="i">
+                        <td class="nc-cl-field">
+                          <span v-if="!r.expr && keyOf(tableById(r.tid), r.col) === 'PRI'" class="nc-key" title="主键">
+                            <svg viewBox="0 0 24 24"><path d="M12.65 10C11.83 7.67 9.82 6 7.5 6 4.46 6 2 8.46 2 11.5S4.46 17 7.5 17c2.32 0 4.33-1.67 5.15-4H17v4h4v-4h2v-4H12.65zM7.5 15A3.5 3.5 0 1 1 11 11.5 3.5 3.5 0 0 1 7.5 15z"/></svg>
+                          </span>
+                          <span class="nc-cl-ref">{{ rowRefOf(r) }}</span>
+                        </td>
+                        <td><input v-model.trim="r.alias" placeholder="—" title="输出列别名（AS）"></td>
+                        <td><button class="nc-bd-rowdel" title="移除" @click="removeSelRow(r)">×</button></td>
+                      </tr>
+                    </tbody>
+                  </table>
+                  <button class="nc-bd-addtext" v-if="build.tables.length"
+                          @click.stop="openFieldPick($event, 'select')">＋ 点击 *.* 以添加字段</button>
+                  <div v-if="!build.tables.length" class="nc-empty">先在图表里加一张表（拖入后是 SELECT *），再来挑字段</div>
+                </div>
+
+                <!-- FROM：表（别名）+ 连接（类型 / ON） -->
+                <div v-show="build.tab === 'from'" class="nc-cl-wrap">
+                  <table class="nc-grid nc-cl-grid">
+                    <thead><tr><th>表</th><th>别名</th><th>联接</th><th>ON 条件</th><th></th></tr></thead>
+                    <tbody>
+                      <template v-for="t in build.tables" :key="t.id">
+                        <tr>
+                          <td class="nc-cl-field"><e-icon name="table" :size="12"></e-icon> {{ t.name }}</td>
+                          <td><input v-model.trim="t.alias" placeholder="—" title="表别名"></td>
+                          <td class="nc-muted">—</td>
+                          <td class="nc-muted">—</td>
+                          <td><button class="nc-bd-rowdel" title="移除这张表" @click="removeBuildTable(t)">×</button></td>
+                        </tr>
+                        <tr v-for="j in build.joins.filter(x => x.b.tid === t.id)" :key="t.id + '.' + j.id" class="nc-cl-join">
+                          <td class="nc-muted">↳ {{ (tableById(j.a.tid) || {}).name }}</td>
+                          <td class="nc-muted"></td>
+                          <td>
+                            <select v-model="j.type" title="联接类型（内 / 左 / 右连接）">
+                              <option value="INNER">内连接</option>
+                              <option value="LEFT">左连接</option>
+                              <option value="RIGHT">右连接</option>
+                            </select>
+                          </td>
+                          <td class="nc-cl-ref">{{ joinOnText(j) }}</td>
+                          <td><button class="nc-bd-rowdel" title="删除连接" @click="removeJoin(j)">×</button></td>
+                        </tr>
+                      </template>
+                    </tbody>
+                  </table>
+                  <p class="nc-hint">在上方「图表」里把一个字段拖到另一张表的字段上即可连线；这里换联接类型或删连接。</p>
+                </div>
+
+                <!-- WHERE：表 / 字段 / 比较 / 值 / 和|或 -->
+                <div v-show="build.tab === 'where'" class="nc-cl-wrap">
+                  <table v-if="build.where.length" class="nc-grid nc-cl-grid nc-cl-cond">
+                    <thead><tr><th>表</th><th>字段</th><th>比较</th><th>值</th><th class="center">和 / 或</th><th></th></tr></thead>
+                    <tbody>
+                      <tr v-for="(r, i) in build.where" :key="i">
+                        <td>
+                          <select :value="r.tid" @change="condSetTable(r, $event.target.value)">
+                            <option v-for="t in build.tables" :key="t.id" :value="t.id">{{ t.alias || t.name }}</option>
+                          </select>
+                        </td>
+                        <td>
+                          <select v-model="r.col">
+                            <option value="">（选字段）</option>
+                            <option v-for="c in (tableById(r.tid) || { columns: [] }).columns"
+                                    :key="c.name" :value="c.name">{{ c.name }}</option>
+                          </select>
+                        </td>
+                        <td>
+                          <select v-model="r.op"><option v-for="o in condOps" :key="o">{{ o }}</option></select>
+                        </td>
+                        <td><input v-model.trim="r.val" placeholder="值" title="IN 填 1,2；BETWEEN 填 18 AND 30"></td>
+                        <td class="center">
+                          <select v-model="r.andor" :disabled="i === 0" title="与上一行的连接">
+                            <option value="AND">和</option><option value="OR">或</option>
+                          </select>
+                        </td>
+                        <td><button class="nc-bd-rowdel" title="删除条件" @click="build.where.splice(i, 1)">×</button></td>
+                      </tr>
+                    </tbody>
+                  </table>
+                  <button class="nc-bd-addtext" @click="addWhereRow">＋ 点击此处添加条件</button>
+                </div>
+
+                <!-- GROUP BY：字段 -->
+                <div v-show="build.tab === 'group'" class="nc-cl-wrap">
+                  <table v-if="build.groupBy.length" class="nc-grid nc-cl-grid">
+                    <thead><tr><th>字段</th><th></th></tr></thead>
+                    <tbody>
+                      <tr v-for="(r, i) in build.groupBy" :key="i">
+                        <td class="nc-cl-ref">{{ rowRefOf(r) }}</td>
+                        <td><button class="nc-bd-rowdel" title="移除" @click="build.groupBy.splice(i, 1)">×</button></td>
+                      </tr>
+                    </tbody>
+                  </table>
+                  <button class="nc-bd-addtext" @click.stop="openFieldPick($event, 'group')">＋ 点击 *.* 以添加字段</button>
+                </div>
+
+                <!-- HAVING：字段(可聚合表达式) / 比较 / 值 / 和|或 -->
+                <div v-show="build.tab === 'having'" class="nc-cl-wrap">
+                  <table v-if="build.having.length" class="nc-grid nc-cl-grid nc-cl-cond">
+                    <thead><tr><th>字段 / 聚合</th><th>比较</th><th>值</th><th class="center">和 / 或</th><th></th></tr></thead>
+                    <tbody>
+                      <tr v-for="(r, i) in build.having" :key="i">
+                        <td class="nc-cl-ref">{{ rowRefOf(r) }}</td>
+                        <td><select v-model="r.op"><option v-for="o in condOps" :key="o">{{ o }}</option></select></td>
+                        <td><input v-model.trim="r.val" placeholder="值"></td>
+                        <td class="center">
+                          <select v-model="r.andor" :disabled="i === 0">
+                            <option value="AND">和</option><option value="OR">或</option>
+                          </select>
+                        </td>
+                        <td><button class="nc-bd-rowdel" title="删除条件" @click="build.having.splice(i, 1)">×</button></td>
+                      </tr>
+                    </tbody>
+                  </table>
+                  <button class="nc-bd-addtext" @click.stop="openFieldPick($event, 'having')">＋ 点击 *.* 以添加字段（聚合用「自定义」填 SUM(字段)）</button>
+                </div>
+
+                <!-- ORDER BY：字段 + 升降序 -->
+                <div v-show="build.tab === 'order'" class="nc-cl-wrap">
+                  <table v-if="build.orderBy.length" class="nc-grid nc-cl-grid">
+                    <thead><tr><th>字段</th><th>排序</th><th></th></tr></thead>
+                    <tbody>
+                      <tr v-for="(r, i) in build.orderBy" :key="i">
+                        <td class="nc-cl-ref">{{ rowRefOf(r) }}</td>
+                        <td>
+                          <select v-model="r.dir"><option value="ASC">升序</option><option value="DESC">降序</option></select>
+                        </td>
+                        <td><button class="nc-bd-rowdel" title="移除" @click="build.orderBy.splice(i, 1)">×</button></td>
+                      </tr>
+                    </tbody>
+                  </table>
+                  <button class="nc-bd-addtext" @click.stop="openFieldPick($event, 'order')">＋ 点击 *.* 以添加字段</button>
+                </div>
+
+                <!-- LIMIT：记录数 / 偏移量 -->
+                <div v-show="build.tab === 'limit'" class="nc-cl-wrap nc-cl-limit">
+                  <label>记录数
+                    <input v-model="build.limit.n" type="number" min="0" placeholder="如 10" title="LIMIT N">
+                  </label>
+                  <label>偏移量
+                    <input v-model="build.limit.offset" type="number" min="0" placeholder="0" title="OFFSET N">
+                  </label>
+                  <p class="nc-hint">相当于 <code>LIMIT 记录数 OFFSET 偏移量</code>；只填记录数就是最常见的 <code>LIMIT N</code>。</p>
+                </div>
+
+              </div>
             </div>
           </div>
 
@@ -3217,6 +3289,16 @@ INSERT INTO course VALUES (1,'数学');</pre>
           <textarea class="nc-code tall" v-model="viewForm.definition" spellcheck="false"></textarea>
           <p class="nc-hint">保存后执行 <code>CREATE OR REPLACE VIEW</code>，可以点左侧「视图 → 打开视图」查看结果。</p>
         </div>
+        <!-- SQL 预览（Navicat 同款）：实时生成 CREATE VIEW 指令，可复制进查询窗口快捷建视图 -->
+        <div class="nc-dsqlwrap nc-vsqlwrap">
+          <div class="nc-bd-pane-h">
+            <span class="nc-bd-pane-t">SQL 预览</span>
+            <span class="nc-muted m-hide">按当前定义实时生成 · 复制进查询窗口执行 = 快捷创建视图</span>
+            <span class="spacer"></span>
+            <button class="nc-btn sm" @click="copyText(viewDdl)"><e-icon name="list" :size="12"></e-icon> 复制</button>
+          </div>
+          <pre class="nc-bd-sql grow" v-html="viewDdlHtml"></pre>
+        </div>
       </div>
 
       <!-- 函数 / 存储过程 -->
@@ -3320,25 +3402,38 @@ INSERT INTO course VALUES (1,'数学');</pre>
   </div>
 
   <!-- 准则「条件 / 或」组合框弹层 -->
-  <div v-if="condPop" class="nc-condpop" ref="condPop"
-       :style="{ left: condPop.x + 'px', top: condPop.y + 'px' }"
+  <!-- 「＋ 点击 *.* 以添加字段」弹层：标识符 挑字段 / 自定义 写表达式 -->
+  <div v-if="fieldPick" class="nc-condpop nc-fpick" ref="fieldPick"
+       :style="{ left: fieldPick.x + 'px', top: fieldPick.y + 'px' }"
        @click.stop @contextmenu.prevent>
-    <div class="nc-condpop-t">
-      {{ condPop.label }}
-      <span class="nc-condpop-w">{{ condPop.which === 'or' ? '或' : '条件' }}</span>
-    </div>
-    <div class="nc-condpop-ops">
-      <button type="button" :class="{ on: !condPop.op }" @click="setCondOp('')">无条件</button>
-      <button v-for="o in condOps" :key="o" type="button"
-              :class="{ on: condPop.op === o }" @click="setCondOp(o)">{{ o }}</button>
-    </div>
-    <input v-if="condNeedVal(condPop.op)" v-model.trim="condPop.val" class="nc-condpop-val"
-           :placeholder="condPop.op === 'IN' ? '如 1,2 或 (1,2)' : condPop.op === 'BETWEEN' ? '如 18 AND 30' : '值'"
-           @keyup.enter="applyCond">
-    <div class="nc-condpop-f">
-      <button type="button" class="nc-btn sm" @click="clearCond">清除</button>
+    <div class="nc-fpick-tabs">
+      <button type="button" :class="{ on: fieldPick.page === 'id' }" @click="fieldPick.page = 'id'">标识符</button>
+      <button type="button" :class="{ on: fieldPick.page === 'custom' }" @click="fieldPick.page = 'custom'">自定义</button>
       <span class="spacer"></span>
-      <button type="button" class="nc-btn sm primary" @click="applyCond">确定</button>
+      <span class="nc-muted">{{ fpickLabel() }}</span>
+    </div>
+    <div v-if="fieldPick.page === 'id'">
+      <div class="nc-search nc-fpick-search">
+        <e-icon name="search" :size="12"></e-icon>
+        <input v-model.trim="fieldPick.search" placeholder="搜索表 / 字段…">
+      </div>
+      <div class="nc-fpick-list">
+        <div v-for="g in pickFields()" :key="g.t.id" class="nc-fpick-grp">
+          <div class="nc-fpick-tbl"><e-icon name="table" :size="12"></e-icon>{{ g.t.alias || g.t.name }}</div>
+          <button v-for="c in g.cols" :key="c.name" type="button" class="nc-fpick-col" @click="pickField(g.t, c.name)">
+            {{ c.name }}<span v-if="c.key === 'PRI'" class="nc-fpick-pk" title="主键">键</span>
+          </button>
+        </div>
+      </div>
+    </div>
+    <div v-else class="nc-fpick-custom">
+      <input v-model.trim="fieldPick.custom" class="nc-condpop-val" style="margin-top:0"
+             placeholder="如 SUM(price)、COUNT(*)、price * qty" @keyup.enter="pickCustomOk">
+      <div class="nc-condpop-f">
+        <span class="nc-muted">聚合 / 表达式直接写在这里</span>
+        <span class="spacer"></span>
+        <button type="button" class="nc-btn sm primary" @click="pickCustomOk">确定</button>
+      </div>
     </div>
   </div>
 
@@ -3520,7 +3615,7 @@ INSERT INTO course VALUES (1,'数学');</pre>
 </div>
 </script>
 
-<script src="/navicat.js?v=9"></script>
+<script src="/navicat.js?v=11"></script>
 <script src="/app.js?v=167"></script>
 </body>
 </html>

@@ -725,6 +725,87 @@ tr.added td { background: rgba(46,160,67,.06); }
   border-top: 1px solid var(--line);
 }
 
+/* ---- 各子句页签（真 Navicat 布局）：SELECT/FROM/WHERE/... ---- */
+.nc-bd-clauses { flex: 1 1 34%; min-height: 150px; display: flex; flex-direction: column; border-top: 1px solid var(--line); background: var(--panel); }
+.nc-bd-ctabs {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 2px; flex-wrap: wrap;
+  padding: 3px 8px 0; background: var(--panel-2); border-bottom: 1px solid var(--line);
+}
+.nc-bd-dist {
+  display: inline-flex; align-items: center; gap: 4px; margin-right: 8px;
+  font-size: 11px; color: var(--muted); cursor: pointer; white-space: nowrap;
+}
+.nc-bd-dist input { accent-color: var(--accent); margin: 0; }
+.nc-bd-ctab {
+  border: 1px solid transparent; border-bottom: 0; background: transparent; color: var(--muted);
+  font: 600 11.5px var(--mono); padding: 4px 10px 5px; border-radius: 6px 6px 0 0; cursor: pointer;
+}
+.nc-bd-ctab:hover { color: var(--accent); }
+.nc-bd-ctab.on {
+  background: var(--panel); border-color: var(--line); color: var(--accent);
+  box-shadow: 0 1px 0 var(--panel);
+}
+.nc-bd-cpane { flex: 1; min-height: 0; overflow: auto; position: relative; }
+.nc-cl-wrap { padding: 8px 10px 10px; }
+.nc-cl-grid { width: 100%; }
+.nc-cl-grid td { padding: 3px 6px; }
+.nc-cl-grid select, .nc-cl-grid input {
+  height: 25px; width: 100%; box-sizing: border-box;
+  border: 1px solid var(--line); border-radius: 4px;
+  background: var(--panel); color: var(--text); font: 12px var(--mono); padding: 0 6px;
+}
+.nc-cl-grid select:focus, .nc-cl-grid input:focus { border-color: var(--accent); outline: none; }
+.nc-cl-cond td:nth-child(1) select { max-width: 120px; }
+.nc-cl-cond td:nth-child(2) select { max-width: 130px; }
+.nc-cl-cond td:nth-child(3) select { max-width: 96px; }
+.nc-cl-cond td:nth-child(4) input { min-width: 110px; }
+.nc-cl-cond td:nth-child(5) select { max-width: 64px; }
+.nc-cl-field { font: 12px var(--mono); white-space: nowrap; }
+.nc-cl-field .e-icon { color: var(--accent); margin-right: 4px; }
+.nc-cl-ref { font: 12px var(--mono); color: var(--text); user-select: text; -webkit-user-select: text; }
+.nc-cl-join td { background: var(--panel-2); }
+.nc-cl-limit { display: flex; flex-direction: column; gap: 12px; max-width: 360px; }
+.nc-cl-limit label { display: flex; align-items: center; gap: 10px; font-size: 12.5px; color: var(--muted); }
+.nc-cl-limit input {
+  flex: 1; height: 28px; border: 1px solid var(--line-strong); border-radius: 5px;
+  background: var(--panel); color: var(--text); font: 12.5px var(--mono); padding: 0 8px;
+}
+/* ＋ 点击 *.* 以添加字段（Navicat 同款虚线添加行） */
+.nc-bd-addtext {
+  display: block; width: 100%; margin-top: 6px; padding: 5px 8px;
+  border: 1px dashed var(--line-strong); border-radius: 5px; background: transparent;
+  color: var(--muted); font: 12px inherit; text-align: left; cursor: pointer;
+}
+.nc-bd-addtext:hover { color: var(--accent); border-color: var(--accent); background: var(--accent-weak); }
+/* 字段选择弹层（标识符 / 自定义） */
+.nc-fpick { width: 340px; }
+.nc-fpick-tabs { display: flex; align-items: center; gap: 4px; padding: 0 2px 7px; }
+.nc-fpick-tabs button {
+  border: 1px solid var(--line); background: var(--panel-2); color: var(--text);
+  font: 12px inherit; padding: 3px 12px; border-radius: 999px; cursor: pointer;
+}
+.nc-fpick-tabs button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.nc-fpick-search { margin-bottom: 6px; }
+.nc-fpick-list { max-height: 264px; overflow: auto; }
+.nc-fpick-grp { margin-bottom: 4px; }
+.nc-fpick-tbl {
+  display: flex; align-items: center; gap: 5px; padding: 3px 2px;
+  font-size: 11.5px; font-weight: 700; color: var(--accent);
+}
+.nc-fpick-col {
+  display: inline-flex; align-items: center; gap: 5px; margin: 1px 2px; padding: 2px 9px;
+  border: 1px solid var(--line); border-radius: 5px; background: var(--panel);
+  color: var(--text); font: 11.5px var(--mono); cursor: pointer;
+}
+.nc-fpick-col:hover { border-color: var(--accent); color: var(--accent); }
+.nc-fpick-pk {
+  font-size: 9px; font-weight: 700; color: #bf8700; border: 1px solid #bf8700;
+  border-radius: 3px; padding: 0 3px; line-height: 13px;
+}
+/* 视图设计 SQL 预览 */
+.nc-vsqlwrap { border-top: 1px solid var(--line); }
+.nc-vsqlwrap .nc-bd-sql { min-height: 90px; }
+
 /* 查询创建工具：表关系/字段关系 单选 + 卡片迷你态 + 构建按钮组 */
 .nc-bd-mode { display: inline-flex; gap: 10px; align-items: center; font-size: 12px; }
 .nc-bd-mode label { display: inline-flex; gap: 4px; align-items: center; cursor: pointer; color: var(--text); }
@@ -927,6 +1008,10 @@ tr.added td { background: rgba(46,160,67,.06); }
   .nc-dprops .nc-cell { width: 120px; }
   .nc-chart-box { max-height: 94%; }
   .nc-chart-ctl { gap: 10px; }
+  /* 查询创建工具子句页签横向滑动 */
+  .nc-bd-ctabs { flex-wrap: nowrap; overflow-x: auto; }
+  .nc-bd-cpane { max-height: 44vh; }
+  .nc-cl-cond td:nth-child(1) select, .nc-cl-cond td:nth-child(2) select { max-width: 92px; }
   /* 手机：代码段面板变成右侧浮层，不挤编辑器 */
   .nc-snip {
     position: absolute; top: 0; right: 0; bottom: 0; z-index: 40; width: 216px;

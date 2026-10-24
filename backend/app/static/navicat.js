@@ -70,7 +70,8 @@ const NavicatPanel = {
       // 弹窗
       dlg: "",
       build: this.blankBuilder(),
-      newRow: { tid: "", col: "" },
+      // 字段选择弹层（标识符 / 自定义）——点「＋ 点击 *.* 以添加字段」打开
+      fieldPick: null,
       builderMode: false,
       // 创建图表（用当前查询结果画柱状/折线/饼图）
       chart: { open: false, type: "bar", x: "", y: "" },
@@ -220,6 +221,13 @@ const NavicatPanel = {
       return sql + ";";
     },
     designDdlHtml() { return this.sqlHighlight(this.designDdl); },
+    // 视图设计 SQL 预览：CREATE OR REPLACE VIEW 指令（复制进查询窗口执行 = 快捷建视图）
+    viewDdl() {
+      const f = this.viewForm;
+      const def = String(f.definition || "").trim().replace(/;+\s*$/, "");
+      return "CREATE OR REPLACE VIEW " + this.ident(f.name || "视图名") + " AS \n" + def + ";";
+    },
+    viewDdlHtml() { return this.sqlHighlight(this.viewDdl); },
     /* 右侧代码段面板：分类标签 + 搜索过滤 */
     snipTags() { return ["全部", ...new Set(NAV_SNIPPETS.map(s => s.cat))]; },
     snipList() {
@@ -356,10 +364,8 @@ const NavicatPanel = {
         if (v === "query" && this.$refs.cmQuery) this.$refs.cmQuery.refresh();
       });
     },
-    // 图表 / 准则一变（勾字段、选汇总、连线、条件），生成的 SQL 自动刷新
-    "build.tables": { deep: true, handler() { this.syncBuilderSql(); } },
-    "build.joins": { deep: true, handler() { this.syncBuilderSql(); } },
-    "build.rows": { deep: true, handler() { this.syncBuilderSql(); } },
+    // 图表 / 各子句一变（勾字段、加条件、连线、LIMIT），右侧 SQL 预览自动刷新
+    "build": { deep: true, handler() { this.syncBuilderSql(); } },
     builderMode(v) {
       if (v) this.syncBuilderSql();
     },
@@ -367,8 +373,8 @@ const NavicatPanel = {
 
   mounted() {
     if (this.db) this.reload();
-    this._menuOff = () => { this.menu = ""; this.ctx.show = false; this.condPop = null; };
-    this._escOff = (e) => { if (e.key === "Escape") { this.ctx.show = false; this.menu = ""; this.condPop = null; this.chart.open = false; } };
+    this._menuOff = () => { this.menu = ""; this.ctx.show = false; this.condPop = null; this.fieldPick = null; };
+    this._escOff = (e) => { if (e.key === "Escape") { this.ctx.show = false; this.menu = ""; this.condPop = null; this.fieldPick = null; this.chart.open = false; } };
     document.addEventListener("click", this._menuOff);
     document.addEventListener("keydown", this._escOff);
   },
@@ -1358,8 +1364,22 @@ const NavicatPanel = {
 
     /* ---------------- 查询创建工具（Navicat 同款：内嵌在查询页，工具栏按钮切换） ---------------- */
     blankBuilder() {
-      // rows：准则网格的行，逐行选 表.字段（拖入表不会自动选字段，和 Navicat 一样）
-      return { tables: [], joins: [], rows: [], sql: "", search: "", viewMode: "fields" };
+      // 真正的 Navicat 查询创建工具：SELECT/FROM/WHERE/GROUP BY/HAVING/ORDER BY/LIMIT 各自独立的页签
+      return {
+        tables: [], joins: [], viewMode: "fields", tab: "select",
+        distinct: false,
+        sel: [],          // SELECT 行 {tid, col, expr(自定义表达式), alias}
+        where: [],        // {tid, col, op, val, andor}  andor=与上一行的连接（和/或）
+        groupBy: [],      // {tid, col, expr}
+        having: [],       // {expr(字段或聚合表达式), op, val, andor}
+        orderBy: [],      // {tid, col, expr, dir}
+        limit: { n: "", offset: "" },
+        sql: "", search: "",
+      };
+    },
+    clauseTabs() {
+      return [["select", "SELECT"], ["from", "FROM"], ["where", "WHERE"], ["group", "GROUP BY"],
+              ["having", "HAVING"], ["order", "ORDER BY"], ["limit", "LIMIT"]];
     },
     // 「构建」：把生成的 SQL 放进编辑器（构建器保持打开）；「构建并运行」= 运行；「取消」= 收起
     buildToEditor() {
@@ -1439,7 +1459,11 @@ const NavicatPanel = {
     removeBuildTable(t) {
       this.build.tables = this.build.tables.filter(x => x !== t);
       this.build.joins = this.build.joins.filter(j => j.a.tid !== t.id && j.b.tid !== t.id);
-      this.build.rows = this.build.rows.filter(r => r.tid !== t.id);
+      this.build.sel = this.build.sel.filter(r => r.tid !== t.id);
+      this.build.where = this.build.where.filter(r => r.tid !== t.id);
+      this.build.groupBy = this.build.groupBy.filter(r => r.tid !== t.id);
+      this.build.having = this.build.having.filter(r => r.tid !== t.id);
+      this.build.orderBy = this.build.orderBy.filter(r => r.tid !== t.id);
     },
     tableById(id) { return this.build.tables.find(t => t.id === id) || null; },
     // Navicat 生成的 SQL 用 emp.SAL 这种裸引用，不加反引号
@@ -1448,47 +1472,95 @@ const NavicatPanel = {
       return col === "*" ? base + ".*" : base + "." + col;
     },
 
-    /* ---- 准则网格的行：拖入表不选任何字段，行是逐个挑出来的 ---- */
-    rowByField(tid, col) {
-      return this.build.rows.find(r => r.tid === tid && r.col === col) || null;
+    /* ---- 各子句的行（Navicat 同款：SELECT / WHERE / GROUP BY / HAVING / ORDER BY 各自维护） ---- */
+    selRowByField(tid, col) {
+      return this.build.sel.find(r => r.tid === tid && r.col === col && !r.expr) || null;
     },
     keyOf(t, col) {
       const c = t && (t.columns || []).find(x => x.name === col);
       return (c && c.key) || "";
     },
-    // 图表卡片上勾字段 = 添加/移除一行（显示默认勾上）
+    // 图表卡片上勾字段 = 加 / 移除一个 SELECT 行
     toggleBuildField(t, col) {
-      const row = this.rowByField(t.id, col);
-      if (row) this.build.rows = this.build.rows.filter(r => r !== row);
-      else this.addBuildRow(t.id, col);
+      const row = this.selRowByField(t.id, col);
+      if (row) this.build.sel = this.build.sel.filter(r => r !== row);
+      else this.build.sel.push({ tid: t.id, col, expr: "", alias: "" });
     },
-    isFieldOn(t, col) { return !!this.rowByField(t.id, col); },
-    addBuildRow(tid, col) {
-      if (!col || this.rowByField(tid, col)) return;
-      this.build.rows.push({ tid, col, show: true, alias: "", agg: "",
-                             sort: "", op: "", val: "", op2: "", val2: "" });
+    isFieldOn(t, col) { return !!this.selRowByField(t.id, col); },
+    removeSelRow(r) { this.build.sel = this.build.sel.filter(x => x !== r); },
+    // 行的引用：自定义表达式优先（SUM(price) 这种），否则 裸引用 t.col
+    rowRefOf(r) {
+      if (r.expr) return r.expr;
+      const t = this.tableById(r.tid);
+      return t ? this.colRef(t, r.col) : "";
     },
-    rowSetTable(r, tid) {
-      if (!tid || tid === r.tid) return;
-      r.tid = tid;
-      r.col = "";
-      r.alias = ""; r.agg = ""; r.sort = ""; r.op = ""; r.val = ""; r.op2 = ""; r.val2 = "";
+    selExprOf(r) {
+      const e = this.rowRefOf(r);
+      return e ? e + (r.alias ? " AS " + r.alias : "") : "";
     },
-    rowSetCol(r, col) {
-      if (!col) return;
-      const dup = this.rowByField(r.tid, col);
-      if (dup && dup !== r) { this.toast("这个字段已经在准则里了"); return; }
-      r.col = col;
+    // WHERE 行：表切换时清字段
+    condSetTable(r, tid) { r.tid = tid; r.col = ""; },
+    addWhereRow() {
+      const t = this.build.tables[0];
+      if (!t) { this.toast("先在图表里加一张表"); return; }
+      this.build.where.push({ tid: t.id, col: "", op: "=", val: "", andor: "AND" });
     },
-    removeBuildRow(r) { this.build.rows = this.build.rows.filter(x => x !== r); },
-    // 网格最后一行「新行」：先选表再选字段，选完落成一行
-    commitNewRow(col) {
-      const nw = this.newRow;
-      if (!nw.tid || !col) return;
-      if (this.rowByField(nw.tid, col)) { this.toast("这个字段已经在准则里了"); nw.col = ""; return; }
-      this.addBuildRow(nw.tid, col);
-      nw.tid = ""; nw.col = "";
+    addHavingRow() { this.build.having.push({ tid: "", col: "", expr: "", op: "=", val: "", andor: "AND" }); },
+    addOrderRow() { this.build.orderBy.push({ tid: "", col: "", expr: "", dir: "ASC" }); },
+    addGroupRow() { this.build.groupBy.push({ tid: "", col: "", expr: "" }); },
+
+    /* ---- 「＋ 点击 *.* 以添加字段」弹层：标识符 / 自定义 两页（视频 30s 同款） ---- */
+    openFieldPick(ev, clause) {
+      if (!this.build.tables.length) { this.toast("先在图表里加一张表"); return; }
+      const rect = this.$el.getBoundingClientRect();
+      this.fieldPick = { clause, page: "id", search: "", custom: "",
+                         tid: "", x: Math.round(ev.clientX - rect.left), y: Math.round(ev.clientY - rect.top) };
+      this.$nextTick(() => this.clampFieldPick());
     },
+    clampFieldPick() {
+      const el = this.$refs.fieldPick;
+      if (!el || !this.fieldPick) return;
+      const r = this.$el.getBoundingClientRect();
+      const w = el.offsetWidth, h = el.offsetHeight;
+      if (this.fieldPick.x + w > r.width - 8) this.fieldPick.x = Math.max(6, r.width - w - 8);
+      if (this.fieldPick.y + h > r.height - 8) this.fieldPick.y = Math.max(6, r.height - h - 8);
+    },
+    fpickLabel() {
+      return { select: "SELECT", group: "GROUP BY", having: "HAVING", order: "ORDER BY" }
+        [(this.fieldPick && this.fieldPick.clause) || ""] || "";
+    },
+    pickFields() {
+      // 标识符页：图表里的表 → 字段，可搜索
+      const fp = this.fieldPick;
+      const f = (fp.search || "").toLowerCase();
+      const out = [];
+      for (const t of this.build.tables) {
+        const tHit = !f || t.name.toLowerCase().includes(f) || (t.alias || "").toLowerCase().includes(f);
+        const cols = t.columns.filter(c => tHit || c.name.toLowerCase().includes(f));
+        if (tHit || cols.length) out.push({ t, cols: tHit && !f ? t.columns : cols });
+      }
+      return out;
+    },
+    pickField(t, col) {
+      const fp = this.fieldPick;
+      if (!fp) return;
+      if (fp.clause === "select") this.build.sel.push({ tid: t.id, col, expr: "", alias: "" });
+      else if (fp.clause === "group") this.build.groupBy.push({ tid: t.id, col, expr: "" });
+      else if (fp.clause === "order") this.build.orderBy.push({ tid: t.id, col, expr: "", dir: "ASC" });
+      else if (fp.clause === "having") this.build.having.push({ tid: t.id, col, expr: "", op: "=", val: "", andor: "AND" });
+      this.fieldPick = null;
+    },
+    pickCustomOk() {
+      const fp = this.fieldPick;
+      const e = (fp.custom || "").trim();
+      if (!e) { this.toast("填一个表达式，比如 SUM(price) 或 price * qty"); return; }
+      if (fp.clause === "select") this.build.sel.push({ tid: "", col: "", expr: e, alias: "" });
+      else if (fp.clause === "group") this.build.groupBy.push({ tid: "", col: "", expr: e });
+      else if (fp.clause === "order") this.build.orderBy.push({ tid: "", col: "", expr: e, dir: "ASC" });
+      else if (fp.clause === "having") this.build.having.push({ tid: "", col: "", expr: e, op: "=", val: "", andor: "AND" });
+      this.fieldPick = null;
+    },
+
     colAnchor(t, colName, side) {
       const i = Math.max(0, t.columns.findIndex(c => c.name === colName));
       return { x: side === "r" ? t.x + 180 : t.x, y: t.y + 30 + i * 22 + 11 };
@@ -1514,6 +1586,10 @@ const NavicatPanel = {
       const e = this.joinEnds(j);
       if (!e) return { x: 0, y: 0 };
       return { x: Math.round((e.p1.x + e.p2.x) / 2), y: Math.round((e.p1.y + e.p2.y) / 2) };
+    },
+    joinOnText(j) {
+      const a = this.tableById(j.a.tid), b = this.tableById(j.b.tid);
+      return a && b ? this.colRef(a, j.a.col) + " = " + this.colRef(b, j.b.col) : "";
     },
     joinTypeName(j) {
       return { INNER: "内连接", LEFT: "左连接", RIGHT: "右连接" }[j.type] || "内连接";
@@ -1634,31 +1710,22 @@ const NavicatPanel = {
       const raw = /^-?\d+(\.\d+)?$/.test(v) || /^[\('"]/.test(v);
       return ref + " " + op + " " + (raw ? v : this.lit(v));
     },
-    // 行的表达式：有汇总就包一层聚合函数（* 与聚合组合成 COUNT(*)）
-    rowExpr(t, r) {
-      if (!r.agg) return this.colRef(t, r.col);
-      if (r.col === "*") return r.agg + "(*)";
-      return r.agg + "(" + this.colRef(t, r.col) + ")";
-    },
-    rowConds(r) {
-      const t = this.tableById(r.tid);
-      const ref = this.rowExpr(t, r);
-      const c1 = this.condSql(ref, r.op, r.val);
-      const c2 = this.condSql(ref, r.op2, r.val2);
-      if (c1 && c2) return "(" + c1 + " OR " + c2 + ")";
-      return c1 || c2;
+    // 各子句行的条件串起来：第一行不带连接词，后面每行按自己的 和/或 接
+    condJoin(list) {
+      const rows = list.filter(r => (r.expr || r.col) && r.op);
+      let out = "";
+      rows.forEach((r, i) => {
+        if (i) out += (r.andor === "OR" ? " OR " : " AND ");
+        out += this.condSql(this.rowRefOf(r), r.op, r.val);
+      });
+      return out;
     },
     genSql() {
       const b = this.build;
       if (!b.tables.length) return "";
-      // SELECT：勾了「显示」的行（没有任何行就 SELECT *）
-      const sel = [];
-      for (const r of b.rows) {
-        if (!r.show || !r.col || !this.tableById(r.tid)) continue;
-        const t = this.tableById(r.tid);
-        sel.push(this.rowExpr(t, r) + (r.alias ? " AS " + r.alias : ""));
-      }
-      let sql = "SELECT " + (sel.length ? sel.join(", ") : "*");
+      // SELECT [DISTINCT]：没有行就 SELECT *
+      const sel = b.sel.map(r => this.selExprOf(r)).filter(Boolean);
+      let sql = "SELECT " + (b.distinct ? "DISTINCT " : "") + (sel.length ? sel.join(", ") : "*");
       // FROM + JOIN：从第一张表沿连线把表一张张挂进来（连线方向可能反着），
       // 没连到的表用逗号并列；成环的多余连线不重复 JOIN
       const first = b.tables[0];
@@ -1690,29 +1757,17 @@ const NavicatPanel = {
         inFrom.add(t.id);
       }
       sql += "\nFROM " + from;
-      // WHERE：普通行的条件；HAVING：汇总行的条件
-      const wheres = [], havings = [];
-      for (const r of b.rows) {
-        if (!r.col || !this.tableById(r.tid)) continue;
-        (r.agg ? havings : wheres).push(this.rowConds(r));
-      }
-      if (wheres.filter(Boolean).length) sql += "\nWHERE " + wheres.filter(Boolean).join(" AND ");
-      // GROUP BY：没汇总但显示了的字段（有汇总时才需要）
-      const hasAgg = b.rows.some(r => r.agg && r.col && this.tableById(r.tid));
-      const groups = [];
-      for (const r of b.rows) {
-        if (r.agg || !r.show || !r.col || !this.tableById(r.tid)) continue;
-        groups.push(this.colRef(this.tableById(r.tid), r.col));
-      }
-      if (hasAgg && groups.length) sql += "\nGROUP BY " + groups.join(", ");
-      if (havings.filter(Boolean).length) sql += "\nHAVING " + havings.filter(Boolean).join(" AND ");
-      // ORDER BY
-      const ords = [];
-      for (const r of b.rows) {
-        if (!r.sort || !r.col || !this.tableById(r.tid)) continue;
-        ords.push(this.rowExpr(this.tableById(r.tid), r) + " " + r.sort);
-      }
-      if (ords.length) sql += "\nORDER BY " + ords.join(", ");
+      const w = this.condJoin(b.where);
+      if (w) sql += "\nWHERE " + w;
+      const g = b.groupBy.map(r => this.rowRefOf(r)).filter(Boolean);
+      if (g.length) sql += "\nGROUP BY " + g.join(", ");
+      const h = this.condJoin(b.having);
+      if (h) sql += "\nHAVING " + h;
+      const o = b.orderBy.filter(r => r.expr || r.col)
+        .map(r => this.rowRefOf(r) + " " + (r.dir || "ASC"));
+      if (o.length) sql += "\nORDER BY " + o.join(", ");
+      const n = parseInt(b.limit.n, 10), off = parseInt(b.limit.offset, 10);
+      if (n > 0) sql += "\nLIMIT " + n + (off > 0 ? " OFFSET " + off : "");
       return sql + ";";
     },
     syncBuilderSql() {
@@ -1721,55 +1776,6 @@ const NavicatPanel = {
       b.sql = this.genSql();
       // SQL 窗格只读；生成的语句就是查询页的 SQL（和 Navicat 一致，「运行」即作答）
       if (this.builderMode && b.tables.length) this.sqlText = b.sql;
-    },
-
-    /* ---- 准则网格「条件 / 或」组合框弹层（不用自己打 SQL） ---- */
-    condNeedVal(op) { return !!op && !/^IS/i.test(op); },
-    condText(r, which) {
-      const op = which === "or" ? r.op2 : r.op;
-      if (!op) return "";
-      if (/^IS/i.test(op)) return op;
-      const v = String((which === "or" ? r.val2 : r.val) || "").trim();
-      return op + (v ? " " + v : "");
-    },
-    openCond(ev, r, which) {
-      const t = this.tableById(r.tid);
-      const rect = this.$el.getBoundingClientRect();
-      this.condPop = {
-        tid: r.tid, col: r.col, which,
-        label: (t ? (t.alias || t.name) : "") + "." + r.col,
-        op: which === "or" ? (r.op2 || "") : (r.op || ""),
-        val: which === "or" ? (r.val2 || "") : (r.val || ""),
-        x: Math.round(ev.clientX - rect.left), y: Math.round(ev.clientY - rect.top),
-      };
-      this.$nextTick(() => this.clampCond());
-    },
-    clampCond() {
-      const el = this.$refs.condPop;
-      if (!el || !this.condPop) return;
-      const r = this.$el.getBoundingClientRect();
-      const w = el.offsetWidth, h = el.offsetHeight;
-      if (this.condPop.x + w > r.width - 8) this.condPop.x = Math.max(6, r.width - w - 8);
-      if (this.condPop.y + h > r.height - 8) this.condPop.y = Math.max(6, r.height - h - 8);
-    },
-    setCondOp(op) { if (this.condPop) this.condPop.op = op; },
-    applyCond() {
-      const p = this.condPop;
-      if (!p) return;
-      this.writeCond(p, p.op, p.val);
-      this.condPop = null;
-    },
-    clearCond() {
-      const p = this.condPop;
-      if (!p) return;
-      this.writeCond(p, "", "");
-      this.condPop = null;
-    },
-    writeCond(p, op, val) {
-      const r = this.rowByField(p.tid, p.col);
-      if (!r) return;
-      if (p.which === "or") { r.op2 = op; r.val2 = val; }
-      else { r.op = op; r.val = val; }
     },
 
     /* ---------------- 菜单 / 工具栏 ---------------- */
