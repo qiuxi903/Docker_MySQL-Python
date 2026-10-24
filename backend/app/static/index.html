@@ -27,7 +27,7 @@ html[data-theme="light"] body { background: #f6f8fa; }
 <link rel="stylesheet" href="/vendor/codemirror/codemirror.css">
 <link rel="stylesheet" href="/vendor/codemirror/addon/hint/show-hint.css">
 <link rel="stylesheet" href="/fonts/misans/misans.css">
-<link rel="stylesheet" href="/style.css?v=155">
+<link rel="stylesheet" href="/style.css?v=158">
   <link rel="stylesheet" href="/navicat.css?v=10">
 </head>
 <body>
@@ -49,6 +49,11 @@ html[data-theme="light"] body { background: #f6f8fa; }
         <span class="logo-mark"><e-icon name="terminal" :size="24"></e-icon></span>
         <h1>SQL · Py 课堂实验室</h1>
         <p>浏览器里直接练 MySQL 和 Python</p>
+        <div class="login-chips">
+          <span class="chip"><e-icon name="database" :size="12"></e-icon>MySQL 工作台</span>
+          <span class="chip"><e-icon name="code" :size="12"></e-icon>Python 沙箱</span>
+          <span class="chip"><e-icon name="target" :size="12"></e-icon>整卷练习判分</span>
+        </div>
       </div>
       <label class="f">账号</label>
       <input type="text" v-model.trim="loginForm.username" placeholder="字母开头，只能字母和数字，3-20 位"
@@ -75,10 +80,10 @@ html[data-theme="light"] body { background: #f6f8fa; }
     <header>
       <div class="brand"><span class="logo-mark small"><e-icon name="terminal" :size="15"></e-icon></span>SQL·Py 课堂实验室</div>
       <nav class="nav m-hide">
-        <button :class="{active: view==='sql'}" @click="switchView('sql')"><e-icon name="database" :size="14"></e-icon> MySQL 工作台</button>
-        <button :class="{active: view==='py'}" @click="switchView('py')"><e-icon name="code" :size="14"></e-icon> Python</button>
-        <button :class="{active: view==='drills'}" @click="switchView('drills')"><e-icon name="target" :size="14"></e-icon> 练习</button>
-        <button :class="{active: view==='community'}" @click="switchView('community')"><e-icon name="globe" :size="14"></e-icon> 题库</button>
+        <button :class="{active: view==='sql'}" title="在浏览器里写 SQL、建库建表、真实执行" @click="switchView('sql')"><e-icon name="database" :size="14"></e-icon> MySQL 工作台</button>
+        <button :class="{active: view==='py'}" title="在线 Python 编辑器，可多文件、连自己的数据库" @click="switchView('py')"><e-icon name="code" :size="14"></e-icon> Python</button>
+        <button :class="{active: view==='drills'}" title="整套试卷在线作答，交卷自动判分" @click="switchView('drills')"><e-icon name="target" :size="14"></e-icon> 练习</button>
+        <button :class="{active: view==='community'}" title="老师分享的数据库素材包，一键导入" @click="switchView('community')"><e-icon name="globe" :size="14"></e-icon> 题库</button>
       </nav>
       <div class="userbox">
         <button class="icon-btn theme-btn" :title="theme==='dark' ? '切换到亮色' : '切换到暗色'" @click="toggleTheme">
@@ -141,6 +146,29 @@ html[data-theme="light"] body { background: #f6f8fa; }
         </aside>
 
         <div class="wsmain">
+          <!-- 新手三步引导：第一次进站展示，可关闭（按账号记忆） -->
+          <div v-if="!hintOff.sql" class="onboard">
+            <div class="onboard-steps">
+              <div class="ob-step">
+                <span class="ob-num">1</span>
+                <div class="ob-t"><b>左边就是你的数据库</b><span>点表名能直接看数据；想用自己的数据，就点「导入文件」或「新建数据库」</span></div>
+              </div>
+              <div class="ob-step">
+                <span class="ob-num">2</span>
+                <div class="ob-t"><b>中间写 SQL，点绿色「运行」</b><span>Ctrl+回车 也能运行，结果马上出现在下方控制台</span></div>
+              </div>
+              <div class="ob-step">
+                <span class="ob-num">3</span>
+                <div class="ob-t"><b>顶部「练习」做整套卷子</b><span>在线作答、交卷自动判分；「题库」里有老师分享的素材包</span></div>
+              </div>
+            </div>
+            <div class="onboard-acts">
+              <button class="btn primary" @click="trySampleQuery"><e-icon name="play" :size="13"></e-icon> 试跑一条查询</button>
+              <button class="btn soft" @click="openImport"><e-icon name="folder-open" :size="13"></e-icon> 导入自己的数据</button>
+              <button class="btn ghost" @click="switchView('drills')"><e-icon name="target" :size="13"></e-icon> 先看看练习</button>
+            </div>
+            <button class="icon-btn onboard-x" title="知道了，不再显示" @click="dismissHint('sql')"><e-icon name="x" :size="14"></e-icon></button>
+          </div>
           <section class="panel editor-pane">
             <div class="panel-h">
               <button class="btn soft m-only" @click="drawer='sql'"><e-icon name="menu" :size="14"></e-icon> 数据库</button>
@@ -371,11 +399,23 @@ html[data-theme="light"] body { background: #f6f8fa; }
           </div>
 
           <div v-else class="drill-blank paper-empty">
-            <e-icon name="target" :size="34"></e-icon>
-            <p v-if="papersBusy">正在加载…</p>
-            <p v-else-if="drillCourse==='wrong'">还没有错题，很棒！</p>
-            <p v-else>这个分类还没有练习题，等老师出题吧</p>
-            <p class="tip" v-if="user && user.canPublish && drillCourse!=='wrong'">点右上「出题」可以自己出题，或从题目包批量导入</p>
+            <span class="blank-ico"><e-icon name="target" :size="30"></e-icon></span>
+            <p class="blank-t" v-if="papersBusy">正在加载…</p>
+            <template v-else-if="drillCourse==='wrong'">
+              <p class="blank-t">还没有错题，很棒！</p>
+              <p class="tip">做错的题会自动收进这里，方便重做</p>
+            </template>
+            <template v-else>
+              <p class="blank-t">这个分类还没有试卷</p>
+              <p class="tip" v-if="user && user.canPublish">自己出题，或把整份试卷打包成 zip 一键导入</p>
+              <p class="tip" v-else>等老师发布试卷后，这里会显示整套卷子；也可以先去「题库」导入素材包自己练</p>
+              <div class="blank-acts">
+                <button v-if="user && user.canPublish" class="btn primary" @click="openAuthorHub">
+                  <e-icon name="plus" :size="13"></e-icon> 去出题 / 导入题目包</button>
+                <button class="btn soft" @click="switchView('community')">
+                  <e-icon name="globe" :size="13"></e-icon> 逛逛题库</button>
+              </div>
+            </template>
           </div>
         </div>
 
@@ -2995,6 +3035,6 @@ INSERT INTO course VALUES (1,'数学');</pre>
 </script>
 
 <script src="/navicat.js?v=1"></script>
-<script src="/app.js?v=162"></script>
+<script src="/app.js?v=164"></script>
 </body>
 </html>

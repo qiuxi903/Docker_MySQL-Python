@@ -2397,3 +2397,105 @@ input[type="text"], input[type="password"], textarea, select, .CodeMirror,
 }
 .pyproj-actions .row-x:hover { background: var(--btn-hover); color: var(--text); }
 .pyproj-actions .row-x[title="删除项目"]:hover { color: var(--err); background: var(--err-weak); }
+
+/* ==================================================================
+   整站观感优化层：保持结构与配色，统一细节、间距和可发现性
+   （追加在文件末尾，同优先级下覆盖前面的同名规则）
+   ================================================================== */
+
+/* ---- 顶部导航：胶囊选中态，当前页面一眼可见 ---- */
+#app > header { box-shadow: 0 1px 2px rgba(1,8,24,.04); }
+.nav { gap: 4px; padding: 8px 0; }
+.nav button {
+  border: 0; border-radius: 9px; height: 34px; align-self: center;
+  padding: 0 14px; font-size: 13px;
+}
+.nav button:hover { color: var(--text); background: var(--btn-hover); }
+.nav button.active { color: var(--accent); background: var(--accent-weak); }
+
+/* ---- 按钮 / 图标按钮：统一圆角、焦点环、禁用态 ---- */
+.btn { border-radius: 8px; }
+.btn.mini { border-radius: 7px; }
+.icon-btn { border-radius: 8px; }
+.btn.primary, .btn.run { box-shadow: 0 1px 2px rgba(1,8,24,.14); }
+.btn:disabled { opacity: .55; cursor: not-allowed; transform: none; box-shadow: none; }
+.btn:focus-visible, .icon-btn:focus-visible, .nav button:focus-visible,
+.paper-tab:focus-visible, .xsel-btn:focus-visible,
+.tbrow:focus-visible, .dbnode:focus-visible, .paper-card-main:focus-visible {
+  outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-weak);
+}
+.btn.ghost:focus-visible { border-color: var(--accent); }
+
+/* ---- 面板头：更高的可读层级 ---- */
+.panel-h { min-height: var(--panel-h-h); }
+.panel-h .panel-title { font-size: 12px; letter-spacing: .6px; }
+
+/* ---- 侧栏树：条目内缩圆角，选中加描边 ---- */
+.dbnode { margin: 1px 2px; border-radius: 8px; }
+.dbnode.sel { box-shadow: inset 0 0 0 1px var(--accent); }
+.tbrow { margin: 1px 2px; border-radius: 7px; }
+.db-tables { padding: 0 6px 4px 14px; }
+
+/* ---- 试卷卡片：悬停描边更明确 ---- */
+.paper-card:hover { border-color: var(--accent); box-shadow: 0 8px 24px rgba(1,8,24,.10); }
+.res-card { border-radius: 12px; }
+
+/* ---- 空状态：图标圆底 + 标题 + 操作按钮，让新人知道下一步点哪 ---- */
+.drill-blank .blank-ico {
+  width: 56px; height: 56px; border-radius: 16px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--accent-weak); color: var(--accent); margin-bottom: 4px;
+}
+.drill-blank .blank-t { font-size: 15px; font-weight: 600; color: var(--text); margin: 0; }
+.drill-blank .blank-acts { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; margin-top: 10px; }
+
+/* ---- 新手三步引导卡（MySQL 工作台顶部，无数据库时显示） ---- */
+.onboard {
+  position: relative; flex: 0 0 auto;
+  margin: 10px 12px 0; padding: 14px 44px 14px 16px;
+  background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--accent);
+  border-radius: 12px; box-shadow: 0 1px 3px rgba(1,8,24,.05);
+}
+.onboard-steps { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 14px; }
+.ob-step { display: flex; gap: 10px; min-width: 0; }
+.ob-num {
+  flex: 0 0 22px; height: 22px; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--accent-weak); color: var(--accent);
+  font-family: var(--mono); font-size: 12px; font-weight: 700;
+}
+.ob-t { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.ob-t b { font-size: 13px; }
+.ob-t span { font-size: 12px; color: var(--muted); line-height: 1.55; }
+.onboard-acts { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+.onboard-x { position: absolute; top: 8px; right: 8px; }
+
+/* ---- 登录页：功能点胶囊 ---- */
+.login-chips { display: flex; gap: 6px; justify-content: center; flex-wrap: wrap; margin-top: 12px; }
+.login-chips .chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 11.5px; color: var(--muted);
+  background: var(--btn-bg); border: 1px solid var(--line);
+  padding: 2px 9px; border-radius: 999px;
+}
+.login-chips .chip .e-icon { color: var(--accent); }
+.login-card { border-radius: 14px; }
+
+/* ---- 滚动条更轻 ---- */
+::-webkit-scrollbar { width: 9px; height: 9px; }
+
+/* ---- 手机底部栏：激活态更清楚，适配全面屏 ---- */
+.tabbar { padding-bottom: env(safe-area-inset-bottom, 0); }
+.tabbar button.active .e-icon { transform: translateY(-1px); }
+
+@media (max-width: 860px) {
+  /* 手机上引导卡要紧凑：只留步骤标题，按钮一行横滑，别把编辑器挤没 */
+  .onboard { margin: 8px; padding: 10px 34px 10px 10px; border-radius: 10px; }
+  .onboard-steps { grid-template-columns: 1fr; gap: 6px; }
+  .ob-step { align-items: center; }
+  .ob-t span { display: none; }
+  .ob-t b { font-size: 12.5px; }
+  .onboard-acts { margin-top: 8px; flex-wrap: nowrap; overflow-x: auto; padding-bottom: 2px; }
+  .onboard-acts .btn { flex: 0 0 auto; }
+  .onboard-x { top: 6px; right: 6px; }
+}

@@ -357,6 +357,7 @@ const App = {
       paperAutoRetryAt: 0,
       paperActive: false,      // 已经进入这套卷子的作答（哪怕一题没写）
       paperDescOpen: true,     // 做题时「数据库说明」默认展开，始终放在题目上方
+      hintOff: { sql: false, py: false, drills: false },  // 新手引导是否已关闭（按账号存本地）
       paperAllowPause: true,   // 本卷是否允许中途退出并暂停计时
       paperMaxResumes: 3,      // 不允许中途退出时，异常退出可续做次数
       paperResumeCount: 0,
@@ -856,6 +857,7 @@ const App = {
     enterApp(me) {
       this.booting = false;
       this.user = me.user;
+      this.loadHints();
       this.databases = me.databases || [];
       this.selectedDb = me.db || (this.databases[0] ? this.databases[0].name : "");
       this.dbTables = { [this.selectedDb]: me.tables || [] };
@@ -902,6 +904,25 @@ const App = {
       this.logged = false;
       this.drillDirty = false;
       localStorage.removeItem("lab_token");
+    },
+
+    /* ---------- 新手引导（按账号记忆是否关闭） ---------- */
+    loadHints() {
+      const who = (this.user && this.user.name) || "?";
+      let saved = null;
+      try { saved = JSON.parse(localStorage.getItem("lab_hint_off:" + who)); } catch (e) {}
+      this.hintOff = { sql: false, py: false, drills: false,
+                       ...(saved && typeof saved === "object" ? saved : {}) };
+    },
+    dismissHint(v) {
+      this.hintOff = { ...this.hintOff, [v]: true };
+      const who = (this.user && this.user.name) || "?";
+      try { localStorage.setItem("lab_hint_off:" + who, JSON.stringify(this.hintOff)); } catch (e) {}
+    },
+    // 引导卡上的「试跑一条查询」：填一条最简单的语句并运行
+    trySampleQuery() {
+      if (this.$refs.cmSqlRef) this.$refs.cmSqlRef.setValue("SHOW TABLES");
+      this.runSql();
     },
 
     async switchView(v) {
