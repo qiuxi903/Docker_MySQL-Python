@@ -387,7 +387,7 @@ const App = {
       paperAutoSubmitting: false,
       paperAutoRetryAt: 0,
       paperActive: false,      // 已经进入这套卷子的作答（哪怕一题没写）
-      paperDescOpen: true,     // 做题时「数据库说明」默认展开，始终放在题目上方
+      paperDescOpen: false,    // 「数据库说明」默认收成一行摘要，点开是浮层，不挤压做题区
       hintOff: { sql: false, py: false, drills: false },  // 新手引导是否已关闭（按账号存本地）
       paperAllowPause: true,   // 本卷是否允许中途退出并暂停计时
       paperMaxResumes: 3,      // 不允许中途退出时，异常退出可续做次数
@@ -1035,7 +1035,7 @@ const App = {
       }
       try {
         this.paperCurrent = await this.api(`/api/papers/${p.id}`);
-        this.paperDescOpen = true;
+        this.paperDescOpen = false;
         this.paperDeadline = 0;
         this.paperStartAt = 0;
         this.paperLimitMinutes = this.paperCurrent.timeLimitMinutes || 0;
@@ -1413,7 +1413,7 @@ const App = {
     },
     startPaper() {
       if (!this.paperCurrent || !this.paperCurrent.questions.length) return;
-      this.paperDescOpen = true;
+      this.paperDescOpen = false;
       const qs = this.paperCurrent.questions;
       const first = qs.find(q => !q.passed) || qs[0];
       this.startDrill(first);
