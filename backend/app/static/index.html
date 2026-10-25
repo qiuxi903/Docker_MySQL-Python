@@ -27,7 +27,7 @@ html[data-theme="light"] body { background: #f6f8fa; }
 <link rel="stylesheet" href="/vendor/codemirror/codemirror.css">
 <link rel="stylesheet" href="/vendor/codemirror/addon/hint/show-hint.css">
 <link rel="stylesheet" href="/fonts/misans/misans.css">
-<link rel="stylesheet" href="/style.css?v=162">
+<link rel="stylesheet" href="/style.css?v=163">
   <link rel="stylesheet" href="/navicat.css?v=22">
 </head>
 <body>
@@ -118,10 +118,12 @@ html[data-theme="light"] body { background: #f6f8fa; }
                   <span class="dbnode-name">{{ d.name }} <span v-if="d.primary" class="badge tiny">默认</span></span>
                   <span class="dbnode-sub">{{ d.tables }} 张表</span>
                 </span>
-                <e-icon :name="openDbs[d.name] ? 'chevron-down' : 'chevron-right'" :size="13" class="chev"
+                <e-icon name="chevron-down" :size="13" class="chev"
+                        :class="{ shut: !openDbs[d.name] }"
                         @click.stop="toggleDb(d.name)"></e-icon>
               </button>
-              <div v-show="openDbs[d.name]" class="db-tables">
+              <div class="db-tables" :class="{ open: openDbs[d.name] }" :aria-hidden="String(!openDbs[d.name])">
+                <div class="db-tables-in">
                 <div v-if="!(dbTables[d.name] || []).length" class="tbempty">空库</div>
                 <button v-for="t in dbTables[d.name] || []" :key="t.name" class="tbrow"
                         @click="openPreview(t.name, d.name)">
@@ -134,6 +136,7 @@ html[data-theme="light"] body { background: #f6f8fa; }
                   <button class="btn mini ghost" @click="openShareDlg(d)"><e-icon name="link" :size="12"></e-icon> 分享链接</button>
                   <button v-if="user && user.kind !== 'guest'" class="btn mini ghost" @click="openQuestionEditor(null, d.name)"><e-icon name="list" :size="12"></e-icon> 存为草稿</button>
                   <button v-if="!d.primary" class="btn mini ghost danger" @click="dropDb(d)"><e-icon name="trash" :size="12"></e-icon> 删除库</button>
+                </div>
                 </div>
               </div>
             </template>
