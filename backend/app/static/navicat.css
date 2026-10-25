@@ -770,6 +770,9 @@ tr.added td { background: rgba(46,160,67,.06); }
   flex: 1; height: 28px; border: 1px solid var(--line-strong); border-radius: 5px;
   background: var(--panel); color: var(--text); font: 12.5px var(--mono); padding: 0 8px;
 }
+.nc-cl-agg { max-width: 118px; }
+.nc-cl-gbhint { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.nc-fpick-star { font-weight: 700; color: var(--accent); }
 /* ＋ 点击 *.* 以添加字段（Navicat 同款虚线添加行） */
 .nc-bd-addtext {
   display: block; width: 100%; margin-top: 6px; padding: 5px 8px;

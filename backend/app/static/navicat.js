@@ -1368,7 +1368,7 @@ const NavicatPanel = {
       return {
         tables: [], joins: [], viewMode: "fields", tab: "select",
         distinct: false,
-        sel: [],          // SELECT 行 {tid, col, expr(自定义表达式), alias}
+        sel: [],          // SELECT 行 {tid, col, expr(自定义表达式), alias, agg(汇总)}
         where: [],        // {tid, col, op, val, andor}  andor=与上一行的连接（和/或）
         groupBy: [],      // {tid, col, expr}
         having: [],       // {expr(字段或聚合表达式), op, val, andor}
@@ -1376,6 +1376,30 @@ const NavicatPanel = {
         limit: { n: "", offset: "" },
         sql: "", search: "",
       };
+    },
+    aggOptions() {
+      return [["", "无"], ["SUM", "合计 SUM"], ["COUNT", "计数 COUNT"],
+              ["AVG", "平均 AVG"], ["MAX", "最大 MAX"], ["MIN", "最小 MIN"]];
+    },
+    needGroupBy() {
+      const sel = this.build.sel.filter(r => r.expr || r.col);
+      const hasAgg = sel.some(r => r.agg);
+      const hasPlain = sel.some(r => !r.agg);
+      return hasAgg && hasPlain && !this.build.groupBy.length && this.build.tables.length > 0;
+    },
+    // 一键把没有聚合的 SELECT 字段放进 GROUP BY（教学场景最常用：分组统计）
+    groupByFromSelect() {
+      const added = [];
+      for (const r of this.build.sel) {
+        if (r.agg || (!r.col && !r.expr)) continue;
+        if (this.build.groupBy.some(g => g.tid === r.tid && g.col === r.col && !g.expr && !r.expr)) continue;
+        this.build.groupBy.push({ tid: r.tid, col: r.col, expr: r.expr });
+        added.push(1);
+      }
+      if (added.length) {
+        this.build.tab = "group";
+        this.toast("已把 " + added.length + " 个非聚合字段放进 GROUP BY");
+      }
     },
     clauseTabs() {
       return [["select", "SELECT"], ["from", "FROM"], ["where", "WHERE"], ["group", "GROUP BY"],
@@ -1484,7 +1508,7 @@ const NavicatPanel = {
     toggleBuildField(t, col) {
       const row = this.selRowByField(t.id, col);
       if (row) this.build.sel = this.build.sel.filter(r => r !== row);
-      else this.build.sel.push({ tid: t.id, col, expr: "", alias: "" });
+      else this.build.sel.push({ tid: t.id, col, expr: "", alias: "", agg: "" });
     },
     isFieldOn(t, col) { return !!this.selRowByField(t.id, col); },
     removeSelRow(r) { this.build.sel = this.build.sel.filter(x => x !== r); },
@@ -1495,8 +1519,10 @@ const NavicatPanel = {
       return t ? this.colRef(t, r.col) : "";
     },
     selExprOf(r) {
-      const e = this.rowRefOf(r);
-      return e ? e + (r.alias ? " AS " + r.alias : "") : "";
+      let e = this.rowRefOf(r);
+      if (!e) return "";
+      if (r.agg) e = r.agg === "COUNT" && e.endsWith(".*") ? "COUNT(*)" : r.agg + "(" + e + ")";
+      return e + (r.alias ? " AS " + r.alias : "");
     },
     // WHERE 行：表切换时清字段
     condSetTable(r, tid) { r.tid = tid; r.col = ""; },
@@ -1544,7 +1570,7 @@ const NavicatPanel = {
     pickField(t, col) {
       const fp = this.fieldPick;
       if (!fp) return;
-      if (fp.clause === "select") this.build.sel.push({ tid: t.id, col, expr: "", alias: "" });
+      if (fp.clause === "select") this.build.sel.push({ tid: t.id, col, expr: "", alias: "", agg: "" });
       else if (fp.clause === "group") this.build.groupBy.push({ tid: t.id, col, expr: "" });
       else if (fp.clause === "order") this.build.orderBy.push({ tid: t.id, col, expr: "", dir: "ASC" });
       else if (fp.clause === "having") this.build.having.push({ tid: t.id, col, expr: "", op: "=", val: "", andor: "AND" });
@@ -1554,7 +1580,7 @@ const NavicatPanel = {
       const fp = this.fieldPick;
       const e = (fp.custom || "").trim();
       if (!e) { this.toast("填一个表达式，比如 SUM(price) 或 price * qty"); return; }
-      if (fp.clause === "select") this.build.sel.push({ tid: "", col: "", expr: e, alias: "" });
+      if (fp.clause === "select") this.build.sel.push({ tid: "", col: "", expr: e, alias: "", agg: "" });
       else if (fp.clause === "group") this.build.groupBy.push({ tid: "", col: "", expr: e });
       else if (fp.clause === "order") this.build.orderBy.push({ tid: "", col: "", expr: e, dir: "ASC" });
       else if (fp.clause === "having") this.build.having.push({ tid: "", col: "", expr: e, op: "=", val: "", andor: "AND" });

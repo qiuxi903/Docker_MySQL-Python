@@ -28,7 +28,7 @@ html[data-theme="light"] body { background: #f6f8fa; }
 <link rel="stylesheet" href="/vendor/codemirror/addon/hint/show-hint.css">
 <link rel="stylesheet" href="/fonts/misans/misans.css">
 <link rel="stylesheet" href="/style.css?v=160">
-  <link rel="stylesheet" href="/navicat.css?v=21">
+  <link rel="stylesheet" href="/navicat.css?v=22">
 </head>
 <body>
 <div id="app" v-cloak>
@@ -2659,10 +2659,10 @@ INSERT INTO course VALUES (1,'数学');</pre>
               </div>
               <div class="nc-bd-cpane">
 
-                <!-- SELECT：字段 + 别名 -->
+                <!-- SELECT：字段 + 汇总（SUM/COUNT/…）+ 别名 -->
                 <div v-show="build.tab === 'select'" class="nc-cl-wrap">
                   <table v-if="build.sel.length" class="nc-grid nc-cl-grid">
-                    <thead><tr><th>字段</th><th>别名</th><th></th></tr></thead>
+                    <thead><tr><th>字段</th><th>汇总</th><th>别名</th><th></th></tr></thead>
                     <tbody>
                       <tr v-for="(r, i) in build.sel" :key="i">
                         <td class="nc-cl-field">
@@ -2671,11 +2671,21 @@ INSERT INTO course VALUES (1,'数学');</pre>
                           </span>
                           <span class="nc-cl-ref">{{ rowRefOf(r) }}</span>
                         </td>
+                        <td>
+                          <select v-model="r.agg" class="nc-cl-agg"
+                                  title="聚合函数：选了以后这行变成 SUM(字段)/COUNT(字段)…；＊ 行选计数 = COUNT(*)">
+                            <option v-for="ao in aggOptions()" :key="ao[0]" :value="ao[0]">{{ ao[1] }}</option>
+                          </select>
+                        </td>
                         <td><input v-model.trim="r.alias" placeholder="—" title="输出列别名（AS）"></td>
                         <td><button class="nc-bd-rowdel" title="移除" @click="removeSelRow(r)">×</button></td>
                       </tr>
                     </tbody>
                   </table>
+                  <!-- 分组统计最常用的一步：有聚合 + 有普通字段时，一键把普通字段放进 GROUP BY -->
+                  <button v-if="needGroupBy()" class="nc-bd-addtext nc-cl-gbhint" @click="groupByFromSelect">
+                    ⚡ 有聚合函数了 —— 点这里把没聚合的字段一键放进 GROUP BY
+                  </button>
                   <button class="nc-bd-addtext" v-if="build.tables.length"
                           @click.stop="openFieldPick($event, 'select')">＋ 点击 *.* 以添加字段</button>
                   <div v-if="!build.tables.length" class="nc-empty">先在图表里加一张表（拖入后是 SELECT *），再来挑字段</div>
@@ -3420,6 +3430,8 @@ INSERT INTO course VALUES (1,'数学');</pre>
       <div class="nc-fpick-list">
         <div v-for="g in pickFields()" :key="g.t.id" class="nc-fpick-grp">
           <div class="nc-fpick-tbl"><e-icon name="table" :size="12"></e-icon>{{ g.t.alias || g.t.name }}</div>
+          <button type="button" class="nc-fpick-col nc-fpick-star" title="全部字段（t.*）；配「汇总·计数」= COUNT(*)"
+                  @click="pickField(g.t, '*')">＊</button>
           <button v-for="c in g.cols" :key="c.name" type="button" class="nc-fpick-col" @click="pickField(g.t, c.name)">
             {{ c.name }}<span v-if="c.key === 'PRI'" class="nc-fpick-pk" title="主键">键</span>
           </button>
@@ -3615,7 +3627,7 @@ INSERT INTO course VALUES (1,'数学');</pre>
 </div>
 </script>
 
-<script src="/navicat.js?v=11"></script>
+<script src="/navicat.js?v=12"></script>
 <script src="/app.js?v=167"></script>
 </body>
 </html>
