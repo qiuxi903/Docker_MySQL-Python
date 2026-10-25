@@ -2696,8 +2696,9 @@ const App = {
       finally { this.busy = false; }
     },
     async deletePyFile(name) {
-      // 临时文件（上传的）删除不需要确认，本来刷新就没了
-      const isTemp = (this.pyFiles.find(f => f.name === name) || {}).uploaded;
+      // 游客的上传文件是临时的，删除不需要确认；其余文件都确认
+      const isTemp = this.user?.kind === "guest" &&
+                     (this.pyFiles.find(f => f.name === name) || {}).uploaded;
       if (!isTemp && !await this.askConfirm("删除文件", `确定删除文件「${name}」？`, true)) return;
       try {
         if (this.pyCurrent === name && this.pySaveTimer) {

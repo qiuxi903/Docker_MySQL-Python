@@ -251,7 +251,7 @@ html[data-theme="light"] body { background: #f6f8fa; }
                   <button v-for="f in pyFiles" :key="f.name" class="tbrow" :class="{sel: pyCurrent===f.name}"
                           @click="openPyFile(f.name)">
                     <span class="tb-ico"><e-icon name="code" :size="13"></e-icon></span>
-                    <span class="tbname" :title="f.name">{{ f.name }}<span v-if="f.uploaded" class="badge tiny temp-badge">临时</span></span>
+                    <span class="tbname" :title="f.name">{{ f.name }}<span v-if="f.uploaded && user && user.kind==='guest'" class="badge tiny temp-badge" title="游客上传的文件：刷新或退出登录后自动清除">临时</span></span>
                     <span class="tbrows">{{ fmtSize(f.size) }}</span>
                     <span class="row-x" @click.stop="deletePyFile(f.name)" title="删除"><e-icon name="x" :size="11"></e-icon></span>
                   </button>
@@ -268,7 +268,7 @@ html[data-theme="light"] body { background: #f6f8fa; }
             <button class="btn soft block" @click="newPyFile"><e-icon name="plus" :size="14"></e-icon> 新建文件</button>
             <button class="btn soft block" @click="$refs.pyUploadFileEl.click()"><e-icon name="upload" :size="14"></e-icon> 上传到当前项目</button>
             <input type="file" ref="pyUploadFileEl" hidden accept=".py,text/x-python,text/plain" multiple @change="uploadPyFiles">
-            <p class="tip" style="margin:2px 0 0">不同项目的文件互不 import；文件按最近修改排序。上传的文件是临时的，刷新或退出登录会自动删除。</p>
+            <p class="tip" style="margin:2px 0 0">不同项目的文件互不 import；文件按最近修改排序。<template v-if="user && user.kind==='guest'">游客上传的文件是临时的，刷新或退出登录后清除；<a href="#" @click.prevent="logout()">注册</a>后永久保留。</template><template v-else>上传的文件永久保留，计入个人总容量（个人中心可看剩余）。</template></p>
           </div>
         </aside>
 
@@ -3673,6 +3673,6 @@ INSERT INTO course VALUES (1,'数学');</pre>
 </script>
 
 <script src="/navicat.js?v=12"></script>
-<script src="/app.js?v=169"></script>
+<script src="/app.js?v=170"></script>
 </body>
 </html>
