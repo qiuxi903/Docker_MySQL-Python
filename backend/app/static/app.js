@@ -191,6 +191,9 @@ const CmEditor = {
     const extra = this.buildExtra(this.mode);
     this.cm = CodeMirror.fromTextArea(this.$el, {
       mode: this.mode,
+      // contenteditable 输入模式：textarea 模式下中文输入法在已有文本中间打字
+      // 会把后面的内容顶掉（CM5 已知缺陷），官方推荐桌面也用它
+      inputStyle: "contenteditable",
       lineNumbers: true,
       matchBrackets: true,
       autoCloseBrackets: true,
@@ -233,10 +236,14 @@ const CmEditor = {
       document.fonts.ready.then(refreshGutter).catch(() => {});
     }
   },
+  unmounted() {
+    if (this._caretCleanup) this._caretCleanup();
+  },
   watch: {
     // 父组件异步拿到内容后要同步进来（编辑器可能在数据到达前就已挂载）
     value(v) {
-      if (this.cm && v !== this.cm.getValue()) this.cm.setValue(v);
+      // 输入法组合中（state.composing）不动编辑器内容，等上屏后再同步
+      if (this.cm && !this.cm.state.composing && v !== this.cm.getValue()) this.cm.setValue(v);
     },
     // 同一套题里可能既有 SQL 题又有 Python 题，切换时高亮和快捷键要跟着变
     mode(m) {
@@ -251,6 +258,68 @@ const CmEditor = {
        手感类似 Word；移动距离越远滑得越快，系统开了减少动态效果就不做。 */
     smoothCaret(cm) {
       if (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+
+      // contenteditable 输入模式：CM 不再自绘光标（交给浏览器原生插入符）。
+      // 自建一个跟随原生选区的平滑光标（FLIP 滑动，同 textarea 模式的手感），
+      // 原生插入符用 caret-color: transparent 隐藏。
+      if (cm.options.inputStyle === "contenteditable") {
+        const doc = cm.getWrapperElement().ownerDocument;
+        const dot = doc.createElement("div");
+        dot.className = "cm-smooth-caret";
+        doc.body.appendChild(dot);
+        cm.getWrapperElement().classList.add("cm-caret-hide");
+        let prev = null;
+        const apply = () => {
+          if (!cm.getWrapperElement().isConnected) return;
+          let rect = null;
+          if (cm.hasFocus()) {
+            const sel = doc.getSelection();
+            if (sel.rangeCount) {
+              const r = doc.createRange();
+              r.setStart(sel.focusNode, sel.focusOffset);
+              r.collapse(true);
+              rect = r.getBoundingClientRect();
+              if (!rect || (!rect.height && !rect.width && !rect.left && !rect.top)) rect = null;
+            }
+          }
+          if (!rect) { dot.style.opacity = "0"; prev = null; return; }
+          const now = { x: rect.left, y: rect.top, h: rect.height || 18 };
+          if (prev) {
+            const dist = Math.hypot(prev.x - now.x, prev.y - now.y);
+            if (dist > 0.5 && dist < 600) {
+              dot.style.transition = "none";
+              dot.style.transform = `translate(${prev.x - now.x}px, ${prev.y - now.y}px)`;
+              void dot.offsetWidth;                 // 强制回流，从旧位置起步
+              const dur = Math.min(140, 70 + dist * 0.35);
+              dot.style.transition = `transform ${dur}ms cubic-bezier(.25,.7,.3,1), opacity .12s`;
+              dot.style.transform = "";
+            }
+          }
+          dot.style.left = now.x + "px";
+          dot.style.top = now.y + "px";
+          dot.style.height = now.h + "px";
+          dot.style.opacity = "1";
+          prev = now;
+        };
+        const schedule = () => requestAnimationFrame(apply);
+        doc.addEventListener("selectionchange", schedule);
+        window.addEventListener("scroll", schedule, true);
+        window.addEventListener("resize", schedule);
+        cm.on("cursorActivity", schedule);
+        cm.on("scroll", schedule);
+        cm.on("focus", schedule);
+        cm.on("blur", schedule);
+        cm.on("change", schedule);
+        this._caretCleanup = () => {
+          doc.removeEventListener("selectionchange", schedule);
+          window.removeEventListener("scroll", schedule, true);
+          window.removeEventListener("resize", schedule);
+          dot.remove();
+        };
+        schedule();
+        return;
+      }
+
       let prev = null;
       const apply = () => {
         const el = cm.display && cm.display.cursorDiv &&

@@ -426,6 +426,12 @@ main { flex: 1; min-height: 0; position: relative; }
 [data-theme="dark"] .CodeMirror-linenumber { color: #6e7681; }
 .CodeMirror-activeline-background { background: var(--row-hover); }
 .CodeMirror-cursor { border-left: 2px solid var(--accent); }
+/* contenteditable 输入模式的自绘平滑光标（隐藏原生插入符，减少输入法干扰） */
+.cm-caret-hide .CodeMirror-code, .cm-caret-hide .CodeMirror-lines { caret-color: transparent; }
+.cm-smooth-caret {
+  position: fixed; width: 2px; border-radius: 1px;
+  background: var(--accent); pointer-events: none; z-index: 60; opacity: 0;
+}
 .cm-s-default .cm-keyword { color: #cf222e; font-weight: 600; }
 .cm-s-default .cm-string { color: #0a3069; }
 .cm-s-default .cm-string-2 { color: #0a3069; }
