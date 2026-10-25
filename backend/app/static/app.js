@@ -3509,6 +3509,16 @@ const App = {
       } catch (e) { this.toast(e.message); }
     },
     /* ---------- 容量显示 / 管理员设置容量 ---------- */
+    // 内网 / 网关地址：直连容器（没走反代）时看到的是 Docker 内部网关，不是学生真实 IP
+    isPrivateIp(ip) {
+      return /^(10\.|127\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|::1|localhost)/.test(String(ip || ""));
+    },
+    ipHint(ip) {
+      return this.isPrivateIp(ip)
+        ? "内网/网关地址 —— 这次登录是直连容器（来自本机、局域网或 Docker 网络）。" +
+          "经 nginx/宝塔等反向代理访问时会自动记录学生的真实公网/局域网 IP"
+        : "最近登录 IP";
+    },
     fmtBytes(n) {
       if (n === null || n === undefined) return "∞";
       if (n >= 1024 * 1024 * 1024) return (n / 1024 / 1024 / 1024).toFixed(2) + " GB";

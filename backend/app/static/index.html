@@ -1948,7 +1948,9 @@ INSERT INTO course VALUES (1,'数学');</pre>
               <div class="u-meta">
                 <span class="u-chip"><e-icon name="database" :size="11"></e-icon>{{ u.db }}</span>
                 <span v-if="u.dbCount>1" class="u-chip">{{ u.dbCount }} 个库</span>
-                <span class="u-chip"><e-icon name="globe" :size="11"></e-icon>{{ u.lastIp }}</span>
+                <span class="u-chip" :title="ipHint(u.lastIp)"
+                      :style="isPrivateIp(u.lastIp) ? 'border-style:dashed' : ''">
+                  <e-icon name="globe" :size="11"></e-icon>{{ u.lastIp }}<template v-if="isPrivateIp(u.lastIp)"> ?</template></span>
                 <span class="u-chip"><e-icon name="clock" :size="11"></e-icon>{{ u.lastSeen }}</span>
                 <span class="u-chip">登录 {{ u.lastLogin }}</span>
               </div>
@@ -3671,6 +3673,6 @@ INSERT INTO course VALUES (1,'数学');</pre>
 </script>
 
 <script src="/navicat.js?v=12"></script>
-<script src="/app.js?v=168"></script>
+<script src="/app.js?v=169"></script>
 </body>
 </html>
