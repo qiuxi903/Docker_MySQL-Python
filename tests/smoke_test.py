@@ -432,27 +432,131 @@ check("Python 项目：删除后清理文件",
       len(now.get("projects") or []) == 1 and now["projects"][0]["id"] == base_pid,
       str(now)[:160])
 
-print("== 8c. 上传的临时 py 文件 ==")
+print("== 8c. 上传的 py 文件：用户永久 / 游客临时 ==")
+# 注册用户：上传的文件永久保留（重新登录还在），不再随刷新/登出清理
 body, ct = multipart("files", "temp_up.py", "print('temp')\n")
 code, d = call("/api/pyfiles/upload", raw=body, ctype=ct, token=tok1)
 check("批量上传py", code == 200 and d.get("files") and d["files"][0]["name"] == "temp_up.py", str(d)[:200])
 code, d = call("/api/pyfiles", token=tok1)
 tf = [f for f in d.get("files", []) if f["name"] == "temp_up.py"]
-check("上传文件带临时标记", tf and tf[0].get("uploaded") is True, str(d)[:200])
+check("上传文件带 uploaded 标记", tf and tf[0].get("uploaded") is True, str(d)[:200])
+# 手动清理对注册用户是 no-op（只有游客的临时文件会被清）
 code, d = call("/api/pyfiles/clear-uploaded", token=tok1, method="POST")
-check("手动清理临时文件", code == 200 and d.get("removed", 0) >= 1, str(d)[:150])
+check("注册用户刷新清理不删文件", code == 200 and d.get("removed", 0) == 0, str(d)[:150])
 code, d = call("/api/pyfiles", token=tok1)
-check("清理后列表无临时文件", not any(f["name"] == "temp_up.py" for f in d.get("files", [])), str(d)[:200])
-# 登出清理：再传一个，登出，重新登录确认消失
-body, ct = multipart("files", "temp_out.py", "print('x')\n")
-code, d = call("/api/pyfiles/upload", raw=body, ctype=ct, token=tok1)
+check("注册用户上传文件仍在", any(f["name"] == "temp_up.py" for f in d.get("files", [])), str(d)[:200])
+# 登出再登录：仍然在
 code, d = call("/api/logout", token=tok1, method="POST")
 check("登出成功", code == 200, str(d)[:100])
 code, d = call("/api/login", {"mode": "login", "username": u1, "password": "Test1234abc"})
 check("重新登录", code == 200 and d.get("token"), str(d)[:100])
 tok1 = d.get("token", "")
 code, d = call("/api/pyfiles", token=tok1)
-check("登出后临时文件已删", not any(f["name"] == "temp_out.py" for f in d.get("files", [])), str(d)[:200])
+check("重新登录后上传文件还在（永久）", any(f["name"] == "temp_up.py" for f in d.get("files", [])), str(d)[:200])
+
+# 游客：上传的文件在登出后被清除
+_, dg = call("/api/login", {"mode": "guest"})
+tok_g2 = dg.get("token", "")
+check("游客登录2", bool(tok_g2), str(dg)[:100])
+code, d = call("/api/pyprojects", token=tok_g2)
+gp = (d.get("projects") or [{}])[0].get("id", 0)
+body, ct = multipart("files", "g_temp.py", "print('g')\n")
+code, d = call("/api/pyfiles/upload", raw=body, ctype=ct, token=tok_g2)
+check("游客上传成功", code == 200 and d.get("files"), f"{code} {str(d)[:150]}")
+code, d = call("/api/logout", token=tok_g2, method="POST")
+code, d = call("/api/pyfiles", token=tok_g2)
+check("游客登出后文件清除（会话失效）", code in (401, 400) or not any(
+    f["name"] == "g_temp.py" for f in d.get("files", [])), f"{code} {str(d)[:120]}")
+
+print("== 8e. Python 文件容量配额 ==")
+# 造一个专门的测试用户，方便设小配额
+uq = "quota" + uuid.uuid4().hex[:6]
+_, dq = call("/api/login", {"mode": "register", "username": uq, "password": "Test1234abc"})
+tokq = dq.get("token", "")
+check("配额测试用户注册", bool(tokq), str(dq)[:100])
+code, d = call("/api/pyprojects", token=tokq)
+qpid = (d.get("projects") or [{}])[0].get("id", 0)
+
+# 个人资料里有容量信息（默认配额）
+code, d = call("/api/me/profile", token=tokq)
+st = d.get("storage") or {}
+check("个人资料含容量信息", code == 200 and st.get("totalBytes") == 256 * 1024 * 1024
+      and st.get("usedBytes", 0) >= 0, str(d)[:200])
+
+# 管理员把这个用户的配额设成 1MB
+code, d = call(f"/api/admin/users?q={uq}", token=tok_admin)
+qu = (d.get("users") or [{}])[0]
+check("管理员找到配额用户", code == 200 and qu.get("username") == uq, str(d)[:150])
+uid = qu.get("id")
+code, d = call(f"/api/admin/users/{uid}/update", {"quota_mb": 1}, token=tok_admin, method="POST")
+check("管理员设置 1MB 配额", code == 200 and "quota_mb" in (d.get("changed") or []), str(d)[:150])
+# 列表里能看到配额与用量
+code, d = call(f"/api/admin/users?q={uq}", token=tok_admin)
+qu = (d.get("users") or [{}])[0]
+check("列表显示配额与用量", qu.get("quotaMb") == 1 and qu.get("usedBytes", -1) >= 0
+      and qu.get("unlimited") is False, str(qu)[:200])
+
+# 传 2 个 300KB 的 .py —— 第二个会超（1MB 配额，单文件上限 256KB 拦住第一个）
+big = "x = '" + "a" * 200_000 + "'\n"          # ~200KB
+body, ct = multipart("files", "q_big1.py", big)
+code, d = call("/api/pyfiles/upload", raw=body, ctype=ct, token=tokq)
+check("配额内上传成功", code == 200, f"{code} {str(d)[:150]}")
+body, ct = multipart("files", "q_big2.py", big)
+code, d = call("/api/pyfiles/upload", raw=body, ctype=ct, token=tokq)
+# 200KB*5=1MB 边界：2 个 200KB < 1MB，第 3 个开始超；再传 3 个直到被拦
+body, ct = multipart("files", "q_big3.py", big)
+code3, d3 = call("/api/pyfiles/upload", raw=body, ctype=ct, token=tokq)
+body, ct = multipart("files", "q_big4.py", big)
+code4, d4 = call("/api/pyfiles/upload", raw=body, ctype=ct, token=tokq)
+body, ct = multipart("files", "q_big5.py", big)
+code5, d5 = call("/api/pyfiles/upload", raw=body, ctype=ct, token=tokq)
+check("第5个还在配额内（5×200KB<1MB）", code5 == 200, f"{code5} {str(d5)[:120]}")
+body, ct = multipart("files", "q_big6.py", big)
+code6, d6 = call("/api/pyfiles/upload", raw=body, ctype=ct, token=tokq)
+check("超出配额被拒并带提示", code6 == 400 and "总容量" in str(d6.get("detail", "")),
+      f"{code6} {str(d6)[:150]}")
+# 编辑器保存同样受配额限制（单文件 <256KB，但总量超 1MB）
+code, d = call("/api/pyfiles/q_save.py", {"content": big}, token=tokq, method="PUT")
+check("保存超配额被拒", code == 400 and "总容量" in str(d.get("detail", "")), f"{code} {str(d)[:150]}")
+# 个人资料显示用量逼近/超出
+code, d = call("/api/me/profile", token=tokq)
+st = d.get("storage") or {}
+check("个人资料显示用量", st.get("usedBytes", 0) >= 800_000, str(st)[:150])
+
+# 边界：把配额调到比已用量还小 → 不删文件，但锁住新上传
+code, d = call(f"/api/admin/users/{uid}/update", {"quota_mb": 0}, token=tok_admin, method="POST")
+check("管理员调小配额（0MB）", code == 200, str(d)[:120])
+body, ct = multipart("files", "q_small.py", "print(1)\n")
+code, d = call("/api/pyfiles/upload", raw=body, ctype=ct, token=tokq)
+check("配额调小后上传被锁", code == 400 and "总容量" in str(d.get("detail", "")), f"{code} {str(d)[:150]}")
+code, d = call("/api/pyfiles", token=tokq)
+check("已有文件不被自动删除", sum(1 for f in d.get("files", [])) >= 4, str(d)[:120])
+
+# 恢复默认 + 设为无限
+code, d = call(f"/api/admin/users/{uid}/update", {"quota_reset": True}, token=tok_admin, method="POST")
+check("恢复默认配额", code == 200, str(d)[:120])
+code, d = call(f"/api/admin/users?q={uq}", token=tok_admin)
+qu = (d.get("users") or [{}])[0]
+check("恢复默认后 quotaMb=NULL", qu.get("quotaMb") is None, str(qu)[:120])
+code, d = call(f"/api/admin/users/{uid}/update", {"quota_mb": -1}, token=tok_admin, method="POST")
+code, d = call(f"/api/admin/users?q={uq}", token=tok_admin)
+qu = (d.get("users") or [{}])[0]
+check("设为无限", qu.get("unlimited") is True and qu.get("quotaMb") == -1, str(qu)[:120])
+body, ct = multipart("files", "q_free.py", big)
+code, d = call("/api/pyfiles/upload", raw=body, ctype=ct, token=tokq)
+check("无限容量随便传", code == 200, f"{code} {str(d)[:120]}")
+
+# 管理员自己：无限
+code, d = call("/api/me/profile", token=tok_admin)
+st = d.get("storage") or {}
+check("管理员无限容量", st.get("unlimited") is True, str(st)[:120])
+# 不能给管理员设配额
+code, d = call("/api/admin/users?q=admin", token=tok_admin)
+au = [u for u in (d.get("users") or []) if u.get("role") == "admin"]
+aid = au[0]["id"] if au else 0
+code, d = call(f"/api/admin/users/{aid}/update", {"quota_mb": 5}, token=tok_admin, method="POST")
+check("管理员不能被设配额（本来就无限）", code == 400 and "无限" in str(d.get("detail", "")),
+      f"{code} {str(d)[:130]}")
 
 print("== 8d. 题目：草稿 → 发布 → 一键导入 ==")
 # 发布权限：新账号默认没有；管理员可开通

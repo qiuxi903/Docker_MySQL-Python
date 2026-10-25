@@ -23,6 +23,7 @@ ACTIONS = {
     "admin_enable": "启用账号", "admin_delete": "删除账号",
     "admin_grant": "开通出题权限", "admin_revoke": "收回出题权限",
     "admin_kick": "强制下线",
+    "admin_quota": "管理员调整容量",
 }
 
 
@@ -79,6 +80,10 @@ def _row_account(r) -> dict:
         "disabled": bool(r[7]), "lastLogin": str(r[8]) if r[8] else "-",
         "lastSeen": str(r[9]) if r[9] else "-", "sessions": int(r[10] or 0),
         "regIp": r[11] or "-", "lastIp": r[12] or "-", "dbCount": int(r[13] or 0),
+        # 容量：quotaMb 原始值（NULL=默认 / -1=无限）；totalBytes/usedBytes 是换算后的
+        "quotaMb": None if r[14] is None else int(r[14]),
+        "unlimited": r[15] == "admin" or (r[14] is not None and int(r[14]) < 0),
+        "usedBytes": int(r[16] or 0),
     }
 
 
@@ -114,6 +119,7 @@ def profile(account: dict) -> dict:
         raise UserError("账号不存在")
     return {
         "username": account["display"], "kind": account["kind"], "role": account["role"],
+        "storage": sessions.quota_info(account),
         "canPublish": account["role"] == "admin" or bool(r[3]),
         "disabled": bool(r[4]),
         "createdAt": str(r[0]), "lastLogin": str(r[1]) if r[1] else "-",
@@ -164,7 +170,10 @@ def logout_all(account: dict, keep_token: str = ""):
 _ACCOUNT_COLS = ("a.id, a.username, a.kind, a.role, a.db_name, a.created_at, a.can_publish, "
                  "a.disabled, a.last_login_at, MAX(s.last_seen), COUNT(DISTINCT s.token), "
                  "a.reg_ip, a.last_ip, "
-                 "(SELECT COUNT(*) FROM {meta}.dbs d WHERE d.account_id=a.id)")
+                 "(SELECT COUNT(*) FROM {meta}.dbs d WHERE d.account_id=a.id), "
+                 "a.quota_mb, a.role, "
+                 "(SELECT COALESCE(SUM(LENGTH(f.content)),0) FROM {meta}.py_files f "
+                 " WHERE f.account_id=a.id)")
 
 
 def list_users(kind: str = "user", q: str = "", page: int = 1, size: int = 50,
@@ -339,6 +348,34 @@ def _set_perm(account_id: int, allow: bool):
         conn.close()
 
 
+def _set_quota(account_id: int, fields: dict, role: str, username: str, operator: dict):
+    """管理员设置单个用户的 Python 文件总容量。
+
+    fields: quota_mb（int MB；-1=无限）或 quota_reset=True（恢复默认配额）。
+    允许把配额调到比当前已用量还小：已有文件不删，只是锁住新的上传/增写，
+    用户会看到「超出 XX，删文件或找老师扩容」的提示。
+    """
+    if role == "admin":
+        raise UserError("管理员本来就是无限容量，不用设置")
+    conn = root_conn(C.META_DB)
+    try:
+        with conn.cursor() as cur:
+            if fields.get("quota_reset"):
+                cur.execute("UPDATE accounts SET quota_mb=NULL WHERE id=%s", (account_id,))
+                note = "恢复默认配额"
+            else:
+                mb = int(fields["quota_mb"])
+                if mb < 0 and mb != -1:
+                    raise UserError("容量只能是正整数 MB，或 -1 表示无限")
+                if mb > 1024 * 1024:
+                    raise UserError("单个用户最多设置 1 TB")
+                cur.execute("UPDATE accounts SET quota_mb=%s WHERE id=%s", (mb, account_id))
+                note = "无限" if mb == -1 else f"{mb} MB"
+    finally:
+        conn.close()
+    log(account_id, username, "", "admin_quota", True, f"{note}（由 {operator['display']} 操作）")
+
+
 def update(account_id: int, fields: dict, operator: dict) -> dict:
     """管理员改用户：出题权限 / 禁用 / 重置密码。只改传了的字段。"""
     conn = root_conn(C.META_DB)
@@ -355,6 +392,10 @@ def update(account_id: int, fields: dict, operator: dict) -> dict:
     if kind == "guest" and ("can_publish" in fields or "disabled" in fields):
         raise UserError("游客不支持这些设置")
     changed = []
+
+    if "quota_mb" in fields or fields.get("quota_reset"):
+        _set_quota(account_id, fields, role, username, operator)
+        changed.append("quota_mb")
 
     if "can_publish" in fields:
         allow = bool(fields["can_publish"])

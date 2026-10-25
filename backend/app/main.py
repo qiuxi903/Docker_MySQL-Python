@@ -73,10 +73,7 @@ async def no_cache_frontend(request: Request, call_next):
 @app.middleware("http")
 async def rate_limit(request: Request, call_next):
     if request.url.path.startswith("/api/"):
-        if C.TRUST_PROXY and request.headers.get("x-forwarded-for"):
-            ip = request.headers["x-forwarded-for"].split(",")[0].strip()
-        else:
-            ip = request.client.host if request.client else "?"
+        ip = client_ip(request) or "?"
         dq = _buckets[ip]
         now = time.monotonic()
         dq.append(now)
@@ -90,11 +87,29 @@ async def rate_limit(request: Request, call_next):
 # ---------- 工具 ----------
 
 def client_ip(request: Request) -> str:
-    """真实客户端 IP（反代模式下取 X-Forwarded-For 第一段）。"""
-    if C.TRUST_PROXY:
-        fwd = request.headers.get("x-forwarded-for", "")
-        if fwd:
-            return fwd.split(",")[0].strip()[:64]
+    """真实客户端 IP。
+
+    有反代头就信反代头（Nginx/宝塔/frp 会带 X-Forwarded-For / X-Real-IP）；
+    直连时用 socket 来源。注意：Docker Desktop 的端口映射会把来源改写成内部网关 IP，
+    那种部署要在宿主机套一层反向代理才能看到学生真实 IP。
+    """
+    import ipaddress
+
+    def _valid(s: str) -> bool:
+        try:
+            ipaddress.ip_address(s)
+            return True
+        except ValueError:
+            return False
+
+    fwd = request.headers.get("x-forwarded-for", "")
+    for part in fwd.split(","):
+        part = part.strip()
+        if part and _valid(part):
+            return part[:64]
+    real = request.headers.get("x-real-ip", "").strip()
+    if real and _valid(real):
+        return real[:64]
     return (request.client.host if request.client else "")[:64]
 
 
@@ -176,10 +191,13 @@ def api_logout(request: Request):
 
 @app.post("/api/pyfiles/clear-uploaded")
 def api_pyfiles_clear_uploaded(request: Request):
-    """删除当前账号所有「上传的临时 py 文件」（刷新页面时前端调用）。"""
+    """清掉「上传的临时 py 文件」——只对游客生效（刷新页面时前端调用）。
+
+    注册用户上传的文件是永久的，占用个人总容量，重新登录后仍然在。
+    """
     a = acct(sess(request))
-    n = sessions.pyfiles_delete_uploaded(a["id"])
-    return {"removed": n}
+    n = sessions.pyfiles_delete_uploaded(a["id"], guest_only=True)
+    return {"removed": n, "guest": a.get("kind") == "guest"}
 
 
 @app.get("/api/me")
@@ -591,6 +609,12 @@ async def api_pyfiles_upload(request: Request, files: list[UploadFile] = File(..
             raise HTTPException(400, f"文件 {filename} 不是 UTF-8 编码")
         uploads.append((name, content))
 
+    # 总容量校验：这次上传的全部新字节（同名覆盖在 pyfiles_unique_name 后都是新文件名）
+    try:
+        sessions.quota_check(a, sum(len(c.encode("utf-8")) for _, c in uploads))
+    except AuthError as e:
+        raise HTTPException(400, str(e))
+
     saved = []
     existing = {f["name"].casefold() for f in current}
     for name, content in uploads:
@@ -636,6 +660,12 @@ def api_pyfile_save(name: str, b: PyfileSaveBody, request: Request, projectId: i
         raise HTTPException(400, str(e))
     if len(current) >= sessions.PYFILE_MAX_COUNT and not exists:
         raise HTTPException(400, f"文件数量超过上限（{sessions.PYFILE_MAX_COUNT} 个）")
+    # 总容量校验：覆盖已有文件时按「新大小 − 旧大小」计
+    old_size = len(exists["content"].encode("utf-8")) if exists else 0
+    try:
+        sessions.quota_check(a, len(b.content.encode("utf-8")), old_size)
+    except AuthError as e:
+        raise HTTPException(400, str(e))
     sessions.pyfiles_save(a["id"], name, b.content, project_id=projectId)
     return {"name": name, "size": len(b.content.encode("utf-8"))}
 
@@ -932,6 +962,9 @@ class AdminUpdateBody(BaseModel):
     can_publish: bool | None = None
     disabled: bool | None = None
     password: str = ""
+    # Python 文件总容量（MB）：-1=无限；不传=不改；quota_reset=True 恢复默认
+    quota_mb: int | None = None
+    quota_reset: bool = False
 
 
 class AdminBatchBody(BaseModel):
@@ -970,6 +1003,10 @@ def api_admin_user_update(uid: int, b: AdminUpdateBody, request: Request):
         fields["disabled"] = b.disabled
     if b.password:
         fields["password"] = b.password
+    if b.quota_mb is not None:
+        fields["quota_mb"] = b.quota_mb
+    if b.quota_reset:
+        fields["quota_reset"] = True
     if not fields:
         raise HTTPException(400, "没有要修改的内容")
     try:

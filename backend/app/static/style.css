@@ -2515,3 +2515,21 @@ input[type="text"], input[type="password"], textarea, select, .CodeMirror,
   .onboard-acts .btn { flex: 0 0 auto; }
   .onboard-x { top: 6px; right: 6px; }
 }
+
+/* ================= 容量条（个人中心 / 管理后台） ================= */
+.quota-bar {
+  height: 10px; border-radius: 999px; background: #e3e8ef;
+  overflow: hidden; margin: 8px 0 6px; position: relative;
+}
+[data-theme="dark"] .quota-bar { background: #2b323b; }
+.quota-bar.sm { height: 6px; margin: 6px 0 0; flex: 1 1 90px; }
+.quota-bar.over { background: rgba(214, 69, 69, .18); }
+.quota-fill {
+  height: 100%; border-radius: 999px;
+  background: linear-gradient(90deg, #4c7ddb, #4caf7d);
+  transition: width .25s ease;
+}
+.quota-fill.over { background: #d64545; }
+.ud-line.warn, .warn { color: #c93b3b; }
+.u-quota { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+.u-quota-t { font-size: 11px; color: #7b8794; white-space: nowrap; }

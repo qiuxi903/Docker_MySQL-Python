@@ -27,7 +27,7 @@ html[data-theme="light"] body { background: #f6f8fa; }
 <link rel="stylesheet" href="/vendor/codemirror/codemirror.css">
 <link rel="stylesheet" href="/vendor/codemirror/addon/hint/show-hint.css">
 <link rel="stylesheet" href="/fonts/misans/misans.css">
-<link rel="stylesheet" href="/style.css?v=160">
+<link rel="stylesheet" href="/style.css?v=161">
   <link rel="stylesheet" href="/navicat.css?v=22">
 </head>
 <body>
@@ -1952,6 +1952,16 @@ INSERT INTO course VALUES (1,'数学');</pre>
                 <span class="u-chip"><e-icon name="clock" :size="11"></e-icon>{{ u.lastSeen }}</span>
                 <span class="u-chip">登录 {{ u.lastLogin }}</span>
               </div>
+              <div class="u-quota" v-if="u.kind==='user' && u.role!=='admin'">
+                <div class="quota-bar sm" :class="{over: quotaTotalBytes(u) !== null && u.usedBytes > quotaTotalBytes(u)}">
+                  <div class="quota-fill"
+                       :class="{over: quotaTotalBytes(u) !== null && u.usedBytes > quotaTotalBytes(u)}"
+                       :style="{ width: quotaPct(u) + '%' }"></div>
+                </div>
+                <span class="u-quota-t">
+                  {{ fmtBytes(u.usedBytes) }}<template v-if="quotaTotalBytes(u) !== null"> / {{ fmtBytes(quotaTotalBytes(u)) }}</template><template v-else> / ∞</template>
+                </span>
+              </div>
             </div>
             <div class="u-card-act">
               <button class="btn mini" @click="openUserDetail(u)">详情</button>
@@ -1960,6 +1970,8 @@ INSERT INTO course VALUES (1,'数学');</pre>
                   {{ u.canPublish ? '收回出题' : '开通出题' }}
                 </button>
                 <button class="btn mini" @click="resetPw(u)">重置密码</button>
+                <button class="btn mini" title="设置 Python 文件总容量（MB / 无限 / 默认）" @click="setUserQuota(u)">设容量</button>
+                <button class="btn mini" title="在当前容量基础上追加 256MB" @click="addUserQuota(u, 256)">+256MB</button>
                 <button class="btn mini" @click="toggleDisabled(u)">{{ u.disabled ? '解禁' : '禁用' }}</button>
                 <button class="btn mini danger" @click="deleteUser(u)">删除</button>
               </template>
@@ -2024,6 +2036,13 @@ INSERT INTO course VALUES (1,'数学');</pre>
         </div>
         <label class="f">最近登录</label>
         <p class="ud-line">{{ userDetail.user.lastLogin }} · 注册 {{ userDetail.user.createdAt }}</p>
+        <p class="ud-line" v-if="userDetail.user.role!=='admin'">
+          Python 容量：{{ fmtBytes(userDetail.user.usedBytes) }}<template v-if="quotaTotalBytes(userDetail.user) !== null"> / {{ fmtBytes(quotaTotalBytes(userDetail.user)) }}</template><template v-else> / 无限</template>
+          <template v-if="userDetail.user.role!=='admin' && quotaTotalBytes(userDetail.user) !== null && userDetail.user.usedBytes > quotaTotalBytes(userDetail.user)">
+            <b class="warn">（已超出 {{ fmtBytes(userDetail.user.usedBytes - quotaTotalBytes(userDetail.user)) }}，上传被锁）</b>
+          </template>
+          <button class="btn mini" style="margin-left:8px" @click="setUserQuota(userDetail.user)">调整</button>
+        </p>
         <label class="f">IP</label>
         <p class="ud-line">注册 {{ userDetail.user.regIp }} · 最近 {{ userDetail.user.lastIp }}</p>
         <label class="f">数据库（{{ userDetail.databases.length }}）</label>
@@ -2081,10 +2100,34 @@ INSERT INTO course VALUES (1,'数学');</pre>
           <div class="ud-stat"><b>{{ profile.stats.drillsPassed }}</b><span>练习题通过</span></div>
           <div class="ud-stat"><b>{{ profile.stats.submissions }}</b><span>判分次数</span></div>
         </div>
+        <label class="f">Python 文件容量</label>
+        <template v-if="profile.storage">
+          <template v-if="profile.storage.unlimited">
+            <p class="ud-line"><b>无限容量</b> · 已用 {{ fmtBytes(profile.storage.usedBytes) }}</p>
+          </template>
+          <template v-else>
+            <div class="quota-bar" :class="{over: profile.storage.overBytes > 0}">
+              <div class="quota-fill" :class="{over: profile.storage.overBytes > 0}"
+                   :style="{ width: Math.min(100, profile.storage.percent) + '%' }"></div>
+            </div>
+            <p class="ud-line">
+              已用 {{ fmtBytes(profile.storage.usedBytes) }} / {{ fmtBytes(profile.storage.totalBytes) }}
+              · 剩余 <b>{{ fmtBytes(profile.storage.remainingBytes) }}</b>
+              <template v-if="profile.storage.percent >= 80 && profile.storage.overBytes === 0">
+                （快满了，删点不用的文件）
+              </template>
+            </p>
+            <p class="ud-line warn" v-if="profile.storage.overBytes > 0">
+              <b>已超出配额 {{ fmtBytes(profile.storage.overBytes) }}</b>：
+              上传和保存会被拒绝。删掉一些文件腾出空间，或请老师在「用户管理」里扩容。
+            </p>
+          </template>
+        </template>
+
         <label class="f">账号信息</label>
         <p class="ud-line">注册于 {{ profile.createdAt }} · 最近登录 {{ profile.lastLogin }}</p>
         <p class="ud-line">注册 IP {{ profile.regIp }} · 最近 IP {{ profile.lastIp }}</p>
-        <p class="ud-line" v-if="profile.kind==='guest'"><b>你现在是游客</b>：数据保留 7 天，注册账号后换设备也能继续用。</p>
+        <p class="ud-line" v-if="profile.kind==='guest'"><b>你现在是游客</b>：数据保留 7 天，上传的文件在刷新或退出登录后清除；注册账号后文件永久保留。</p>
 
         <template v-if="profile.kind==='user'">
           <label class="f">修改密码</label>
@@ -3628,6 +3671,6 @@ INSERT INTO course VALUES (1,'数学');</pre>
 </script>
 
 <script src="/navicat.js?v=12"></script>
-<script src="/app.js?v=167"></script>
+<script src="/app.js?v=168"></script>
 </body>
 </html>

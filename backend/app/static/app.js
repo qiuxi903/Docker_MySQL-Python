@@ -907,12 +907,14 @@ const App = {
       this.logged = true;
       this.initPyFiles();
       this.checkPendingShare();
-      // 上传的临时 py 文件按需求"每次刷新即删"：进应用时先清一次
-      this.api("/api/pyfiles/clear-uploaded", { method: "POST" })
-        .then(() => {
-          this.refreshPyList();
-          this.loadPyProjects().catch(() => {});
-        }).catch(() => {});
+      // 游客的上传文件是临时的：刷新页面就清掉；注册用户的上传文件永久保留
+      if ((me.user && me.user.kind) === "guest") {
+        this.api("/api/pyfiles/clear-uploaded", { method: "POST" })
+          .then(() => {
+            this.refreshPyList();
+            this.loadPyProjects().catch(() => {});
+          }).catch(() => {});
+      }
     },
 
     async logout() {
@@ -2657,7 +2659,9 @@ const App = {
         this.pyOpenFiles = Array.from(new Set([...this.pyOpenFiles, ...result.files.map(f => f.name)]));
         const last = result.files[result.files.length - 1];
         if (last) await this.openPyFile(last.name);
-        this.toast(`已上传 ${result.files.length} 个 Python 文件`);
+        this.toast(`已上传 ${result.files.length} 个 Python 文件` +
+                   ((this.user && this.user.kind) === "guest"
+                     ? "（游客文件是临时的：刷新或退出登录后自动清除）" : ""));
       } catch (e) { this.toast(e.message); }
       finally { this.busy = false; }
     },
@@ -3502,6 +3506,59 @@ const App = {
         this.toast(next ? `已禁用「${u.username}」` : `已解禁「${u.username}」`);
         await this.loadOverview();
         await this.loadAdminList(this.adminPage);
+      } catch (e) { this.toast(e.message); }
+    },
+    /* ---------- 容量显示 / 管理员设置容量 ---------- */
+    fmtBytes(n) {
+      if (n === null || n === undefined) return "∞";
+      if (n >= 1024 * 1024 * 1024) return (n / 1024 / 1024 / 1024).toFixed(2) + " GB";
+      if (n >= 1024 * 1024) return (n / 1024 / 1024).toFixed(1) + " MB";
+      return Math.max(0, Math.round(n / 1024)) + " KB";
+    },
+    // 用户卡片/详情里的总量（后端给的 usedBytes + quotaMb/unlimited）
+    quotaTotalBytes(u) {
+      if (u.unlimited || u.role === "admin") return null;
+      const mb = (u.quotaMb === null || u.quotaMb === undefined) ? 256 : u.quotaMb;
+      return mb < 0 ? null : mb * 1024 * 1024;
+    },
+    quotaPct(u) {
+      const total = this.quotaTotalBytes(u);
+      if (total === null) return 0;
+      return Math.min(100, Math.round((u.usedBytes || 0) * 100 / total));
+    },
+    async setUserQuota(u) {
+      // 设置总容量：输入 MB 数（-1 无限、default 恢复默认），或用快捷按钮追加
+      const cur = u.unlimited ? "无限" : ((u.quotaMb === null || u.quotaMb === undefined) ? "默认 256MB" : u.quotaMb + " MB");
+      const v = await this.askText(
+        `设置「${u.username}」的 Python 文件总容量`,
+        `当前：${cur} · 已用 ${this.fmtBytes(u.usedBytes)}\n` +
+        `输入数字（MB）；输 -1 = 无限；输 default = 恢复默认（256MB）`, "");
+      if (v === null || v === undefined || v === "") return;
+      const s = String(v).trim().toLowerCase();
+      try {
+        if (s === "default" || s === "默认" || s === "d") {
+          await this.api(`/api/admin/users/${u.id}/update`, { method: "POST",
+            body: { quota_reset: true } });
+          this.toast(`已把 ${u.username} 的容量恢复为默认`);
+        } else {
+          const mb = parseInt(s, 10);
+          if (!isFinite(mb)) { this.toast("输入数字（MB）、-1（无限）或 default（默认）"); return; }
+          await this.api(`/api/admin/users/${u.id}/update`, { method: "POST",
+            body: { quota_mb: mb } });
+          this.toast(`已把 ${u.username} 的容量设为 ${mb === -1 ? "无限" : mb + " MB"}`);
+        }
+        this.loadAdminList(this.adminPage);
+        if (this.userDetail && this.userDetail.user.id === u.id) this.openUserDetail(u);
+      } catch (e) { this.toast(e.message); }
+    },
+    async addUserQuota(u, mb) {
+      // 快捷追加容量：在当前总量的基础上加
+      const cur = (u.quotaMb === null || u.quotaMb === undefined) ? 256 : (u.quotaMb < 0 ? 1073741824 : u.quotaMb);
+      try {
+        await this.api(`/api/admin/users/${u.id}/update`, { method: "POST",
+          body: { quota_mb: cur + mb } });
+        this.toast(`已给 ${u.username} 追加 ${mb} MB`);
+        this.loadAdminList(this.adminPage);
       } catch (e) { this.toast(e.message); }
     },
     async openUserDetail(u) {

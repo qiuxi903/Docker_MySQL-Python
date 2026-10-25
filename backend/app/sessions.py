@@ -52,6 +52,7 @@ def _init_meta():
                     disabled TINYINT(1) NOT NULL DEFAULT 0,
                     last_login_at DATETIME NULL,
                     password_changed_at DATETIME NULL,
+                    quota_mb INT NULL,
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             """)
@@ -63,7 +64,9 @@ def _init_meta():
             for _col, _def in (("disabled", "TINYINT(1) NOT NULL DEFAULT 0"),
                                ("last_login_at", "DATETIME NULL"),
                                ("password_changed_at", "DATETIME NULL"),
-                               ("reg_ip", "VARCHAR(64) NULL"), ("last_ip", "VARCHAR(64) NULL")):
+                               ("reg_ip", "VARCHAR(64) NULL"), ("last_ip", "VARCHAR(64) NULL"),
+                               # Python 文件总容量（MB）：NULL=用默认配额，-1=无限
+                               ("quota_mb", "INT NULL")):
                 try:
                     cur.execute(f"ALTER TABLE {q_ident(C.META_DB)}.accounts "
                                 f"ADD COLUMN {_col} {_def}")
@@ -595,6 +598,68 @@ def pyfiles_contents(account_id: int, project_id: int | None = None) -> dict[str
         conn.close()
 
 
+# ---------- Python 文件容量配额 ----------
+
+def quota_total_bytes(account: dict):
+    """该账号的总容量（字节）；None = 无限（管理员或显式 -1）。"""
+    if account.get("role") == "admin":
+        return None
+    q = account.get("quota_mb")
+    if q is None:
+        q = C.DEFAULT_QUOTA_MB
+    q = int(q)
+    if q < 0:
+        return None
+    return q * 1024 * 1024
+
+
+def pyfiles_usage_bytes(account_id: int) -> int:
+    """当前账号 Python 文件已占用的字节数。"""
+    conn = root_conn(C.META_DB)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT COALESCE(SUM(LENGTH(content)),0) FROM py_files"
+                        " WHERE account_id=%s", (account_id,))
+            return int(cur.fetchone()[0] or 0)
+    finally:
+        conn.close()
+
+
+def quota_info(account: dict) -> dict:
+    """个人中心 / 管理端共用的容量信息。"""
+    total = quota_total_bytes(account)
+    used = pyfiles_usage_bytes(account["id"])
+    info = {"unlimited": total is None, "totalBytes": total, "usedBytes": used}
+    if total is not None:
+        info["remainingBytes"] = max(0, total - used)
+        info["overBytes"] = max(0, used - total)
+        info["percent"] = min(100, round(used * 100 / total, 1)) if total else 100
+    else:
+        info["remainingBytes"] = None
+        info["overBytes"] = 0
+        info["percent"] = 0
+    return info
+
+
+def quota_check(account: dict, add_bytes: int, replace_bytes: int = 0):
+    """写入前校验：add_bytes 是新写入量，replace_bytes 是其中覆盖旧文件的旧大小。
+
+    超出时抛 AuthError（main.py 统一转 400 给前端提示）。
+    """
+    total = quota_total_bytes(account)
+    if total is None:
+        return
+    if add_bytes <= replace_bytes:
+        return   # 覆盖后没变大，不用校验
+    used = pyfiles_usage_bytes(account["id"])
+    over = (used - replace_bytes) + add_bytes - total
+    if over > 0:
+        mb = lambda n: f"{n / 1024 / 1024:.2f} MB" if n >= 1024 * 1024 else f"{n / 1024:.1f} KB"
+        raise AuthError(
+            f"超过 Python 文件总容量（{mb(total)}）：这次要写 {mb(add_bytes)}，"
+            f"超出 {mb(over)}。删掉一些不需要的文件，或请老师在用户管理里扩容。")
+
+
 def pyfiles_save(account_id: int, name: str, content: str, uploaded: bool = False,
                  project_id: int | None = None):
     conn = root_conn(C.META_DB)
@@ -612,7 +677,24 @@ def pyfiles_save(account_id: int, name: str, content: str, uploaded: bool = Fals
         conn.close()
 
 
-def pyfiles_delete_uploaded(account_id: int, project_id: int | None = None) -> int:
+def pyfiles_delete_uploaded(account_id: int, project_id: int | None = None,
+                              guest_only: bool = False) -> int:
+    """删除「上传的」py 文件。
+
+    guest_only=True 时只删游客账号的（刷新页面时前端会调）；
+    注册用户的上传文件是永久的，不再随刷新清理。
+    """
+    if guest_only:
+        conn0 = root_conn(C.META_DB)
+        try:
+            with conn0.cursor() as cur0:
+                cur0.execute("SELECT kind FROM accounts WHERE id=%s", (account_id,))
+                r0 = cur0.fetchone()
+        finally:
+            conn0.close()
+        if not r0 or r0[0] != "guest":
+            return 0
+
     """删除临时 py 文件；传项目只清该项目，否则清该账号所有项目。"""
     conn = root_conn(C.META_DB)
     try:
@@ -840,7 +922,7 @@ def get_account(account_id: int) -> dict:
     try:
         with conn.cursor() as cur:
             cur.execute("""SELECT id, username, kind, role, db_name, mysql_user, mysql_pass,
-                                  created_at, can_publish, disabled
+                                  created_at, can_publish, disabled, quota_mb
                            FROM accounts WHERE id=%s""", (account_id,))
             r = cur.fetchone()
     finally:
@@ -852,6 +934,7 @@ def get_account(account_id: int) -> dict:
         "db_name": r[4], "mysql_user": r[5], "mysql_pass": r[6],
         "display": r[1] or "游客", "created_at": str(r[7]),
         "can_publish": bool(r[8]), "disabled": bool(r[9]),
+        "quota_mb": None if r[10] is None else int(r[10]),
     }
 
 
@@ -891,7 +974,7 @@ def get_session(token: str) -> dict | None:
         with conn.cursor() as cur:
             cur.execute("""SELECT s.token, s.account_id,
                                   a.id, a.username, a.kind, a.role, a.db_name, a.mysql_user, a.mysql_pass,
-                                  a.can_publish, a.disabled
+                                  a.can_publish, a.disabled, a.quota_mb
                            FROM sessions s JOIN accounts a ON a.id = s.account_id
                            WHERE s.token=%s
                              AND a.disabled=0
@@ -906,6 +989,7 @@ def get_session(token: str) -> dict | None:
         "id": row[2], "username": row[3], "kind": row[4], "role": row[5],
         "db_name": row[6], "mysql_user": row[7], "mysql_pass": row[8],
         "can_publish": bool(row[9]), "disabled": bool(row[10]),
+        "quota_mb": None if row[11] is None else int(row[11]),
         "display": row[3] or "游客",
     }
     now = time.monotonic()
@@ -953,15 +1037,16 @@ def destroy_session(token: str):
 
 
 def logout_cleanup(token: str):
-    """登出：先清掉该会话账号上传的临时 py 文件，再销毁会话。"""
+    """登出：游客的上传文件是临时的（退出即清）；注册用户的上传文件永久保留。"""
     if not token or len(token) > 64:
         return
     conn = root_conn(C.META_DB)
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT account_id FROM sessions WHERE token=%s", (token,))
+            cur.execute("""SELECT s.account_id, a.kind FROM sessions s
+                           JOIN accounts a ON a.id=s.account_id WHERE s.token=%s""", (token,))
             row = cur.fetchone()
-            if row:
+            if row and row[1] == "guest":
                 cur.execute("DELETE FROM py_files WHERE account_id=%s AND uploaded=1", (row[0],))
             cur.execute("DELETE FROM sessions WHERE token=%s", (token,))
     finally:

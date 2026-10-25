@@ -44,6 +44,9 @@ class C:
     SQL_MAX = 64 * 1024        # 单次提交 SQL 大小上限
     CODE_MAX = 256 * 1024      # 单次提交 Python 代码上限
     UPLOAD_MAX = 5 * 1024 * 1024   # 上传文件上限
+    # Python 文件总容量配额（MB）：新用户的默认值；-1=无限。管理员永远无限。
+    # 管理员可在用户管理里给每个人单独设置 / 追加。
+    DEFAULT_QUOTA_MB = _int("DEFAULT_QUOTA_MB", 256)
     IMPORT_ROWS_MAX = 20000        # 单次导入行数上限
     IMPORT_COLS_MAX = 64           # 单表列数上限
     SHARE_ROWS_MAX = 5000          # 分享到社区的行数上限
