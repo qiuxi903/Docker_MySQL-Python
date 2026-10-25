@@ -71,7 +71,7 @@ html[data-theme="light"] body { background: #f6f8fa; }
         <button class="btn soft" @click="doLogin('guest')">游客试用 →</button>
       </div>
       <p class="tip login-hint">注册要求：账号<strong>字母开头</strong>、仅含字母和数字（3-20 位）；密码<strong>至少 8 位</strong>且同时含字母和数字。</p>
-      <p class="tip login-tip">游客免注册直接用，数据保存在本浏览器，7 天不用的自动回收；注册账号后换设备登录数据不丢。</p>
+      <p class="tip login-tip">游客免注册直接用：数据在服务器保留 7 天（不用的自动回收），上传的 .py 文件退出即清；注册账号后换设备登录数据不丢。</p>
     </div>
   </div>
 
@@ -301,7 +301,7 @@ html[data-theme="light"] body { background: #f6f8fa; }
               <span class="dot"></span><span class="dot"></span><span class="dot"></span>
               <span class="panel-title">控制台</span>
               <span class="panel-note on-dark-note m-hide" v-if="pyRunCount">第 {{ pyRunCount }} 次运行 · 每次运行覆盖上次结果</span>
-              <span class="panel-note on-dark-note m-hide" v-else>Python 3 · 限15秒/256MB · 内置 query(sql) / execute(sql) / get_conn() · 无图形界面</span>
+              <span class="panel-note on-dark-note m-hide" v-else>Python 3 · 单次最长 5 分钟 · 内存 256MB · 内置 query(sql) / execute(sql) / get_conn() · 无图形界面</span>
               <span class="spacer"></span>
               <button class="btn mini ghost on-dark" @click="pyConsole=[]; pyRunCount=0"><e-icon name="eraser" :size="13"></e-icon> 清屏</button>
             </div>
@@ -3673,6 +3673,6 @@ INSERT INTO course VALUES (1,'数学');</pre>
 </script>
 
 <script src="/navicat.js?v=12"></script>
-<script src="/app.js?v=170"></script>
+<script src="/app.js?v=171"></script>
 </body>
 </html>

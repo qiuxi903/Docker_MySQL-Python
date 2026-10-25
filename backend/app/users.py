@@ -262,6 +262,7 @@ def overview() -> dict:
         d = today - datetime.timedelta(days=i)
         days.append({"date": d.strftime("%m-%d"), "count": reg.get(str(d), 0)})
     return {"users": users, "guests": guests, "activeToday": active,
+            "defaultQuotaMb": C.DEFAULT_QUOTA_MB,
             "publishers": publishers, "disabled": disabled, "databases": dbs,
             "pyFiles": pyfiles, "drills": drills, "materials": items,
             "submissions": submissions, "regTrend": days}

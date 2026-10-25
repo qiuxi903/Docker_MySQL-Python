@@ -3529,7 +3529,8 @@ const App = {
     // 用户卡片/详情里的总量（后端给的 usedBytes + quotaMb/unlimited）
     quotaTotalBytes(u) {
       if (u.unlimited || u.role === "admin") return null;
-      const mb = (u.quotaMb === null || u.quotaMb === undefined) ? 256 : u.quotaMb;
+      const mb = (u.quotaMb === null || u.quotaMb === undefined)
+        ? ((this.adminOverview && this.adminOverview.defaultQuotaMb) || 256) : u.quotaMb;
       return mb < 0 ? null : mb * 1024 * 1024;
     },
     quotaPct(u) {
@@ -3539,11 +3540,12 @@ const App = {
     },
     async setUserQuota(u) {
       // 设置总容量：输入 MB 数（-1 无限、default 恢复默认），或用快捷按钮追加
-      const cur = u.unlimited ? "无限" : ((u.quotaMb === null || u.quotaMb === undefined) ? "默认 256MB" : u.quotaMb + " MB");
+      const defMb = (this.adminOverview && this.adminOverview.defaultQuotaMb) || 256;
+      const cur = u.unlimited ? "无限" : ((u.quotaMb === null || u.quotaMb === undefined) ? "默认 " + defMb + "MB" : u.quotaMb + " MB");
       const v = await this.askText(
         `设置「${u.username}」的 Python 文件总容量`,
         `当前：${cur} · 已用 ${this.fmtBytes(u.usedBytes)}\n` +
-        `输入数字（MB）；输 -1 = 无限；输 default = 恢复默认（256MB）`, "");
+        `输入数字（MB）；输 -1 = 无限；输 default = 恢复默认（` + defMb + `MB）`, "");
       if (v === null || v === undefined || v === "") return;
       const s = String(v).trim().toLowerCase();
       try {
