@@ -26,6 +26,8 @@ const NavicatPanel = {
     db: { type: String, default: "" },
     token: { type: String, default: "" },
     ready: { type: Boolean, default: true },
+    // 做题页（练习）里用：隐藏右侧「库详情」栏，把宽度留给工作区
+    compact: { type: Boolean, default: false },
   },
   emits: ["log", "query", "toast", "changed"],
   template: "#navicat-tpl",

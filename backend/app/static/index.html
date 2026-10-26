@@ -27,8 +27,8 @@ html[data-theme="light"] body { background: #f6f8fa; }
 <link rel="stylesheet" href="/vendor/codemirror/codemirror.css">
 <link rel="stylesheet" href="/vendor/codemirror/addon/hint/show-hint.css">
 <link rel="stylesheet" href="/fonts/misans/misans.css">
-<link rel="stylesheet" href="/style.css?v=164">
-  <link rel="stylesheet" href="/navicat.css?v=26">
+<link rel="stylesheet" href="/style.css?v=165">
+  <link rel="stylesheet" href="/navicat.css?v=28">
 </head>
 <body>
 <div id="app" v-cloak>
@@ -623,7 +623,7 @@ html[data-theme="light"] body { background: #f6f8fa; }
           <div class="drawer-mask m-only" v-show="drawer==='drills'" @click="drawer=''"></div>
 
           <!-- 左：本套题目 + SQL 题的沙箱数据库表（Navicat 模式用面板自带的连接树） -->
-          <aside v-if="!navMode" class="side drawer" :class="{open: drawer==='drills'}">
+          <aside class="side drawer" :class="{open: drawer==='drills'}">
             <div class="side-h">
               <button class="icon-btn" title="返回" @click="paperCurrent ? backToPaper() : backToPapers()">
                 <e-icon name="chevron-right" :size="14" style="transform:rotate(180deg);display:inline-block"></e-icon>
@@ -656,11 +656,11 @@ html[data-theme="light"] body { background: #f6f8fa; }
               <div v-if="!drillSideList.length" class="tbempty">这里还没有练习题</div>
 
               <!-- SQL 题的沙箱库（和主页的数据库树一样，可点表预览） -->
-              <div v-if="drillCurrent && drillCurrent.type==='sql' && drillSandbox.loading"
+              <div v-if="!navMode && drillCurrent && drillCurrent.type==='sql' && drillSandbox.loading"
                    class="drill-db-loading">
                 <div class="spin small"></div> 正在准备本题数据库…
               </div>
-              <template v-if="drillCurrent && drillCurrent.type==='sql' && drillSandbox.db">
+              <template v-if="!navMode && drillCurrent && drillCurrent.type==='sql' && drillSandbox.db">
                 <div class="dbnode sel drill-dbnode" style="margin-top:10px">
                   <span class="tb-ico"><e-icon name="database" :size="14"></e-icon></span>
                   <span class="dbnode-t">
@@ -761,6 +761,7 @@ html[data-theme="light"] body { background: #f6f8fa; }
                   <span class="drill-pts-badge">{{ drillCurrent.score }} 分</span>
                   <span v-if="drillCurrent.passed" class="drill-passed"><e-icon name="check" :size="12"></e-icon> 已通过</span>
                   <span class="spacer"></span>
+                  <button class="btn mini ghost m-only" title="打开题目列表" @click="drawer='drills'"><e-icon name="list" :size="12"></e-icon> 题目</button>
                   <button v-if="drillCurrent.setupSql" class="btn mini ghost" @click="drillShowSetup=!drillShowSetup">
                     <e-icon name="database" :size="12"></e-icon> <span class="m-hide">{{ drillShowSetup ? '隐藏数据' : '题目数据' }}</span>
                   </button>
@@ -793,7 +794,7 @@ html[data-theme="light"] body { background: #f6f8fa; }
                     <p>正在准备本题数据库…</p>
                   </div>
                   <navicat-panel v-else ref="navPanel" :drill="drillCurrent" :db="drillSandbox.db"
-                                 :token="token" @log="onNavLog" @query="onNavQuery" @toast="toast" />
+                                 :token="token" compact @log="onNavLog" @query="onNavQuery" @toast="toast" />
                 </div>
               </section>
             </template>
@@ -3413,7 +3414,7 @@ INSERT INTO course VALUES (1,'数学');</pre>
     </div>
 
     <!-- 右侧信息 -->
-    <aside class="nc-info">
+    <aside class="nc-info" v-if="!compact">
       <div class="nc-info-db"><e-icon name="database" :size="24"></e-icon></div>
       <div class="nc-info-name" :title="schema.db || db">{{ schema.db || db }}</div>
       <div class="nc-info-sub">数据库</div>
@@ -3656,7 +3657,7 @@ INSERT INTO course VALUES (1,'数学');</pre>
 </div>
 </script>
 
-<script src="/navicat.js?v=13"></script>
+<script src="/navicat.js?v=14"></script>
 <script src="/app.js?v=173"></script>
 </body>
 </html>

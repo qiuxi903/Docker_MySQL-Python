@@ -423,7 +423,7 @@ tr.added td { background: rgba(46,160,67,.06); }
 
 /* ---- 做题页容器 ---- */
 /* Navicat 模式没有左侧题目栏，主区占满整行（否则会落进原网格的 244px 列） */
-.drills-ws.nav-mode { grid-template-columns: 1fr; }
+.drills-ws.nav-mode { grid-template-columns: 244px 1fr; }   /* 左题目栏 + 右 Navicat 面板 */
 .navicat-pane { flex: 1; min-height: 0; }
 .navicat-head {
   height: auto; min-height: var(--panel-h-h);
@@ -515,6 +515,7 @@ tr.added td { background: rgba(46,160,67,.06); }
 .nc-bd-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; min-height: 0; }
 .nc-bd-pane-h {
   flex: 0 0 auto; display: flex; align-items: center; gap: 8px;
+  flex-wrap: wrap; row-gap: 4px;
   padding: 4px 10px; background: var(--panel-2); border-bottom: 1px solid var(--line);
 }
 .nc-bd-pane-t {
