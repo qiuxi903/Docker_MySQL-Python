@@ -968,7 +968,11 @@ tr.added td { background: rgba(46,160,67,.06); }
   .nc-side-f { padding: 8px; }
   .nc-search input { height: 30px; }
   /* 对象列表：手机上只留名称和行数 */
+  .nc-obj-grid { width: 100%; table-layout: fixed; }
   .nc-obj-grid th:nth-child(n+3), .nc-obj-grid td:nth-child(n+3) { display: none; }
+  .nc-obj-grid th, .nc-obj-grid td { padding: 7px 10px; }
+  .nc-obj-grid th:nth-child(2), .nc-obj-grid td:nth-child(2) { width: 56px; padding-right: 14px; }
+  .nc-obj-grid .nc-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .nc-grid th, .nc-grid td { padding: 7px 9px; }
   .nc-data-table .nc-cell { height: 32px; }
   .nc-obj-bar { gap: 4px; padding: 5px 6px; }
@@ -976,8 +980,19 @@ tr.added td { background: rgba(46,160,67,.06); }
   .nc-tabs { height: 34px; }
   .nc-tab { padding: 0 9px; }
   .nc-filterbar input { width: 130px; }
-  .nc-query-bar { gap: 4px; }
+  .nc-query-bar {
+    gap: 4px; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+  .nc-query-bar::-webkit-scrollbar { display: none; }
+  .nc-query-bar > * { flex: 0 0 auto; }
   .nc-query-bar .nc-btn { padding: 4px 7px; }
+  /* 顺序：保存 运行 停止 解释 → 其余（美化/代码段/文本/导出结果/创建图表/库） */
+  .nc-query-bar .nc-qsave { order: -4; }
+  .nc-query-bar .nc-run { order: -3; }
+  .nc-query-bar .nc-qstop { order: -2; }
+  .nc-query-bar .nc-qexplain { order: -1; }
+  .nc-query-bar .nc-vsep { display: none; }
   .nc-editor { flex: 1 1 42%; min-height: 150px; }
   .nc-result { flex: 1 1 58%; }
   .nc-design-top { gap: 8px; padding: 8px; }
@@ -991,15 +1006,23 @@ tr.added td { background: rgba(46,160,67,.06); }
   /* 查询创建工具：手机上上下堆叠，对象窗格横向小卡片，整体可滚动 */
   .nc-bd-wrap { flex-direction: column; overflow: auto; }
   .nc-bd-obj {
-    flex: 0 0 auto; max-height: 128px; border-right: 0;
+    flex: 0 0 auto; max-height: 104px; border-right: 0;
     border-bottom: 1px solid var(--line);
   }
   .nc-bd-obj-list { display: flex; flex-wrap: wrap; gap: 4px; align-content: flex-start; }
   .nc-bd-ogroup { display: contents; }
   .nc-bd-trow { width: auto; }
   .nc-bd-tname { max-width: 108px; }
-  .nc-bd-canvas { flex: 0 0 auto; min-height: 260px; }
+  .nc-bd-canvas { flex: 0 0 auto; min-height: 200px; }
+  /* 图表工具行（表关系/字段关系/添加表/清空）一行横向滑动 */
+  .nc-bd-main > .nc-bd-pane-h { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .nc-bd-main > .nc-bd-pane-h::-webkit-scrollbar { display: none; }
+  .nc-bd-main > .nc-bd-pane-h > * { flex: 0 0 auto; }
   .nc-bd-grid-wrap { flex: 0 0 auto; max-height: 40vh; min-height: 120px; }
+  /* 中间列按内容自然高度堆叠（canvas → 子句页签），整块由外层滚动 */
+  .nc-bd-main { flex: 0 0 auto; }
+  .nc-bd-clauses { flex: 0 0 auto; min-height: 0; }
+  .nc-bd-cpane { max-height: 42vh; }
   .nc-bd-sql { max-height: 88px; }
   /* SQL 预览列在手机上落到最下面（横向占满） */
   .nc-bd-sqlside {

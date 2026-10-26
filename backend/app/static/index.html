@@ -28,7 +28,7 @@ html[data-theme="light"] body { background: #f6f8fa; }
 <link rel="stylesheet" href="/vendor/codemirror/addon/hint/show-hint.css">
 <link rel="stylesheet" href="/fonts/misans/misans.css">
 <link rel="stylesheet" href="/style.css?v=163">
-  <link rel="stylesheet" href="/navicat.css?v=24">
+  <link rel="stylesheet" href="/navicat.css?v=26">
 </head>
 <body>
 <div id="app" v-cloak>
@@ -2553,7 +2553,7 @@ INSERT INTO course VALUES (1,'数学');</pre>
       <!-- 查询页 -->
       <div v-else-if="active === 'query'" class="nc-page nc-query">
         <div class="nc-query-bar">
-          <button class="nc-btn" @click="saveQuery"><e-icon name="file-text" :size="13"></e-icon> 保存</button>
+          <button class="nc-btn nc-qsave" @click="saveQuery"><e-icon name="file-text" :size="13"></e-icon> 保存</button>
           <button class="nc-btn" :class="{ on: builderMode }" @click="openBuilder"
                   :title="builderMode ? '关闭查询创建工具，回到 SQL 编辑器' : '打开可视化的查询创建工具（不用写 SQL）'">
             <e-icon name="list" :size="13"></e-icon> 查询创建工具</button>
@@ -2578,8 +2578,8 @@ INSERT INTO course VALUES (1,'数学');</pre>
           <button class="nc-run" :disabled="running" @click="runQuery">
             <e-icon name="play" :size="12"></e-icon> {{ running ? '运行中…' : '运行' }}
           </button>
-          <button class="nc-btn" :disabled="!running" @click="stopQuery" title="中断正在运行的查询">停止</button>
-          <button class="nc-btn" @click="explainQuery">解释</button>
+          <button class="nc-btn nc-qstop" :disabled="!running" @click="stopQuery" title="中断正在运行的查询">停止</button>
+          <button class="nc-btn nc-qexplain" @click="explainQuery">解释</button>
         </div>
         <div class="nc-qmain">
         <div class="nc-qcol">
