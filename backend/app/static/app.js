@@ -482,6 +482,8 @@ const App = {
       drillLoading: false,
       drillDirty: false,
       navMode: false,
+      // 本次会话里学生手动切过模式（切题时保持其选择；刷新页面回到默认 Navicat）
+      drillModeTouched: false,
       navLog: [],
       navLastQuery: "",
       drillOpenSeq: 0,
@@ -1262,7 +1264,7 @@ const App = {
 
     setNavMode(on) {
       this.navMode = !!on;
-      try { localStorage.setItem("lab_drill_mode", on ? "nav" : "sql"); } catch (e) {}
+      this.drillModeTouched = true;   // 本次会话内切题保持学生选的模式
       if (on) this.$nextTick(() => { if (this.$refs.navPanel) this.$refs.navPanel.reload(); });
       this.stashPaperNav();
     },
@@ -1756,18 +1758,15 @@ const App = {
         const det = await this.api(`/api/drills/${d.id}`);
         if (seq !== this.drillOpenSeq) return;
         this.drillCurrent = det;
-        // SQL 题默认用 Navicat 图形界面；学生上次主动切到纯 SQL 就记住
-        let pref = "nav";
-        try { pref = localStorage.getItem("lab_drill_mode") || "nav"; } catch (e) {}
-        this.navMode = det.type === "sql" && pref !== "sql";
-        // 恢复这道题之前的 Navicat 操作（换题后仍能整卷交卷）
+        // SQL 题一律默认 Navicat 图形界面（老师要求）；本次会话里学生手动切过模式
+        // 就尊重他的选择（切题保持），刷新页面后回到默认 Navicat
+        if (det.type === "sql" && !this.drillModeTouched) this.navMode = true;
+        // 恢复这道题之前的 Navicat 操作记录（换题后仍能整卷交卷）；不再恢复模式
         if (det.type === "sql" && det.paperId) {
           const nav = this.paperNav[det.id];
           if (nav) {
             this.navLog = Array.isArray(nav.log) ? nav.log.slice() : [];
             this.navLastQuery = nav.query || "";
-            if (nav.mode === "sql") this.navMode = false;
-            else if (nav.mode === "nav" && pref !== "sql") this.navMode = true;
           }
         }
         this.drawer = "";
