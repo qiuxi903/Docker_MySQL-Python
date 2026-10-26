@@ -27,7 +27,7 @@ html[data-theme="light"] body { background: #f6f8fa; }
 <link rel="stylesheet" href="/vendor/codemirror/codemirror.css">
 <link rel="stylesheet" href="/vendor/codemirror/addon/hint/show-hint.css">
 <link rel="stylesheet" href="/fonts/misans/misans.css">
-<link rel="stylesheet" href="/style.css?v=165">
+<link rel="stylesheet" href="/style.css?v=166">
   <link rel="stylesheet" href="/navicat.css?v=28">
 </head>
 <body>
@@ -832,7 +832,11 @@ html[data-theme="light"] body { background: #f6f8fa; }
                 <!-- 题干常显：进题就能看到要求；初始化数据、标准输入和提示按需展开 -->
                 <div v-if="drillCodeType && (drillCurrent.stem || drillCurrent.inputData
                         || (drillShowHint && drillCurrent.hint))" class="drill-paper">
-                  <p class="drill-stem" v-if="drillCurrent.stem">{{ drillCurrent.stem }}</p>
+                  <div class="nc-stem-row" v-if="drillCurrent.stem">
+                    <span class="nc-stem-tag"><e-icon name="file-text" :size="12"></e-icon> 题目要求</span>
+                    <p class="nc-stem-txt" :class="{ open: stemOpen }">{{ drillCurrent.stem }}</p>
+                    <button class="nc-stem-btn" @click="stemOpen = !stemOpen">{{ stemOpen ? '收起' : '展开全文' }}</button>
+                  </div>
                   <div v-if="drillCurrent.type==='python' && drillCurrent.inputData" class="drill-hint">
                     <b>标准输入</b>
                     <span class="muted">（点「运行」或「提交判分」时自动喂给程序）</span>
@@ -854,7 +858,11 @@ html[data-theme="light"] body { background: #f6f8fa; }
                 <!-- 客观题：选项区（同一块面板样式） -->
                 <div v-else class="panel-b drill-obj">
                   <div class="drill-obj-box">
-                    <p class="drill-stem" v-if="drillCurrent.stem">{{ drillCurrent.stem }}</p>
+                    <div class="nc-stem-row" v-if="drillCurrent.stem">
+                      <span class="nc-stem-tag"><e-icon name="file-text" :size="12"></e-icon> 题目要求</span>
+                      <p class="nc-stem-txt" :class="{ open: stemOpen }">{{ drillCurrent.stem }}</p>
+                      <button class="nc-stem-btn" @click="stemOpen = !stemOpen">{{ stemOpen ? '收起' : '展开全文' }}</button>
+                    </div>
                     <template v-if="drillCurrent.type==='fill'">
                       <input type="text" class="drill-fill" v-model.trim="drillFill" placeholder="在这里作答"
                              @input="onDrillFillInput">
