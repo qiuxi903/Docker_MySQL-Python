@@ -473,6 +473,11 @@ const NavicatPanel = {
       else if (this.node === "triggers") this.openTrigger(o, "edit");
     },
     objectIcon(o) { return this.node === "views" ? "file-text" : "table"; },
+    // 触屏（没有 hover 的设备）单击对象行就直接打开：手机上没有双击习惯
+    rowTap(o) {
+      this.selected = o.name;
+      if (window.matchMedia && window.matchMedia("(hover: none)").matches) this.openObject(o);
+    },
 
     /* ---------------- 标签页 ---------------- */
     ensureTab(tab) {

@@ -28,7 +28,7 @@ html[data-theme="light"] body { background: #f6f8fa; }
 <link rel="stylesheet" href="/vendor/codemirror/addon/hint/show-hint.css">
 <link rel="stylesheet" href="/fonts/misans/misans.css">
 <link rel="stylesheet" href="/style.css?v=163">
-  <link rel="stylesheet" href="/navicat.css?v=22">
+  <link rel="stylesheet" href="/navicat.css?v=24">
 </head>
 <body>
 <div id="app" v-cloak>
@@ -2506,7 +2506,7 @@ INSERT INTO course VALUES (1,'数学');</pre>
             </thead>
             <tbody>
               <tr v-for="o in filteredObjects" :key="o.name" :class="{ sel: selected === o.name }"
-                  @click="selected = o.name" @dblclick="openObject(o)"
+                  @click="rowTap(o)" @dblclick="openObject(o)"
                   @contextmenu.prevent.stop="selected = o.name; openCtx($event, ctxKind, o.name)"
                   @pointerdown="pressStart($event, ctxKind, o.name)" @pointerup="pressEnd"
                   @pointermove="pressEnd" @pointercancel="pressEnd">
@@ -3675,7 +3675,7 @@ INSERT INTO course VALUES (1,'数学');</pre>
 </div>
 </script>
 
-<script src="/navicat.js?v=12"></script>
+<script src="/navicat.js?v=13"></script>
 <script src="/app.js?v=173"></script>
 </body>
 </html>
