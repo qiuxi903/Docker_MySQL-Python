@@ -1712,12 +1712,94 @@ def create_from_package(account: dict, pkg: dict, publish: bool = True,
 # 每个（学生, 题目）一个独立的真实数据库，初始化 SQL 跑在里面。
 # 学生可以像主页一样自由查询、点表预览，交卷时再用另一个临时库判分（不影响沙箱）。
 
-def _sandbox_name(account_id: int, drill_id: int) -> str:
+# 同一套试卷的题共用一个沙箱库（第一题的改动第二题能看到，来回切换不丢）；
+# 单题（不属于任何试卷）仍一题一库。共享库内每题的初始化 SQL 用 meta.drill_setup_done 记账，
+# 保证只跑一次；老师改了卷内任何一题的数据（setup 变了），整卷沙箱作废重建。
+_LEDGER_TABLE = "drill_setup_done"
+_IGNORE_ERRNOS = {1050, 1061, 1062}   # 表/索引已存在、主键冲突：共享库里跑别的题的 setup 可忽略
+
+
+def _sandbox_name(account_id: int, drill_id: int, paper_id: int = 0) -> str:
+    if paper_id:
+        return f"x_{account_id}_p{paper_id}"
     return f"x_{account_id}_{drill_id}"
 
 
+def _paper_setup_sig(paper_id: int) -> str:
+    """整卷所有 SQL 题初始化数据的聚合指纹——任何一题改了数据，整卷沙箱重建。"""
+    conn = root_conn(C.COMMUNITY_DB)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(f"""SELECT id, setup_sql FROM {q_ident(C.COMMUNITY_DB)}.drills
+                            WHERE paper_id=%s AND type='sql' ORDER BY id""", (paper_id,))
+            rows = cur.fetchall()
+    finally:
+        conn.close()
+    if not rows:
+        return ""
+    h = hashlib.sha1()
+    for did, setup in rows:
+        h.update(f"{did}:".encode())
+        h.update((setup or "").encode("utf-8"))
+    return h.hexdigest()
+
+
+def _ledger_ensure(conn, db_name: str):
+    cur = conn.cursor()
+    cur.execute(f"""CREATE TABLE IF NOT EXISTS {q_ident(C.META_DB)}.{_LEDGER_TABLE} (
+        db_name VARCHAR(64) NOT NULL,
+        drill_id BIGINT NOT NULL,
+        sig CHAR(40) NOT NULL DEFAULT '',
+        done_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        PRIMARY KEY (db_name, drill_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""")
+
+
+def _ledger_get(conn, db_name: str, drill_id: int) -> str:
+    cur = conn.cursor()
+    cur.execute(f"SELECT sig FROM {q_ident(C.META_DB)}.{_LEDGER_TABLE} "
+                f"WHERE db_name=%s AND drill_id=%s", (db_name, drill_id))
+    r = cur.fetchone()
+    return (r[0] or "") if r else ""
+
+
+def _ledger_put(conn, db_name: str, drill_id: int, sig: str):
+    cur = conn.cursor()
+    cur.execute(f"""INSERT INTO {q_ident(C.META_DB)}.{_LEDGER_TABLE} (db_name, drill_id, sig)
+                    VALUES (%s,%s,%s)
+                    ON DUPLICATE KEY UPDATE sig=VALUES(sig), done_at=CURRENT_TIMESTAMP""",
+                (db_name, drill_id, sig))
+
+
+def _ledger_drop_db(conn, db_name: str):
+    cur = conn.cursor()
+    cur.execute(f"DELETE FROM {q_ident(C.META_DB)}.{_LEDGER_TABLE} WHERE db_name=%s", (db_name,))
+
+
+def _run_setup_tolerant(account: dict, db: str, setup: str):
+    """在共享沙箱里补跑某题的初始化 SQL：忽略「已存在/主键冲突」类错误
+    （别的题可能已经建过同名表/插过同主键的行），真错误照常抛出。"""
+    from . import sqlrun
+    stmts = sqlrun.prepare_statements(setup)
+    for stmt in stmts:
+        try:
+            r = sqlrun.run_sql(db, account["mysql_user"], account["mysql_pass"], stmt,
+                               owned_dbs=[db], batch=False,
+                               timeout=SETUP_TIMEOUT, max_statements=100000)
+        except Exception as e:
+            raise DrillError("题目的初始化 SQL 执行失败：" + str(e)[:300])
+        err = _first_error(r.get("results"))
+        if err and err.get("errno") not in _IGNORE_ERRNOS:
+            raise DrillError("题目的初始化 SQL 有问题，请联系出题老师：" + (err.get("msg") or ""))
+
+
 def ensure_sandbox(account: dict, drill_id: int, reset: bool = False) -> dict:
-    """确保该题的沙箱库存在并已执行初始化 SQL，返回 {db, tables}。"""
+    """确保本题的沙箱库存在并已执行初始化 SQL，返回 {db, tables}。
+
+    同一套试卷的题共用一个沙箱库（题间数据互通）；单题一题一库。
+    共享库内每题的初始化 SQL 只跑一次（meta.drill_setup_done 记账）；
+    老师改了卷内任何一题的数据，整卷沙箱作废重建（回到干净初始状态）。
+    """
     from . import sessions, sqlrun
 
     full = get_full(drill_id)
@@ -1727,11 +1809,18 @@ def ensure_sandbox(account: dict, drill_id: int, reset: bool = False) -> dict:
     if not full["status"] and not (mine or account.get("role") == "admin"):
         raise DrillError("这题还没发布")
 
-    db = _sandbox_name(account["id"], drill_id)
+    paper_id = int(full.get("paperId") or 0)
+    db = _sandbox_name(account["id"], drill_id, paper_id)
+    setup = (full.get("setupSql") or "").strip()
+    setup_sig = hashlib.sha1(setup.encode("utf-8")).hexdigest() if setup else ""
+    # 共享库看整卷聚合指纹；单题看本题指纹
+    check_sig = _paper_setup_sig(paper_id) if paper_id else setup_sig
+
     owner = False
     old_sig = ""
     conn = root_conn(C.META_DB)
     try:
+        _ledger_ensure(conn, db)
         with conn.cursor() as cur:
             cur.execute("SELECT account_id, setup_sig FROM dbs WHERE db_name=%s", (db,))
             row = cur.fetchone()
@@ -1740,21 +1829,24 @@ def ensure_sandbox(account: dict, drill_id: int, reset: bool = False) -> dict:
     finally:
         conn.close()
 
-    setup = (full.get("setupSql") or "").strip()
-    setup_sig = hashlib.sha1(setup.encode("utf-8")).hexdigest() if setup else ""
-    # 老师改过题目数据：旧沙箱自动作废重建
-    if owner and setup and old_sig != setup_sig:
+    def _drop():
         try:
             sessions.drop_user_db(account, db)
         except Exception:
             pass
+        c2 = root_conn(C.META_DB)
+        try:
+            _ledger_drop_db(c2, db)
+        finally:
+            c2.close()
+        nonlocal owner
         owner = False
+
+    # 老师改过数据（本题或卷内任何一题）：旧沙箱自动作废重建
+    if owner and check_sig and old_sig != check_sig:
+        _drop()
     if reset and owner:
-        try:
-            sessions.drop_user_db(account, db)
-        except Exception:
-            pass
-        owner = False
+        _drop()
     # 上一次初始化失败会留下一个空沙箱；发现有库没表时自动重建
     if owner and setup:
         try:
@@ -1762,11 +1854,8 @@ def ensure_sandbox(account: dict, drill_id: int, reset: bool = False) -> dict:
         except Exception:
             existing = []
         if not existing:
-            try:
-                sessions.drop_user_db(account, db)
-            except Exception:
-                pass
-            owner = False
+            _drop()
+
     if not owner:
         try:
             sessions.create_user_db(account, db, origin="drill")
@@ -1786,21 +1875,31 @@ def ensure_sandbox(account: dict, drill_id: int, reset: bool = False) -> dict:
                     with conn.cursor() as cur:
                         cur.execute("""UPDATE dbs SET setup_sig=%s
                                         WHERE db_name=%s AND account_id=%s""",
-                                    (setup_sig, db, account["id"]))
+                                    (check_sig, db, account["id"]))
+                        _ledger_put(conn, db, drill_id, setup_sig)
                 finally:
                     conn.close()
             except DrillError:
-                try:
-                    sessions.drop_user_db(account, db)
-                except Exception:
-                    pass
+                _drop()
                 raise
             except Exception as e:
-                try:
-                    sessions.drop_user_db(account, db)
-                except Exception:
-                    pass
+                _drop()
                 raise DrillError("题目的初始化 SQL 执行失败：" + str(e)[:300])
+    elif paper_id and setup:
+        # 共享库已存在：本题的初始化 SQL 可能还没跑过（从第一题切过来）
+        conn = root_conn(C.META_DB)
+        try:
+            done_sig = _ledger_get(conn, db, drill_id)
+        finally:
+            conn.close()
+        if done_sig != setup_sig:
+            _run_setup_tolerant(account, db, setup)
+            conn = root_conn(C.META_DB)
+            try:
+                _ledger_put(conn, db, drill_id, setup_sig)
+            finally:
+                conn.close()
+
     tables = sqlrun.list_tables(db, account["mysql_user"], account["mysql_pass"])
     return {"db": db, "tables": tables}
 
