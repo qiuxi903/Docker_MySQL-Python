@@ -27,7 +27,7 @@ html[data-theme="light"] body { background: #f6f8fa; }
 <link rel="stylesheet" href="/vendor/codemirror/codemirror.css">
 <link rel="stylesheet" href="/vendor/codemirror/addon/hint/show-hint.css">
 <link rel="stylesheet" href="/fonts/misans/misans.css">
-<link rel="stylesheet" href="/style.css?v=163">
+<link rel="stylesheet" href="/style.css?v=164">
   <link rel="stylesheet" href="/navicat.css?v=26">
 </head>
 <body>
@@ -686,7 +686,6 @@ html[data-theme="light"] body { background: #f6f8fa; }
             <!-- 整卷交卷条：一套卷子统一交卷，不再逐题提交 -->
             <div class="paper-do-bar" v-if="paperCurrent">
               <button class="btn mini ghost" @click="backToPaper">返回试卷</button>
-              <span class="pdb-title">{{ qTitle(paperCurrent.title) }}</span>
               <span class="pdb-stat">已作答 {{ paperAnsweredCount }}/{{ drillSideList.length }}</span>
               <span v-if="paperTriesLeft !== null" class="pdb-stat"
                     :class="{out: paperOutOfTries}">
@@ -759,7 +758,6 @@ html[data-theme="light"] body { background: #f6f8fa; }
                     <e-icon name="chevron-right" :size="12" style="transform:rotate(180deg);display:inline-block"></e-icon> 试卷
                   </button>
                   <span class="drill-idx">{{ String(drillSideList.findIndex(x => drillCurrent && x.id === drillCurrent.id) + 1).padStart(2, '0') }}</span>
-                  <span class="panel-title">{{ qTitle(drillCurrent.title) }}</span>
                   <span class="drill-pts-badge">{{ drillCurrent.score }} 分</span>
                   <span v-if="drillCurrent.passed" class="drill-passed"><e-icon name="check" :size="12"></e-icon> 已通过</span>
                   <span class="spacer"></span>
@@ -809,7 +807,6 @@ html[data-theme="light"] body { background: #f6f8fa; }
                   </button>
                   <span class="drill-idx">{{ String(drillSideList.findIndex(x => drillCurrent && x.id === drillCurrent.id) + 1).padStart(2, '0') }}</span>
                   <span class="drill-badge">{{ drillCurrent.typeLabel }}</span>
-                  <span class="panel-title">{{ qTitle(drillCurrent.title) }}</span>
                   <span class="drill-pts-badge">{{ drillCurrent.score }} 分</span>
                   <span v-if="drillCurrent.passed" class="drill-passed"><e-icon name="check" :size="12"></e-icon> 已通过</span>
                   <span class="spacer"></span>
@@ -2330,31 +2327,14 @@ INSERT INTO course VALUES (1,'数学');</pre>
 <script type="text/x-template" id="navicat-tpl">
 <div class="nc" :class="{ 'nc-busy': loading }">
   <!-- 菜单栏 -->
-  <div class="nc-menubar">
-    <!-- 手机上 7 个菜单挤不开会竖排，收成一个「菜单」按钮（点开的浮层内容完全相同） -->
-    <button class="nc-menu nc-menu-m" @click.stop="toggleMenu('文件')">
-      <e-icon name="menu" :size="13"></e-icon> 菜单</button>
-    <button v-for="m in ['文件','编辑','查看','收藏夹','工具','窗口','帮助']" :key="m"
-            class="nc-menu nc-menu-d" @click.stop="toggleMenu(m)">{{ m }}</button>
-    <div class="nc-menu-pop" v-if="menu" @click.stop>
-      <button @click="menuAction('newQuery')"><e-icon name="search" :size="13"></e-icon> 新建查询</button>
-      <button @click="menuAction('refresh')"><e-icon name="refresh" :size="13"></e-icon> 刷新对象列表</button>
-      <button @click="menuAction('closeTab')"><e-icon name="x" :size="13"></e-icon> 关闭当前页</button>
-      <button @click="menuAction('export')"><e-icon name="download" :size="13"></e-icon> 导出当前数据库</button>
-    </div>
-    <span class="spacer"></span>
-    <span class="nc-brand">Navicat 模拟 · 课堂版</span>
-  </div>
 
   <!-- 题目要求：做题时必看，默认收起两行，可展开 -->
   <div class="nc-stem" v-if="drill && drill.stem">
-    <div class="nc-stem-h">
-      <e-icon name="file-text" :size="13"></e-icon>
-      <span>题目要求</span>
-      <span class="spacer"></span>
+    <div class="nc-stem-row">
+      <span class="nc-stem-tag"><e-icon name="file-text" :size="12"></e-icon> 题目要求</span>
+      <p class="nc-stem-txt" :class="{ open: stemOpen }">{{ drill.stem }}</p>
       <button class="nc-stem-btn" @click="stemOpen = !stemOpen">{{ stemOpen ? '收起' : '展开全文' }}</button>
     </div>
-    <p class="nc-stem-txt" :class="{ open: stemOpen }">{{ drill.stem }}</p>
   </div>
 
   <!-- 工具栏 -->
@@ -3542,6 +3522,7 @@ INSERT INTO course VALUES (1,'数学');</pre>
     <span class="spacer"></span>
     <span class="nc-status-item"><i class="nc-dot ok"></i> 本地</span>
     <span class="nc-status-item">{{ schema.db || db }}</span>
+    <span class="nc-status-item nc-brand-sm m-hide">Navicat 模拟 · 课堂版</span>
   </div>
 
   <!-- 查询创建工具 -->

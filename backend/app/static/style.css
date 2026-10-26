@@ -2550,3 +2550,17 @@ input[type="text"], input[type="password"], textarea, select, .CodeMirror,
 .ud-line.warn, .warn { color: #c93b3b; }
 .u-quota { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
 .u-quota-t { font-size: 11px; color: #7b8794; white-space: nowrap; }
+
+/* 题目要求：标签 + 题干 + 展开按钮同一行（省一行高度） */
+.nc-stem { padding: 6px 10px 7px; }
+.nc-stem-row { display: flex; align-items: flex-start; gap: 8px; }
+.nc-stem-tag {
+  flex: 0 0 auto; display: inline-flex; align-items: center; gap: 4px;
+  font-size: 11.5px; font-weight: 700; color: var(--accent); white-space: nowrap;
+  padding-top: 1px;
+}
+.nc-stem-row .nc-stem-txt { flex: 1; min-width: 0; margin: 0; }
+.nc-stem-row .nc-stem-btn { flex: 0 0 auto; margin-left: auto; }
+
+/* 状态栏右侧的品牌小字（替代原来的装饰菜单栏） */
+.nc-brand-sm { opacity: .55; }
