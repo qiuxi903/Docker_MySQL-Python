@@ -595,32 +595,46 @@ li.CodeMirror-hint-active { background: var(--accent); color: #fff; }
 .ql-full { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
 /* 窄条收起后的小圆钮（左边缘，点一下展开回来） */
 .ql-handle {
-  display: none; position: fixed; left: 10px; bottom: 74px;
+  display: inline-flex; position: fixed; left: 10px; bottom: 74px;
   z-index: 36; width: 40px; height: 40px; border-radius: 50%;
   border: 1px solid var(--accent); background: var(--panel); color: var(--accent);
   cursor: pointer; align-items: center; justify-content: center; flex-direction: column;
   gap: 0; box-shadow: 0 3px 12px rgba(1, 8, 24, .16); padding: 0;
+  /* 收起后弹出的小圆钮：缩放 + 淡入（不用 display 切换，才有过渡） */
+  opacity: 0; transform: scale(.8); pointer-events: none;
+  transition: opacity .18s ease, transform .24s cubic-bezier(.34,1.3,.64,1);
 }
 .ql-handle:hover { background: var(--accent); color: #fff; }
 .ql-handle-n { font: 700 9px/1 inherit; }
-.drills-ws.rail-hidden .ql-handle { display: inline-flex; }
-/* 收起窄条：提高优先级，压过媒体查询里的 display:flex */
-.drills-ws.nav-mode.rail-hidden .ql-rail,
-.drills-ws.rail-hidden .ql-rail { display: none !important; }
+.drills-ws.rail-hidden .ql-handle { opacity: 1; transform: none; pointer-events: auto; }
 @media (min-width: 920px) {
-  .drills-ws.nav-mode { grid-template-columns: 48px 1fr; }   /* 窄条只占 48px，工作区更宽 */
-  .drills-ws.nav-mode.rail-hidden { grid-template-columns: 1fr; }   /* 窄条收起：工作区占满 */
+  .drills-ws.nav-mode {
+    grid-template-columns: 48px 1fr;
+    transition: grid-template-columns .26s cubic-bezier(.4, 0, .2, 1);   /* 窄条收起时列宽平滑收拢 */
+  }
+  .drills-ws.nav-mode.rail-hidden { grid-template-columns: 0px 1fr; }
   .drills-ws.nav-mode .ql-rail {
     display: flex; flex-direction: column; align-items: center;
     gap: 6px; padding: 8px 4px; border-right: 1px solid var(--line); background: var(--panel);
+    overflow: hidden;
+    transition: width .26s cubic-bezier(.4, 0, .2, 1), padding .26s cubic-bezier(.4, 0, .2, 1),
+                opacity .18s ease, transform .26s cubic-bezier(.4, 0, .2, 1);
   }
-  /* 展开的完整列表：浮层（不挤压工作区） */
+  .drills-ws.nav-mode.rail-hidden .ql-rail {
+    width: 0; padding-left: 0; padding-right: 0; opacity: 0;
+    transform: translateX(-100%); border-right-width: 0;
+  }
+  /* 展开的完整列表：浮层（常驻 DOM，滑入/滑出，不挤压工作区） */
   .drills-ws.nav-mode .drill-qlist {
-    position: absolute; left: 48px; top: 0; bottom: 0; width: 244px; display: none;
+    position: absolute; left: 48px; top: 0; bottom: 0; width: 244px;
     z-index: 30; background: var(--panel); border-right: 1px solid var(--line);
     box-shadow: 10px 0 28px rgba(1, 8, 24, .14);
+    opacity: 0; transform: translateX(-14px); pointer-events: none;
+    transition: opacity .18s ease, transform .22s cubic-bezier(.4, 0, .2, 1);
   }
-  .drills-ws.nav-mode .drill-qlist.expanded { display: flex; }
+  .drills-ws.nav-mode .drill-qlist.expanded {
+    opacity: 1; transform: none; pointer-events: auto;
+  }
 }
 .drill-side {
   flex: 0 0 268px; width: 268px; display: flex; flex-direction: column;
@@ -2142,9 +2156,13 @@ pre, .cheat pre, .ddl-pre, .src-pre, .cstdout, .cstderr, .term-out, .term-err {
     position: fixed; left: 0; top: 46px; bottom: 56px; width: 44px; z-index: 35;
     padding: 8px 0; background: var(--panel); border-right: 1px solid var(--line);
     overflow-y: auto; overflow-x: hidden;
+    transition: transform .26s cubic-bezier(.4, 0, .2, 1), opacity .18s ease;
   }
-  .drills-ws { padding-left: 44px; }
+  .drills-ws { padding-left: 44px; transition: padding-left .26s cubic-bezier(.4, 0, .2, 1); }
   .drills-ws.rail-hidden { padding-left: 0; }
+  .drills-ws.rail-hidden .ql-rail, .drills-ws.rail-hidden .ql-rail:hover {
+    transform: translateX(-100%); opacity: 0; pointer-events: none;
+  }
   /* 窄条在时不显示悬浮「题目」按钮；收起后它回来当入口 */
   .drills-ws:not(.rail-hidden) .fab-drawer { display: none; }
   /* 练习页：题目头 + 编辑器在前、运行控制台在后（主工作台才是"输出在最上"） */

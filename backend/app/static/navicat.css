@@ -31,6 +31,7 @@
   min-width: 190px; max-width: calc(100vw - 24px); padding: 5px;
   background: var(--panel); border: 1px solid var(--line-strong);
   border-radius: 6px; box-shadow: 0 10px 30px rgba(0,0,0,.18);
+  animation: ncMenuIn .13s cubic-bezier(.34, 1.2, .64, 1);
 }
 .nc-menu-pop button {
   display: flex; align-items: center; gap: 8px; width: 100%;
@@ -636,6 +637,8 @@ tr.added td { background: rgba(46,160,67,.06); }
   position: absolute; z-index: 70; width: 302px; max-width: calc(100% - 16px);
   background: var(--panel); border: 1px solid var(--line-strong); border-radius: 8px;
   box-shadow: 0 14px 38px rgba(1, 8, 24, .25); padding: 8px;
+  transform-origin: top left;
+  animation: ncMenuIn .14s cubic-bezier(.34, 1.2, .64, 1);
 }
 .nc-condpop-t {
   display: flex; align-items: center; gap: 6px; font: 11.5px var(--mono);
@@ -887,11 +890,13 @@ tr.added td { background: rgba(46,160,67,.06); }
 .nc-chart-mask {
   position: absolute; inset: 0; z-index: 92; display: flex; align-items: center;
   justify-content: center; background: rgba(4, 12, 26, .45); padding: 16px;
+  animation: backdropIn .16s ease;
 }
 .nc-chart-box {
   width: min(880px, 100%); max-height: 100%; display: flex; flex-direction: column;
   background: var(--panel); border: 1px solid var(--line-strong); border-radius: 10px;
   box-shadow: 0 22px 60px rgba(0, 0, 0, .32); overflow: hidden;
+  animation: dlgIn .18s cubic-bezier(.34, 1.2, .64, 1);
 }
 .nc-chart-h {
   display: flex; align-items: center; gap: 10px; padding: 7px 12px;
@@ -923,10 +928,16 @@ tr.added td { background: rgba(46,160,67,.06); }
   user-select: text; -webkit-user-select: text;
 }
 
+/* 菜单/弹层统一的小弹出动画（右键菜单、条件组合框、字段选择、连接菜单） */
+@keyframes ncMenuIn {
+  from { opacity: 0; transform: translateY(-3px) scale(.985); }
+}
 .nc-ctx {
   position: absolute; z-index: 60; min-width: 186px; padding: 5px;
   background: var(--panel); border: 1px solid var(--line-strong);
   border-radius: 8px; box-shadow: 0 12px 34px rgba(0,0,0,.22);
+  transform-origin: top left;
+  animation: ncMenuIn .13s cubic-bezier(.34, 1.2, .64, 1);
 }
 .nc-ctx-item {
   display: flex; align-items: center; gap: 9px; width: 100%;
