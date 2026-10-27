@@ -558,6 +558,10 @@ code, d = call(f"/api/admin/users/{aid}/update", {"quota_mb": 5}, token=tok_admi
 check("管理员不能被设配额（本来就无限）", code == 400 and "无限" in str(d.get("detail", "")),
       f"{code} {str(d)[:130]}")
 
+# 收尾：删掉配额测试用户（否则每跑一次烟测就攒一个测试账号）
+code, d = call(f"/api/admin/users/{uid}/delete", token=tok_admin, method="POST")
+check("配额测试用户已清理", code == 200, f"{code} {str(d)[:120]}")
+
 print("== 8d. 题目：草稿 → 发布 → 一键导入 ==")
 # 发布权限：新账号默认没有；管理员可开通
 u3 = "stu" + uuid.uuid4().hex[:6]
