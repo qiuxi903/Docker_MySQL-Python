@@ -27,7 +27,7 @@ html[data-theme="light"] body { background: #f6f8fa; }
 <link rel="stylesheet" href="/vendor/codemirror/codemirror.css">
 <link rel="stylesheet" href="/vendor/codemirror/addon/hint/show-hint.css">
 <link rel="stylesheet" href="/fonts/misans/misans.css">
-<link rel="stylesheet" href="/style.css?v=170">
+<link rel="stylesheet" href="/style.css?v=171">
   <link rel="stylesheet" href="/navicat.css?v=31">
 </head>
 <body>
@@ -623,9 +623,8 @@ html[data-theme="light"] body { background: #f6f8fa; }
           <div class="drawer-mask m-only" v-show="drawer==='drills'" @click="drawer=''"></div>
 
           <!-- 左：本套题目 + SQL 题的沙箱数据库表（Navicat 模式用面板自带的连接树） -->
-          <aside class="side drawer drill-qlist" :class="{open: drawer==='drills', expanded: sideExpanded}">
-            <!-- 桌面窄条（Navicat 模式）：圆圈=每道题，可点击跳题，底部按钮展开完整列表 -->
-            <div class="ql-rail">
+          <!-- 题目圆圈窄条：桌面在左侧一列（Navicat 模式），手机固定在左边缘；展开=完整列表 -->
+          <div class="ql-rail">
               <button class="ql-back" title="返回试卷" @click="paperCurrent ? backToPaper() : backToPapers()">
                 <e-icon name="chevron-right" :size="14" style="transform:rotate(180deg);display:inline-block"></e-icon>
               </button>
@@ -638,10 +637,11 @@ html[data-theme="light"] body { background: #f6f8fa; }
               </button>
               <span class="spacer"></span>
               <button class="ql-toggle" :title="sideExpanded ? '收起题目列表' : '展开题目列表'"
-                      @click="sideExpanded = !sideExpanded">
+                      @click="toggleQlist()">
                 <e-icon :name="sideExpanded ? 'x' : 'list'" :size="14"></e-icon>
               </button>
-            </div>
+          </div>
+          <aside class="side drawer drill-qlist" :class="{open: drawer==='drills', expanded: sideExpanded}">
             <div class="ql-full">
             <div class="side-h">
               <button class="icon-btn" title="返回" @click="paperCurrent ? backToPaper() : backToPapers()">

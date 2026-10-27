@@ -592,21 +592,20 @@ li.CodeMirror-hint-active { background: var(--accent); color: #fff; }
 .ql-dot.done { border-color: #3f9e6e; color: #3f9e6e; }
 .ql-dot.done.cur { background: #3f9e6e; border-color: #3f9e6e; color: #fff; }
 .ql-rail .spacer { flex: 1 1 auto; }
+.ql-full { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
 @media (min-width: 920px) {
   .drills-ws.nav-mode { grid-template-columns: 48px 1fr; }   /* 窄条只占 48px，工作区更宽 */
-  .drills-ws.nav-mode .drill-qlist { position: relative; }   /* 浮层相对侧栏定位（仅桌面；手机上侧栏是 fixed 抽屉） */
   .drills-ws.nav-mode .ql-rail {
     display: flex; flex-direction: column; align-items: center;
     gap: 6px; padding: 8px 4px; border-right: 1px solid var(--line); background: var(--panel);
   }
-  .drills-ws.nav-mode .drill-qlist:not(.expanded) .ql-full { display: none; }
-  .drills-ws.nav-mode .drill-qlist.expanded .ql-full {
-    display: flex; flex-direction: column;
-    position: absolute; left: 48px; top: 0; bottom: 0; width: 244px;
-    z-index: 30; box-shadow: 10px 0 28px rgba(1, 8, 24, .14);
-    border-right: 1px solid var(--line);
-    background: var(--panel);
+  /* 展开的完整列表：浮层（不挤压工作区） */
+  .drills-ws.nav-mode .drill-qlist {
+    position: absolute; left: 48px; top: 0; bottom: 0; width: 244px; display: none;
+    z-index: 30; background: var(--panel); border-right: 1px solid var(--line);
+    box-shadow: 10px 0 28px rgba(1, 8, 24, .14);
   }
+  .drills-ws.nav-mode .drill-qlist.expanded { display: flex; }
 }
 .drill-side {
   flex: 0 0 268px; width: 268px; display: flex; flex-direction: column;
@@ -2122,6 +2121,15 @@ pre, .cheat pre, .ddl-pre, .src-pre, .cstdout, .cstderr, .term-out, .term-err {
   .console-pane { order: 1; flex: 0 0 auto; border-bottom: 1px solid var(--line); }
   .console-pane .console { max-height: 30vh; }
   .editor-pane { order: 2; flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+  /* 手机：题目圆圈窄条固定在左边缘（与桌面同一套圆圈），展开=滑出抽屉 */
+  .ql-rail {
+    display: flex; flex-direction: column; align-items: center; gap: 6px;
+    position: fixed; left: 0; top: 46px; bottom: 56px; width: 44px; z-index: 35;
+    padding: 8px 0; background: var(--panel); border-right: 1px solid var(--line);
+    overflow-y: auto; overflow-x: hidden;
+  }
+  .drills-ws { padding-left: 44px; }
+  .drills-ws .fab-drawer { display: none; }   /* 窄条已替代悬浮「题目」按钮 */
   /* 练习页：题目头 + 编辑器在前、运行控制台在后（主工作台才是"输出在最上"） */
   .drills-ws .console-pane { order: 0; border-bottom: 0; border-top: 1px solid var(--line); }
   .drills-ws .editor-pane { order: 0; }

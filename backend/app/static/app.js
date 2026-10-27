@@ -1279,6 +1279,14 @@ const App = {
       } catch (e) { this.toast(e.message); }
     },
 
+    // 题目列表展开/收起：手机滑出抽屉，桌面展开浮层
+    toggleQlist() {
+      if (window.matchMedia && window.matchMedia("(max-width: 919px)").matches) {
+        this.drawer = this.drawer === "drills" ? "" : "drills";
+      } else {
+        this.sideExpanded = !this.sideExpanded;
+      }
+    },
     setNavMode(on) {
       this.navMode = !!on;
       this.drillModeTouched = true;   // 本次会话内切题保持学生选的模式
