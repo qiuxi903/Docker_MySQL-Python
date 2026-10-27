@@ -27,7 +27,7 @@ html[data-theme="light"] body { background: #f6f8fa; }
 <link rel="stylesheet" href="/vendor/codemirror/codemirror.css">
 <link rel="stylesheet" href="/vendor/codemirror/addon/hint/show-hint.css">
 <link rel="stylesheet" href="/fonts/misans/misans.css">
-<link rel="stylesheet" href="/style.css?v=171">
+<link rel="stylesheet" href="/style.css?v=175">
   <link rel="stylesheet" href="/navicat.css?v=31">
 </head>
 <body>
@@ -619,7 +619,7 @@ html[data-theme="light"] body { background: #f6f8fa; }
         </div>
 
         <!-- ===== 4) 做题（与主页工作台完全一致） ===== -->
-        <div v-else class="ws drills-ws" :class="{ 'nav-mode': navMode }">
+        <div v-else class="ws drills-ws" :class="{ 'nav-mode': navMode, 'rail-hidden': railHidden }">
           <div class="drawer-mask m-only" v-show="drawer==='drills'" @click="drawer=''"></div>
 
           <!-- 左：本套题目 + SQL 题的沙箱数据库表（Navicat 模式用面板自带的连接树） -->
@@ -640,7 +640,18 @@ html[data-theme="light"] body { background: #f6f8fa; }
                       @click="toggleQlist()">
                 <e-icon :name="sideExpanded ? 'x' : 'list'" :size="14"></e-icon>
               </button>
+              <button class="ql-toggle ql-hide" title="收起题目圆圈（腾出宽度）"
+                      @click="railHidden = true">
+                <e-icon name="chevron-right" :size="14"
+                        style="transform:rotate(180deg);display:inline-block"></e-icon>
+              </button>
           </div>
+          <!-- 窄条收起后：左边缘的小圆钮，点一下展开回来 -->
+          <button class="ql-handle" :title="'展开题目圆圈（共 ' + drillSideList.length + ' 题）'"
+                  @click="railHidden = false">
+            <e-icon name="list" :size="14"></e-icon>
+            <span class="ql-handle-n">{{ String(drillSideList.findIndex(x => drillCurrent && x.id === drillCurrent.id) + 1).padStart(2, '0') }}</span>
+          </button>
           <aside class="side drawer drill-qlist" :class="{open: drawer==='drills', expanded: sideExpanded}">
             <div class="ql-full">
             <div class="side-h">
@@ -3704,6 +3715,6 @@ INSERT INTO course VALUES (1,'数学');</pre>
 </script>
 
 <script src="/navicat.js?v=14"></script>
-<script src="/app.js?v=176"></script>
+<script src="/app.js?v=177"></script>
 </body>
 </html>

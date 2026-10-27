@@ -486,6 +486,8 @@ const App = {
       drillModeTouched: false,
       // 题目圆圈窄条的展开状态（Navicat 模式桌面：展开=完整题目列表浮层）
       sideExpanded: false,
+      // 窄条是否收起��收起后左边缘留一个小圆钮，腾出宽度）
+      railHidden: false,
       navLog: [],
       navLastQuery: "",
       drillOpenSeq: 0,

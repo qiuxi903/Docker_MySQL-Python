@@ -593,8 +593,23 @@ li.CodeMirror-hint-active { background: var(--accent); color: #fff; }
 .ql-dot.done.cur { background: #3f9e6e; border-color: #3f9e6e; color: #fff; }
 .ql-rail .spacer { flex: 1 1 auto; }
 .ql-full { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+/* 窄条收起后的小圆钮（左边缘，点一下展开回来） */
+.ql-handle {
+  display: none; position: fixed; left: 10px; bottom: 74px;
+  z-index: 36; width: 40px; height: 40px; border-radius: 50%;
+  border: 1px solid var(--accent); background: var(--panel); color: var(--accent);
+  cursor: pointer; align-items: center; justify-content: center; flex-direction: column;
+  gap: 0; box-shadow: 0 3px 12px rgba(1, 8, 24, .16); padding: 0;
+}
+.ql-handle:hover { background: var(--accent); color: #fff; }
+.ql-handle-n { font: 700 9px/1 inherit; }
+.drills-ws.rail-hidden .ql-handle { display: inline-flex; }
+/* 收起窄条：提高优先级，压过媒体查询里的 display:flex */
+.drills-ws.nav-mode.rail-hidden .ql-rail,
+.drills-ws.rail-hidden .ql-rail { display: none !important; }
 @media (min-width: 920px) {
   .drills-ws.nav-mode { grid-template-columns: 48px 1fr; }   /* 窄条只占 48px，工作区更宽 */
+  .drills-ws.nav-mode.rail-hidden { grid-template-columns: 1fr; }   /* 窄条收起：工作区占满 */
   .drills-ws.nav-mode .ql-rail {
     display: flex; flex-direction: column; align-items: center;
     gap: 6px; padding: 8px 4px; border-right: 1px solid var(--line); background: var(--panel);
@@ -2129,7 +2144,9 @@ pre, .cheat pre, .ddl-pre, .src-pre, .cstdout, .cstderr, .term-out, .term-err {
     overflow-y: auto; overflow-x: hidden;
   }
   .drills-ws { padding-left: 44px; }
-  .drills-ws .fab-drawer { display: none; }   /* 窄条已替代悬浮「题目」按钮 */
+  .drills-ws.rail-hidden { padding-left: 0; }
+  /* 窄条在时不显示悬浮「题目」按钮；收起后它回来当入口 */
+  .drills-ws:not(.rail-hidden) .fab-drawer { display: none; }
   /* 练习页：题目头 + 编辑器在前、运行控制台在后（主工作台才是"输出在最上"） */
   .drills-ws .console-pane { order: 0; border-bottom: 0; border-top: 1px solid var(--line); }
   .drills-ws .editor-pane { order: 0; }
