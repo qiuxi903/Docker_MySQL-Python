@@ -423,7 +423,8 @@ tr.added td { background: rgba(46,160,67,.06); }
 
 /* ---- 做题页容器 ---- */
 /* Navicat 模式没有左侧题目栏，主区占满整行（否则会落进原网格的 244px 列） */
-.drills-ws.nav-mode { grid-template-columns: 244px 1fr; }   /* 左题目栏 + 右 Navicat 面板 */
+.drills-ws.nav-mode { grid-template-columns: 48px 1fr; }   /* 左：题目圆圈窄条；展开的完整列表是浮层 */
+.drills-ws.nav-mode .drill-qlist { position: relative; }   /* 浮层相对侧栏定位，不盖住顶部做题条 */
 .navicat-pane { flex: 1; min-height: 0; }
 .navicat-head {
   height: auto; min-height: var(--panel-h-h);

@@ -572,6 +572,41 @@ li.CodeMirror-hint-active { background: var(--accent); color: #fff; }
 
 /* ============ 练习页（左侧题目栏 + 右侧做题区） ============ */
 .drills-page { display: flex; height: 100%; min-height: 0; }
+
+/* ---- 题目圆圈窄条（Navicat 模式桌面）：圆圈=每道题，可点击跳题，可展开完整列表 ---- */
+.drills-ws { position: relative; }
+.ql-rail { display: none; }
+.ql-back, .ql-toggle {
+  width: 30px; height: 30px; border: 0; background: transparent; color: var(--muted);
+  border-radius: 7px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
+}
+.ql-back:hover, .ql-toggle:hover { background: var(--btn-hover); color: var(--accent); }
+.ql-dot {
+  width: 28px; height: 28px; border-radius: 50%; flex: 0 0 auto;
+  border: 1.5px solid var(--line-strong); background: var(--panel); color: var(--muted);
+  font: 600 12px/1 inherit; display: inline-flex; align-items: center; justify-content: center;
+  cursor: pointer; padding: 0;
+}
+.ql-dot:hover { border-color: var(--accent); color: var(--accent); }
+.ql-dot.cur { background: var(--accent); border-color: var(--accent); color: #fff; }
+.ql-dot.done { border-color: #3f9e6e; color: #3f9e6e; }
+.ql-dot.done.cur { background: #3f9e6e; border-color: #3f9e6e; color: #fff; }
+.ql-rail .spacer { flex: 1 1 auto; }
+@media (min-width: 920px) {
+  .drills-ws.nav-mode { grid-template-columns: 48px 1fr; }   /* 窄条只占 48px，工作区更宽 */
+  .drills-ws.nav-mode .ql-rail {
+    display: flex; flex-direction: column; align-items: center;
+    gap: 6px; padding: 8px 4px; border-right: 1px solid var(--line); background: var(--panel);
+  }
+  .drills-ws.nav-mode .drill-qlist:not(.expanded) .ql-full { display: none; }
+  .drills-ws.nav-mode .drill-qlist.expanded .ql-full {
+    display: flex; flex-direction: column;
+    position: absolute; left: 48px; top: 0; bottom: 0; width: 244px;
+    z-index: 30; box-shadow: 10px 0 28px rgba(1, 8, 24, .14);
+    border-right: 1px solid var(--line);
+    background: var(--panel);
+  }
+}
 .drill-side {
   flex: 0 0 268px; width: 268px; display: flex; flex-direction: column;
   border-right: 1px solid var(--line); background: var(--panel); min-height: 0;

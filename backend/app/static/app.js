@@ -484,6 +484,8 @@ const App = {
       navMode: false,
       // 本次会话里学生手动切过模式（切题时保持其选择；刷新页面回到默认 Navicat）
       drillModeTouched: false,
+      // 题目圆圈窄条的展开状态（Navicat 模式桌面：展开=完整题目列表浮层）
+      sideExpanded: false,
       navLog: [],
       navLastQuery: "",
       drillOpenSeq: 0,

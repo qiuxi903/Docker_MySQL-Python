@@ -27,8 +27,8 @@ html[data-theme="light"] body { background: #f6f8fa; }
 <link rel="stylesheet" href="/vendor/codemirror/codemirror.css">
 <link rel="stylesheet" href="/vendor/codemirror/addon/hint/show-hint.css">
 <link rel="stylesheet" href="/fonts/misans/misans.css">
-<link rel="stylesheet" href="/style.css?v=166">
-  <link rel="stylesheet" href="/navicat.css?v=28">
+<link rel="stylesheet" href="/style.css?v=169">
+  <link rel="stylesheet" href="/navicat.css?v=30">
 </head>
 <body>
 <div id="app" v-cloak>
@@ -623,7 +623,26 @@ html[data-theme="light"] body { background: #f6f8fa; }
           <div class="drawer-mask m-only" v-show="drawer==='drills'" @click="drawer=''"></div>
 
           <!-- 左：本套题目 + SQL 题的沙箱数据库表（Navicat 模式用面板自带的连接树） -->
-          <aside class="side drawer" :class="{open: drawer==='drills'}">
+          <aside class="side drawer drill-qlist" :class="{open: drawer==='drills', expanded: sideExpanded}">
+            <!-- 桌面窄条（Navicat 模式）：圆圈=每道题，可点击跳题，底部按钮展开完整列表 -->
+            <div class="ql-rail">
+              <button class="ql-back" title="返回试卷" @click="paperCurrent ? backToPaper() : backToPapers()">
+                <e-icon name="chevron-right" :size="14" style="transform:rotate(180deg);display:inline-block"></e-icon>
+              </button>
+              <button v-for="(d, di) in drillSideList" :key="'q' + d.id" class="ql-dot"
+                      :class="{cur: drillCurrent && drillCurrent.id===d.id, done: d.passed}"
+                      :title="qTitle(d.title) + '（' + d.score + '分' + (d.passed ? '，已通过' : '') + '）'"
+                      @click="startDrill(d); sideExpanded=false">
+                <e-icon v-if="d.passed" name="check" :size="13"></e-icon>
+                <template v-else>{{ di + 1 }}</template>
+              </button>
+              <span class="spacer"></span>
+              <button class="ql-toggle" :title="sideExpanded ? '收起题目列表' : '展开题目列表'"
+                      @click="sideExpanded = !sideExpanded">
+                <e-icon :name="sideExpanded ? 'x' : 'list'" :size="14"></e-icon>
+              </button>
+            </div>
+            <div class="ql-full">
             <div class="side-h">
               <button class="icon-btn" title="返回" @click="paperCurrent ? backToPaper() : backToPapers()">
                 <e-icon name="chevron-right" :size="14" style="transform:rotate(180deg);display:inline-block"></e-icon>
@@ -678,6 +697,7 @@ html[data-theme="light"] body { background: #f6f8fa; }
                   </button>
                 </div>
               </template>
+            </div>
             </div>
           </aside>
 
@@ -3666,6 +3686,6 @@ INSERT INTO course VALUES (1,'数学');</pre>
 </script>
 
 <script src="/navicat.js?v=14"></script>
-<script src="/app.js?v=174"></script>
+<script src="/app.js?v=175"></script>
 </body>
 </html>
