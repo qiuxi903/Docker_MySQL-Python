@@ -133,12 +133,19 @@ check("TRUST_PROXY=0 → never", _net.parse_mode("0") == _net.MODE_NEVER)
 check("TRUST_PROXY 未设置 → auto", _net.parse_mode("") == _net.MODE_AUTO)
 check("TRUST_PROXY 乱值 → auto", _net.parse_mode("yes-please") == _net.MODE_AUTO)
 
-# 宝塔/Nginx 反代：XFF 里第一个合法 IP 就是学生
-check("反代取 XFF 第一段",
-      _net.resolve(_net.MODE_ALWAYS, "203.0.113.9, 172.18.0.1", "", "172.18.0.1") == "203.0.113.9")
-# 学生自己伪造的头部会被反代追加在后面，取第一段仍是最靠近客户端的一跳
+# 宝塔/Nginx 反代：反代把真实来源追加在最右，取最右一个才是学生真实 IP
+check("反代取 XFF 最右一段（学生真实 IP）",
+      _net.resolve(_net.MODE_ALWAYS, "203.0.113.9, 172.18.0.1", "", "172.18.0.1") == "172.18.0.1")
+# 学生伪造的头部留在最左，不能被采信（否则能刷限流、栽赃别人 IP）
+check("伪造的 XFF 不被采信",
+      _net.resolve(_net.MODE_ALWAYS, "1.2.3.4, 172.18.0.1", "", "172.18.0.1") == "172.18.0.1")
+# 两层反代（CDN + Nginx）：从右往左数第二跳才是学生
+check("两层反代取右数第二跳",
+      _net.resolve(_net.MODE_ALWAYS, "203.0.113.9, 198.51.100.7, 172.18.0.1", "", "172.18.0.1",
+                   hops=2) == "198.51.100.7")
+# 非法段跳过，只数合法 IP
 check("XFF 含非法段时跳过",
-      _net.resolve(_net.MODE_ALWAYS, "unknown, 203.0.113.9", "", "172.18.0.1") == "203.0.113.9")
+      _net.resolve(_net.MODE_ALWAYS, "unknown, 203.0.113.9, 172.18.0.1", "", "172.18.0.1") == "172.18.0.1")
 check("XFF 为空时退回 X-Real-IP",
       _net.resolve(_net.MODE_ALWAYS, "", "198.51.100.7", "172.18.0.1") == "198.51.100.7")
 check("没有反代头时用 socket 来源",

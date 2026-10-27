@@ -8,6 +8,9 @@
   - 经 Nginx / 宝塔反代：反代会把真实来源写进 `X-Forwarded-For` / `X-Real-IP`，
     读这两个头才能拿到学生 IP。
 
+`TRUST_PROXY_HOPS`（默认 1）= 可信反代层数：X-Forwarded-For 从右往左数第几跳是学生真实 IP
+（宝塔/Nginx 单层反代用 1；CDN + Nginx 两层用 2）。
+
 `TRUST_PROXY` 决定信不信这两个头：
   - 未设置（auto）  ：有反代头就用（兼容旧行为）
   - `1`（always）   ：信任反代头（宝塔/Nginx 反代后面用这个）
@@ -38,17 +41,31 @@ def valid_ip(s) -> bool:
         return False
 
 
-def first_valid(header: str) -> str:
-    """X-Forwarded-For 里第一个合法 IP —— 最靠近客户端的那一跳。
-
-    形如 `学生IP, 代理1, 代理2`；学生自己伪造的头部会被反代追加在**后面**，
-    所以取第一个是「离客户端最近」的那个。
-    """
+def valid_list(header: str) -> list:
+    """X-Forwarded-For 里所有合法 IP，按出现顺序（左→右）。"""
+    out = []
     for part in str(header or "").split(","):
         part = part.strip()
         if part and valid_ip(part):
-            return part
-    return ""
+            out.append(part)
+    return out
+
+
+def last_valid(header: str, hops: int = 1) -> str:
+    """取 X-Forwarded-For 里「从右往左数第 hops 个」合法 IP —— 可信反代写入的那一跳。
+
+    为什么从右往左数：nginx 的 `$proxy_add_x_forwarded_for` 是
+    `客户端自带的值, $remote_addr` —— 学生伪造的内容留在**最左边**，
+    反代把真实来源**追加在最右边**。所以：
+      - 一层反代（宝塔/Nginx 直接对外）：hops=1，取最右一个 = 学生真实 IP；
+      - 两层反代（CDN + Nginx）：hops=2，取右数第二个。
+    取最左边是错的：那正是学生可以随便伪造的位置（能刷限流、栽赃别人 IP）。
+    """
+    ips = valid_list(header)
+    if not ips:
+        return ""
+    hops = max(1, int(hops or 1))
+    return ips[-hops] if len(ips) >= hops else ips[0]
 
 
 def is_private(ip: str) -> bool:
@@ -64,12 +81,16 @@ def is_private(ip: str) -> bool:
     return bool(a.is_private or a.is_loopback or a.is_link_local or a.is_unspecified)
 
 
-def resolve(mode: str, forwarded_for: str, real_ip: str, socket_ip: str) -> str:
-    """按模式判定真实客户端 IP（返回截断到 64 字符的字符串）。"""
+def resolve(mode: str, forwarded_for: str, real_ip: str, socket_ip: str,
+            hops: int = 1) -> str:
+    """按模式判定真实客户端 IP（返回截断到 64 字符的字符串）。
+
+    hops = 可信反代层数（默认 1）：X-Forwarded-For 从右往左数第 hops 个才是学生真实 IP。
+    """
     sock = str(socket_ip or "").strip()[:64]
     if mode == MODE_NEVER:
         return sock
-    fwd = first_valid(forwarded_for)
+    fwd = last_valid(forwarded_for, hops)
     if fwd:
         return fwd[:64]
     real = str(real_ip or "").strip()
@@ -78,12 +99,14 @@ def resolve(mode: str, forwarded_for: str, real_ip: str, socket_ip: str) -> str:
     return sock
 
 
-def diagnose(mode: str, forwarded_for: str, real_ip: str, socket_ip: str) -> dict:
+def diagnose(mode: str, forwarded_for: str, real_ip: str, socket_ip: str,
+             hops: int = 1) -> dict:
     """给管理后台的「网络诊断」用：原始值 + 判定结果 + 一句可操作的提示。"""
-    resolved = resolve(mode, forwarded_for, real_ip, socket_ip)
-    has_header = bool(first_valid(forwarded_for) or valid_ip(real_ip))
+    resolved = resolve(mode, forwarded_for, real_ip, socket_ip, hops)
+    has_header = bool(valid_list(forwarded_for) or valid_ip(real_ip))
     return {
         "mode": mode,
+        "hops": max(1, int(hops or 1)),
         "socketIp": str(socket_ip or "")[:64],
         "forwardedFor": str(forwarded_for or "")[:200],
         "realIp": str(real_ip or "")[:64],

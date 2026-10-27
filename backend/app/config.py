@@ -59,6 +59,9 @@ class C:
     #   0      = never（只认 socket 来源，防止伪造反代头刷限流）
     TRUST_PROXY_RAW = os.getenv("TRUST_PROXY", "")
     TRUST_PROXY_MODE = _netutil.parse_mode(TRUST_PROXY_RAW)
+    # 可信反代层数：X-Forwarded-For 从右往左数第几跳是学生真实 IP
+    # （宝塔/Nginx 单层=1；CDN + Nginx 两层=2）
+    TRUST_PROXY_HOPS = max(1, _int("TRUST_PROXY_HOPS", 1))
     # 兼容旧写法：布尔值（auto / always 都算信任）
     TRUST_PROXY = TRUST_PROXY_MODE != _netutil.MODE_NEVER
 

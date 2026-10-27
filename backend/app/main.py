@@ -48,8 +48,8 @@ async def lifespan(app: FastAPI):
     await asyncio.to_thread(drills.init)
     await asyncio.to_thread(users.init)
     # 启动时把反代头策略打出来：管理后台 IP 显示不对时，先看这一行
-    print(f"[net] TRUST_PROXY={C.TRUST_PROXY_RAW or '(未设置)'} → 模式 {C.TRUST_PROXY_MODE}；"
-          f"默认配额 {C.DEFAULT_QUOTA_MB} MB", flush=True)
+    print(f"[net] TRUST_PROXY={C.TRUST_PROXY_RAW or '(未设置)'} → 模式 {C.TRUST_PROXY_MODE}"
+          f"（可信反代 {C.TRUST_PROXY_HOPS} 层）；默认配额 {C.DEFAULT_QUOTA_MB} MB", flush=True)
     task = asyncio.create_task(_cleanup_loop())
     yield
     task.cancel()
@@ -101,6 +101,7 @@ def client_ip(request: Request) -> str:
         request.headers.get("x-forwarded-for", ""),
         request.headers.get("x-real-ip", ""),
         request.client.host if request.client else "",
+        C.TRUST_PROXY_HOPS,
     )
 
 
@@ -111,6 +112,7 @@ def net_diag(request: Request) -> dict:
         request.headers.get("x-forwarded-for", ""),
         request.headers.get("x-real-ip", ""),
         request.client.host if request.client else "",
+        C.TRUST_PROXY_HOPS,
     )
 
 
