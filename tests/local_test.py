@@ -137,7 +137,7 @@ check("TRUST_PROXY 乱值 → auto", _net.parse_mode("yes-please") == _net.MODE_
 check("反代取 XFF 第一段",
       _net.resolve(_net.MODE_ALWAYS, "203.0.113.9, 172.18.0.1", "", "172.18.0.1") == "203.0.113.9")
 # 学生自己伪造的头部会被反代追加在后面，取第一段仍是最靠近客户端的一跳
-check("XFF 含非��段时跳过",
+check("XFF 含非法段时跳过",
       _net.resolve(_net.MODE_ALWAYS, "unknown, 203.0.113.9", "", "172.18.0.1") == "203.0.113.9")
 check("XFF 为空时退回 X-Real-IP",
       _net.resolve(_net.MODE_ALWAYS, "", "198.51.100.7", "172.18.0.1") == "198.51.100.7")

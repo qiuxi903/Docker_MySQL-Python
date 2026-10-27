@@ -1014,7 +1014,7 @@ const App = {
         this._leavePrompted = false;
       }
       if (!await this.confirmLeaveWorkspace()) return;
-      // 游��：上传的临时文件退出后会被清除，先提醒一句（注册用户不受影响）
+      // 游客：上传的临时文件退出后会被清除，先提醒一句（注册用户不受影响）
       if (this.user && this.user.kind === "guest") {
         const tempCount = (this.pyFiles || []).filter(f => f.uploaded).length;
         if (tempCount > 0 &&
@@ -3658,7 +3658,7 @@ const App = {
             const ok = await this.askConfirm("容量小于已用量",
               `「${u.username}」已用 ${this.fmtBytes(u.usedBytes)}，新容量 ${mb} MB 比它小。\n` +
               `已有文件不会被删除，但该用户会立即被锁住上传和保存，` +
-              `需要自己删掉多余文件（个人中心会显示超出��少）。确定这样设置吗？`,
+              `需要自己删掉多余文件（个人中心会显示超出多少）。确定这样设置吗？`,
               true, "仍然设置", "取消");
             if (!ok) return;
           }

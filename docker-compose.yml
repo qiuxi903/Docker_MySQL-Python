@@ -2,7 +2,7 @@
 # 启用：docker compose --profile realip up -d
 #   反代占用 PROXY_PORT（默认 80），与 web 的 WEB_PORT 各占各的端口，不会冲突；
 #   学生改从 PROXY_PORT 访问即可看到真实 IP（管理后台「总览 → 网络诊断」可验证）。
-#   （服务器上已有宝塔/nginx 在前面做反代的话，不用开这个：给它的反代配��加上
+#   （服务器上已有宝塔/nginx 在前面做反代的话，不用开这个：给它的反代配置加上
 #    X-Forwarded-For / X-Real-IP 两个头，并保持 .env 的 TRUST_PROXY=1 即可）
 services:
   db:
