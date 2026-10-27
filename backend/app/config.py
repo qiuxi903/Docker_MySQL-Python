@@ -1,6 +1,8 @@
 """全局配置：全部来自环境变量（docker-compose 注入），本地直跑有默认值。"""
 import os
 
+from . import netutil as _netutil
+
 
 def _int(name: str, default: int) -> int:
     try:
@@ -51,8 +53,14 @@ class C:
     IMPORT_COLS_MAX = 64           # 单表列数上限
     SHARE_ROWS_MAX = 5000          # 分享到社区的行数上限
     RATE_LIMIT = _int("RATE_LIMIT_PER_MIN", 600)  # 每 IP 每分钟请求数（机房共用出口 IP 时调高）
-    # 放在 Nginx/宝塔反向代理后面时设为 1：限流按 X-Forwarded-For 里的真实学生 IP 计算
-    TRUST_PROXY = os.getenv("TRUST_PROXY", "") == "1"
+    # 反代头信任策略（.env 的 TRUST_PROXY）：
+    #   未设置 = auto（有 X-Forwarded-For / X-Real-IP 就用，兼容旧行为）
+    #   1      = always（宝塔/Nginx 反代后面用这个：管理后台显示学生真实 IP、限流按真实 IP）
+    #   0      = never（只认 socket 来源，防止伪造反代头刷限流）
+    TRUST_PROXY_RAW = os.getenv("TRUST_PROXY", "")
+    TRUST_PROXY_MODE = _netutil.parse_mode(TRUST_PROXY_RAW)
+    # 兼容旧写法：布尔值（auto / always 都算信任）
+    TRUST_PROXY = TRUST_PROXY_MODE != _netutil.MODE_NEVER
 
 
 # 防呆：允许 `from . import config as C`（模块）和 `from .config import C`（类）两种写法

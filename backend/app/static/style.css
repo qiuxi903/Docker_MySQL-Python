@@ -594,6 +594,7 @@ li.CodeMirror-hint-active { background: var(--accent); color: #fff; }
 .ql-rail .spacer { flex: 1 1 auto; }
 @media (min-width: 920px) {
   .drills-ws.nav-mode { grid-template-columns: 48px 1fr; }   /* 窄条只占 48px，工作区更宽 */
+  .drills-ws.nav-mode .drill-qlist { position: relative; }   /* 浮层相对侧栏定位（仅桌面；手机上侧栏是 fixed 抽屉） */
   .drills-ws.nav-mode .ql-rail {
     display: flex; flex-direction: column; align-items: center;
     gap: 6px; padding: 8px 4px; border-right: 1px solid var(--line); background: var(--panel);
@@ -2121,6 +2122,9 @@ pre, .cheat pre, .ddl-pre, .src-pre, .cstdout, .cstderr, .term-out, .term-err {
   .console-pane { order: 1; flex: 0 0 auto; border-bottom: 1px solid var(--line); }
   .console-pane .console { max-height: 30vh; }
   .editor-pane { order: 2; flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+  /* 练习页：题目头 + 编辑器在前、运行控制台在后（主工作台才是"输出在最上"） */
+  .drills-ws .console-pane { order: 0; border-bottom: 0; border-top: 1px solid var(--line); }
+  .drills-ws .editor-pane { order: 0; }
   .editor-host { flex: 1; min-height: 200px; }
   /* >=16px：否则 iOS Safari 聚焦输入框时会自动放大整页（缩放不一致的根因） */
   .editor-host .CodeMirror { height: 100%; min-height: 220px; font-size: 16px; overflow: hidden; }

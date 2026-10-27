@@ -27,8 +27,8 @@ html[data-theme="light"] body { background: #f6f8fa; }
 <link rel="stylesheet" href="/vendor/codemirror/codemirror.css">
 <link rel="stylesheet" href="/vendor/codemirror/addon/hint/show-hint.css">
 <link rel="stylesheet" href="/fonts/misans/misans.css">
-<link rel="stylesheet" href="/style.css?v=169">
-  <link rel="stylesheet" href="/navicat.css?v=30">
+<link rel="stylesheet" href="/style.css?v=170">
+  <link rel="stylesheet" href="/navicat.css?v=31">
 </head>
 <body>
 <div id="app" v-cloak>
@@ -1938,6 +1938,24 @@ INSERT INTO course VALUES (1,'数学');</pre>
             </div>
           </div>
         </div>
+        <div class="adm-trend" v-if="adminNet">
+          <div class="adm-trend-t">
+            网络诊断（真实 IP）
+            <button class="btn mini" style="margin-left:8px" @click="loadAdminNet()">重新检测</button>
+          </div>
+          <p class="ud-line">
+            本次请求判定来源：<b>{{ adminNet.resolved || '未知' }}</b>
+            <span v-if="adminNet.private" class="warn">（内网 / 网关地址，不是学生真实 IP）</span>
+            <span v-else class="muted">（公网地址，正常）</span>
+          </p>
+          <p class="ud-line muted">
+            socket 来源 {{ adminNet.socketIp || '-' }} ·
+            X-Forwarded-For {{ adminNet.forwardedFor || '（无）' }} ·
+            X-Real-IP {{ adminNet.realIp || '（无）' }} ·
+            TRUST_PROXY={{ adminNet.mode }}
+          </p>
+          <p class="ud-line" :class="{warn: adminNet.private}">{{ adminNet.hint }}</p>
+        </div>
       </template>
 
       <template v-else-if="adminTab==='user' || adminTab==='guest'">
@@ -3686,6 +3704,6 @@ INSERT INTO course VALUES (1,'数学');</pre>
 </script>
 
 <script src="/navicat.js?v=14"></script>
-<script src="/app.js?v=175"></script>
+<script src="/app.js?v=176"></script>
 </body>
 </html>

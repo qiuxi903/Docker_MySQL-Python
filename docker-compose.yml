@@ -1,6 +1,9 @@
 # 可选：真实 IP 反代 —— 学生经 nginx 访问时，容器能拿到真实来源 IP（自动写进 X-Forwarded-For）。
-# 启用：把下面 web 的 ports 里 8800 那行注释掉，然后 docker compose --profile realip up -d
-# （服务器上已有宝塔/nginx 在前面做反代的话，不用开这个，保持现状即可）
+# 启用：docker compose --profile realip up -d
+#   反代占用 PROXY_PORT（默认 80），与 web 的 WEB_PORT 各占各的端口，不会冲突；
+#   学生改从 PROXY_PORT 访问即可看到真实 IP（管理后台「总览 → 网络诊断」可验证）。
+#   （服务器上已有宝塔/nginx 在前面做反代的话，不用开这个：给它的反代配��加上
+#    X-Forwarded-For / X-Real-IP 两个头，并保持 .env 的 TRUST_PROXY=1 即可）
 services:
   db:
     image: ${MYSQL_IMAGE:-mysql:5.7}
@@ -47,8 +50,8 @@ services:
     networks: [lab]
 
   # 可选：真实 IP 反代 —— 学生经 nginx 访问时，容器能拿到真实来源 IP（自动写进 X-Forwarded-For）。
-  # 用法：把下面 web 的 ports 里 8800 那行注释掉、解开 proxy 的注释，然后 docker compose up -d --build
-  # （服务器上已有宝塔/nginx 在前面做反代的话，不用开这个，保持现状即可）
+  # 用法：docker compose --profile realip up -d，学生访问 http://服务器:PROXY_PORT
+  # 端口：PROXY_PORT 默认 80；宿主机 80 被宝塔等占用时在 .env 里改成别的（如 8080）
   proxy:
     image: nginx:alpine
     container_name: mysqlpython-proxy
@@ -56,10 +59,10 @@ services:
     profiles: ["realip"]   # 默认不启动；docker compose --profile realip up -d 时才起
     depends_on: [web]
     ports:
-      - "8800:80"
+      - "${PROXY_PORT:-80}:80"
     volumes:
       - ./nginx-proxy.conf:/etc/nginx/conf.d/default.conf:ro
-    networks: [lab]
+    networks: [lab, edge]
 
   web:
     build:
@@ -82,9 +85,9 @@ services:
       GUEST_TTL_DAYS: "7"
       SQL_TIMEOUT_SEC: "10"
       ROWS_LIMIT: "500"
-      # 放在 Nginx/宝塔反代后面时，.env 里设 TRUST_PROXY=1 才能拿到学生真实 IP
-      # （不设则只会记到 Docker 网关 IP）
-      TRUST_PROXY: ${TRUST_PROXY:-0}
+      # 反代头信任策略：1=信任（宝塔/Nginx 反代后面用，管理后台显示学生真实 IP）
+      # 0=只认直连来源（防伪造）；不设=auto（有反代头就用，兼容旧行为）
+      TRUST_PROXY: ${TRUST_PROXY:-}
     depends_on:
       db:
         condition: service_healthy

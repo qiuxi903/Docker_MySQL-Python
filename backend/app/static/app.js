@@ -569,6 +569,7 @@ const App = {
       // 用户管理
       adminTab: "overview",
       adminOverview: null,
+      adminNet: null,
       adminList: [],
       adminTotal: 0, adminPage: 1, adminPages: 1,
       adminQuery: "", adminOnly: "",
@@ -983,7 +984,12 @@ const App = {
       // 游客的上传文件是临时的：刷新页面就清掉；注册用户的上传文件永久保留
       if ((me.user && me.user.kind) === "guest") {
         this.api("/api/pyfiles/clear-uploaded", { method: "POST" })
-          .then(() => {
+          .then((r) => {
+            // 有东西被清掉就提示一声，别让学生以为文件莫名丢了
+            if (r && r.removed > 0) {
+              this.toast(`已清除 ${r.removed} 个游客临时文件（游客上传的文件刷新后不保留，` +
+                         `注册账号后上传的文件永久保存）`);
+            }
             this.refreshPyList();
             this.loadPyProjects().catch(() => {});
           }).catch(() => {});
@@ -1008,6 +1014,15 @@ const App = {
         this._leavePrompted = false;
       }
       if (!await this.confirmLeaveWorkspace()) return;
+      // 游��：上传的临时文件退出后会被清除，先提醒一句（注册用户不受影响）
+      if (this.user && this.user.kind === "guest") {
+        const tempCount = (this.pyFiles || []).filter(f => f.uploaded).length;
+        if (tempCount > 0 &&
+            !await this.askConfirm("退出游客模式",
+              `你有 ${tempCount} 个上传的临时文件，退出后会全部清除（游客文件不保留）。\n` +
+              `想留着的话先注册账号，上传的文件就会永久保存。确定退出吗？`,
+              true, "退出", "留下")) return;
+      }
       this.flushDrillDraft();
       this.stashPaperNav();
       try { await this.api("/api/logout", { method: "POST" }); } catch (e) {}
@@ -3491,6 +3506,7 @@ const App = {
       this.adminChecked = [];
       this.$refs.adminDlg.showModal();
       await this.loadOverview();
+      await this.loadAdminNet();
     },
     closeAdmin() {
       this.$refs.adminDlg.close();
@@ -3501,6 +3517,7 @@ const App = {
     },
     async refreshAdmin() {
       await this.loadOverview();
+      await this.loadAdminNet();
       if (this.adminTab === "user" || this.adminTab === "guest") await this.loadAdminList(this.adminPage);
       if (this.adminTab === "log") await this.loadAuthLog();
     },
@@ -3513,11 +3530,17 @@ const App = {
         await this.loadAuthLog();
       } else {
         await this.loadOverview();
+        await this.loadAdminNet();
       }
     },
     async loadOverview() {
       try { this.adminOverview = await this.api("/api/admin/overview"); }
       catch (e) { this.toast(e.message); }
+    },
+    async loadAdminNet() {
+      // 网络诊断：这次请求的 socket 来源 / 反代头 / 最终判定（排查「IP 显示成 172.x」）
+      try { this.adminNet = await this.api("/api/admin/net"); }
+      catch (e) { this.adminNet = null; }
     },
     async loadAdminList(page) {
       this.adminChecked = [];
@@ -3586,8 +3609,11 @@ const App = {
     },
     ipHint(ip) {
       return this.isPrivateIp(ip)
-        ? "内网/网关地址 —— 这次登录是直连容器（来自本机、局域网或 Docker 网络）。" +
-          "经 nginx/宝塔等反向代理访问时会自动记录学生的真实公网/局域网 IP"
+        ? "内网/网关地址：这次登录是直连容器端口（Docker 端口转发会把来源改写成 172.x 网关，不是学生 IP）。" +
+          "要记录学生真实 IP：① 宝塔/Nginx 反代里加 proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for; " +
+          "与 X-Real-IP $remote_addr;，并保持 .env 的 TRUST_PROXY=1；② 或启用内置 realip 反代" +
+          "（docker compose --profile realip up -d，学生改从 PROXY_PORT 访问）。" +
+          "「总览 → 网络诊断」可以直接看到这次请求到底收到了什么"
         : "最近登录 IP";
     },
     fmtBytes(n) {
@@ -3626,22 +3652,37 @@ const App = {
         } else {
           const mb = parseInt(s, 10);
           if (!isFinite(mb)) { this.toast("输入数字（MB）、-1（无限）或 default（默认）"); return; }
+          // 降到比已用量还小：已有文件不删，但该用户会立刻被锁住上传/保存
+          const usedMb = (u.usedBytes || 0) / 1024 / 1024;
+          if (mb >= 0 && usedMb > mb + 0.01) {
+            const ok = await this.askConfirm("容量小于已用量",
+              `「${u.username}」已用 ${this.fmtBytes(u.usedBytes)}，新容量 ${mb} MB 比它小。\n` +
+              `已有文件不会被删除，但该用户会立即被锁住上传和保存，` +
+              `需要自己删掉多余文件（个人中心会显示超出��少）。确定这样设置吗？`,
+              true, "仍然设置", "取消");
+            if (!ok) return;
+          }
           await this.api(`/api/admin/users/${u.id}/update`, { method: "POST",
             body: { quota_mb: mb } });
-          this.toast(`已把 ${u.username} 的容量设为 ${mb === -1 ? "无限" : mb + " MB"}`);
+          this.toast(`已把 ${u.username} 的容量设为 ${mb === -1 ? "无限" : mb + " MB"}` +
+            (mb >= 0 && usedMb > mb + 0.01 ? `（已超出 ${this.fmtBytes(u.usedBytes - mb * 1024 * 1024)}，` +
+              `该用户需自行删除文件后才能再上传）` : ""));
         }
         this.loadAdminList(this.adminPage);
         if (this.userDetail && this.userDetail.user.id === u.id) this.openUserDetail(u);
       } catch (e) { this.toast(e.message); }
     },
     async addUserQuota(u, mb) {
-      // 快捷追加容量：在当前总量的基础上加
-      const cur = (u.quotaMb === null || u.quotaMb === undefined) ? 256 : (u.quotaMb < 0 ? 1073741824 : u.quotaMb);
+      // 快捷追加容量：在当前总量基础上加（无限容量无需追加）
+      const defMb = (this.adminOverview && this.adminOverview.defaultQuotaMb) || 256;
+      if (u.unlimited || u.role === "admin") { this.toast("该账号已是无限容量，不用追加"); return; }
+      const cur = (u.quotaMb === null || u.quotaMb === undefined) ? defMb : u.quotaMb;
       try {
         await this.api(`/api/admin/users/${u.id}/update`, { method: "POST",
           body: { quota_mb: cur + mb } });
-        this.toast(`已给 ${u.username} 追加 ${mb} MB`);
+        this.toast(`已给 ${u.username} 追加 ${mb} MB（现为 ${cur + mb} MB）`);
         this.loadAdminList(this.adminPage);
+        if (this.userDetail && this.userDetail.user.id === u.id) this.openUserDetail(u);
       } catch (e) { this.toast(e.message); }
     },
     async openUserDetail(u) {

@@ -56,7 +56,7 @@ Docker_MySQL-Python/
 │  ├─ server.py                # Python 沙箱执行服务（交互式作业模型、rlimit、看门狗）
 │  └─ labhelpers.py            # 注入学生环境的 get_conn / query / query_dicts / execute
 └─ tests/
-   ├─ local_test.py            # 本地单元测试（不需要 MySQL）：语句切分、沙箱引擎、题目包解包等，111 项
+   ├─ local_test.py            # 本地单元测试（不需要 MySQL）：语句切分、沙箱引擎、题目包解包等，133 项
    └─ smoke_test.py            # 端到端烟测（对着运行中的站点全流程），269 项
 ```
 
@@ -540,19 +540,25 @@ CodeMirror 编辑器 + 下方结果区（**信息 / 摘要 / 结果 1 / 剖析 /
 **管理后台**（仅管理员，顶栏「管理」打开，四个页签）：
 | 页签 | 内容 |
 |---|---|
-| 总览 | 注册用户 / 游客 / 今日活跃 / 有出题权限 / 已禁用 / 数据库总数 / 练习题 / 判分提交 八项统计 + 近 7 天注册柱状图 |
+| 总览 | 注册用户 / 游客 / 今日活跃 / 有出题权限 / 已禁用 / 数据库总数 / 练习题 / 判分提交 八项统计 + 近 7 天注册柱状图 + **网络诊断**（本次请求的 socket 来源 / 反代头 / 真实 IP 判定与修复提示） |
 | 注册用户 | 搜索（账号 / 库名 / IP）+ 按权限状态筛选 + 分页（20/页）；每行可**详情 / 开通或收回出题 / 重置密码 / 设容量 / +256MB / 禁用或解禁 / 删除**（容量条实时显示 已用/总量）；支持勾选后**批量**执行这五种操作；「新建账号」可直接建号（可选同时开通出题权限） |
 | 游客 | 同上的搜索 + 详情 + 删除（游客没有密码和出题权限） |
 | 操作日志 | 登录成功/失败、注册、改密、管理员创建/禁用/解禁/删除/授权/强制下线，可按「只看失败」过滤 |
 
-**真实 IP**：登录 / 限流统一取 `X-Forwarded-For` 第一段（其次 `X-Real-IP`），放在 Nginx / 宝塔反代后面即自动记录学生真实 IP，
-不再需要手工开 `TRUST_PROXY`。
+**真实 IP**：登录 / 限流统一按 `netutil.resolve()` 判定 —— 默认取 `X-Forwarded-For` 第一段
+（其次 `X-Real-IP`），都没有才用 socket 来源。`TRUST_PROXY` 控制信不信这两个头：
 
-- 看到内网 / 网关地址（如 `172.22.0.1`）表示**这次登录是直连容器的**（在本机开 localhost、或 Docker Desktop
-  把端口映射的来源都 NAT 成了网关），容器不可能知道真实来源 —— 管理后台对这类 IP 会显示虚线边框 +「？」并悬浮解释
-- 解决：套一层反代即可。**项目自带可选反代**：把 compose 里 web 的 `8800` 端口映射注释掉，
-  `docker compose --profile realip up -d` 启动内置 nginx（`nginx-proxy.conf` 已写好，自动带 X-Forwarded-For），
-  经 8800 访问就会记录真实 IP；已实测端到端生效。服务器上已有宝塔/nginx 的保持现状即可（默认关着，不占端口）
+| `TRUST_PROXY` | 行为 | 什么时候用 |
+|---|---|---|
+| 不设（auto） | 有反代头就用，没有就用直连来源 | 兼容旧部署 |
+| `1`（always） | 信任反代头 | 宝塔 / Nginx 反代后面（推荐） |
+| `0`（never） | 只认直连来源，忽略反代头 | 直接对公网暴露时防伪造头部刷限流 |
+
+- 看到内网 / 网关地址（如 `172.22.0.1`）表示**这次登录是直连容器的**（在本机开 localhost、或 Docker 把端口映射的来源 NAT 成了网关），容器不可能知道真实来源 —— 管理后台对这类 IP 会显示虚线边框 +「？」并悬浮解释
+- **排查入口：管理后台「总览 → 网络诊断」**，直接摊开这次请求的 socket 来源、`X-Forwarded-For`、`X-Real-IP`、最终判定与 `TRUST_PROXY` 模式，并给出一句可操作的修复提示
+- 两种修法：
+  1. **已有宝塔 / Nginx**：反代配置里加 `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;` 与 `proxy_set_header X-Real-IP $remote_addr;`，保持 `.env` 的 `TRUST_PROXY=1`，重建 web 容器
+  2. **没有反代**：用项目自带的可选反代 —— `docker compose --profile realip up -d`，学生改从 `PROXY_PORT`（默认 80；`nginx-proxy.conf` 已写好，自动带 X-Forwarded-For）访问即可记录真实 IP。反代与 web 各占各的端口（`PROXY_PORT` / `WEB_PORT`），不会像旧版那样和 `WEB_PORT` 撞端口
 
 **用户详情弹窗**：数据库清单、Python 文件清单（含大小）、练习通过情况（分 SQL / Python / 客观题）、在线会话数、最近 20 条操作记录，并可一键「强制下线」。
 
@@ -709,14 +715,16 @@ CodeMirror 编辑器 + 下方结果区（**信息 / 摘要 / 结果 1 / 剖析 /
 
 | 变量 | 默认 | 说明 |
 |---|---|---|
-| `WEB_PORT` | `8000` | 对外端口 |
+| `WEB_PORT` | `8000` | 网站对外端口（学生直连时用；启用内置反代后学生改从 `PROXY_PORT` 访问） |
 | `MYSQL_ROOT_PASSWORD` | `change-me-root` | MySQL root 密码（仅容器内部管理用，**务必修改**） |
 | `ADMIN_USER` / `ADMIN_PASSWORD` | `admin` / `admin123` | 管理员账号（**务必修改**） |
 | `RUNNER_TOKEN` | `change-me-runner-token` | web↔runner 内部令牌（**务必修改**） |
 | `PYTHON_VERSION` | `3.12` | 沙箱 Python 版本，可填 `3.14` |
 | `PYTHON_IMAGE` | `python` | 基础镜像仓库（国内可换 daocloud 源） |
 | `MYSQL_IMAGE` | `mysql:5.7` | **必须带 `:5.7` 标签**，否则数据目录不兼容 |
-| `TRUST_PROXY` | `0` | 宝塔/Nginx 反代后面设 `1`：管理后台显示学生**真实 IP**、限流按真实 IP 统计（compose 会把它传入 web 容器）。不设时记录的是 Docker 网关 IP（172.x） |
+| `TRUST_PROXY` | `1` | 反代头信任策略：`1`=信任（宝塔/Nginx 反代后面用，管理后台显示学生**真实 IP**、限流按真实 IP）；`0`=只认直连来源（防伪造头部刷限流）；不设=auto（有反代头就用）。compose 会把它传入 web 容器 |
+| `DEFAULT_QUOTA_MB` | `256` | Python 文件总容量默认配额（MB）：新用户默认值，`-1`=无限；管理员永远无限。单个用户可在管理后台单独设置 / 追加 |
+| `PROXY_PORT` | `80` | 内置真实 IP 反代的端口（`docker compose --profile realip up -d` 时生效）；宿主机 80 被宝塔占用就改成别的 |
 | `GUEST_TTL_DAYS` | `7` | 游客数据保留天数 |
 | 游客登录态（代码内固定，非 .env 项） | `3` 天 | 从游客登录创建会话时起算，到期后重新打开需重新进入游客模式 |
 | `SESSION_TTL_DAYS` | `30` | 登录态保留天数 |
@@ -745,7 +753,7 @@ CodeMirror 编辑器 + 下方结果区（**信息 / 摘要 / 结果 1 / 剖析 /
 6. **域名反代**：宝塔 → 网站 → 添加站点（填域名，纯静态）→ 站点设置 → 反向代理 → 目标 `http://127.0.0.1:8000`。
    **必须**：在该站点的 Nginx 配置里加一行 `client_max_body_size 20m;`（默认 1MB 会导致上传失败）。
 7. **HTTPS**：站点设置 → SSL → Let's Encrypt 一键申请 → 开启强制 HTTPS。
-8. **真实 IP 限流**：`.env` 设 `TRUST_PROXY=1`，`docker compose up -d` 重建 web 容器（变量需传进容器才生效；管理后台也会显示学生真实 IP）。
+8. **真实 IP**：`.env` 保持 `TRUST_PROXY=1`（默认值），反代里带上 `X-Forwarded-For` / `X-Real-IP` 两个头，`docker compose up -d` 重建 web 容器（变量需传进容器才生效）。管理后台「总览 → 网络诊断」可直接确认是否已拿到学生真实 IP。
 9. 学生访问 `https://你的域名` 即可。
 
 ### 方式 B：内网机房 / 本机直跑（最简单）
@@ -793,7 +801,7 @@ python tests/smoke_test.py                 # 默认打 http://localhost:8000
 python tests/smoke_test.py http://其他地址  # 也可以指定
 ```
 
-- `local_test.py`（111 项）：SQL 语句切分、无分号多行聚合、导入解析、密码策略、题目包 zip 解包（含 GBK 文件名 / 坏包 / 超大文件 / 无关文件过滤）、沙箱执行引擎（正常输出 / 报错 / 死循环 / input 交互）等纯逻辑。
+- `local_test.py`（133 项）：SQL 语句切分、无分号多行聚合、导入解析、密码策略、真实 IP 判定（反代头 / TRUST_PROXY 三态 / 内网判定）、题目包 zip 解包（含 GBK 文件名 / 坏包 / 超大文件 / 无关文件过滤）、沙箱执行引擎（正常输出 / 报错 / 死循环 / input 交互）等纯逻辑。
 - `smoke_test.py`（269 项）：注册 → 建库 → SQL → 导入三种格式 → 题库 / 素材包 → Python 运行与连库 → 隔离与权限 → 管理员与用户系统 → 弱密码拦截 → 练习判分（多种判分模式）→ 出题数据导入 → 题目包 zip 导入、试卷卡片与得分、整卷交卷（按套限次 / 答案可见 / 暂停计时 / 异常续做上限）与按次统计、Python 项目隔离与上限、Navicat 库结构接口与图形建表判分的全流程。
 
 ## 十、安全模型
@@ -807,7 +815,7 @@ python tests/smoke_test.py http://其他地址  # 也可以指定
 | Python 沙箱 | 独立 runner 容器：internal 网络（无外网）、只读根文件系统、`cap-drop ALL`、`no-new-privileges`、pids 96、内存 768MB |
 | Python 进程 | 每次独立子进程：CPU 8s / 内存 256MB / 写盘 4MB / 进程数 64；120 秒无输出或 300 秒总时长强杀 |
 | 接口护栏 | SQL ≤64KB、代码 ≤256KB、导入文件 ≤5MB、题库上传 ≤8MB、查询 ≤500 行、单次导入 ≤2 万行 × 64 列、每 IP 限流 600 次/分钟 |
-| 反代 | 宝塔/Nginx 后设 `TRUST_PROXY=1`，管理后台显示学生真实 IP、限流按真实 IP；站点需配 `client_max_body_size 20m` |
+| 反代 | 宝塔/Nginx 后设 `TRUST_PROXY=1`，管理后台显示学生真实 IP、限流按真实 IP；站点需配 `client_max_body_size 20m`。设 `TRUST_PROXY=0` 则忽略反代头（防伪造头部刷限流） |
 
 ## 十一、常见问题
 
@@ -815,7 +823,7 @@ python tests/smoke_test.py http://其他地址  # 也可以指定
 - **镜像拉取失败**：见[部署手册](#七部署手册)的镜像源配置。
 - **上传文件失败**：宝塔反代没配 `client_max_body_size 20m;`。
 - **CSV 中文乱码**：已自动尝试 UTF-8 / GBK；仍乱码请另存为「CSV UTF-8」。
-- **管理后台 IP 显示成 172.x**：Docker 端口转发导致。本机直连（localhost:8000）本来只能看到网关 IP；部署到宝塔 + Nginx 后 `.env` 设 `TRUST_PROXY=1` 并 `docker compose up -d` 重建容器，即可显示学生真实 IP。
+- **管理后台 IP 显示成 172.x**：Docker 端口转发导致 —— 直连容器端口时来源被 NAT 成网关地址，容器拿不到真实 IP。先看**管理后台「总览 → 网络诊断」**：它会显示这次请求的 socket 来源、`X-Forwarded-For`、`X-Real-IP` 与最终判定。修法二选一：① 宝塔/Nginx 反代里加 `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;` 与 `X-Real-IP $remote_addr;`，`.env` 保持 `TRUST_PROXY=1`，`docker compose up -d` 重建 web 容器；② 没有反代就启用内置的：`docker compose --profile realip up -d`，学生改从 `PROXY_PORT` 访问。
 - **练习里出的题同学看不到**：题目默认是草稿，只有出题人可见，要点「保存并发布」才进题库。
 - **游客数据没了**：7 天未用被回收，或换了浏览器 / 清了浏览器数据；注册账号可避免。
 - **刷新后 SQL 没了**：不会丢——SQL 编辑器草稿按账号存在浏览器里；换浏览器前先「导出 .sql」。

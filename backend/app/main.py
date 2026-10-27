@@ -16,7 +16,7 @@ from pydantic import BaseModel
 
 import pymysql
 
-from . import community, drills, importer, sessions, sqlrun, users
+from . import community, drills, importer, netutil, sessions, sqlrun, users
 from .config import C
 from .community import CommunityError
 from .drills import DrillError
@@ -47,6 +47,9 @@ async def lifespan(app: FastAPI):
     await asyncio.to_thread(community.ensure_builtin_seed)
     await asyncio.to_thread(drills.init)
     await asyncio.to_thread(users.init)
+    # 启动时把反代头策略打出来：管理后台 IP 显示不对时，先看这一行
+    print(f"[net] TRUST_PROXY={C.TRUST_PROXY_RAW or '(未设置)'} → 模式 {C.TRUST_PROXY_MODE}；"
+          f"默认配额 {C.DEFAULT_QUOTA_MB} MB", flush=True)
     task = asyncio.create_task(_cleanup_loop())
     yield
     task.cancel()
@@ -89,28 +92,26 @@ async def rate_limit(request: Request, call_next):
 def client_ip(request: Request) -> str:
     """真实客户端 IP。
 
-    有反代头就信反代头（Nginx/宝塔/frp 会带 X-Forwarded-For / X-Real-IP）；
-    直连时用 socket 来源。注意：Docker Desktop 的端口映射会把来源改写成内部网关 IP，
-    那种部署要在宿主机套一层反向代理才能看到学生真实 IP。
+    判定逻辑在 `netutil`（可单测）：按 `TRUST_PROXY` 决定信不信反代头 ——
+    宝塔/Nginx 反代会把学生真实来源写进 `X-Forwarded-For` / `X-Real-IP`；
+    直连容器端口时只能看到 Docker 网关地址（172.x），那是端口转发改写的，不是学生 IP。
     """
-    import ipaddress
+    return netutil.resolve(
+        C.TRUST_PROXY_MODE,
+        request.headers.get("x-forwarded-for", ""),
+        request.headers.get("x-real-ip", ""),
+        request.client.host if request.client else "",
+    )
 
-    def _valid(s: str) -> bool:
-        try:
-            ipaddress.ip_address(s)
-            return True
-        except ValueError:
-            return False
 
-    fwd = request.headers.get("x-forwarded-for", "")
-    for part in fwd.split(","):
-        part = part.strip()
-        if part and _valid(part):
-            return part[:64]
-    real = request.headers.get("x-real-ip", "").strip()
-    if real and _valid(real):
-        return real[:64]
-    return (request.client.host if request.client else "")[:64]
+def net_diag(request: Request) -> dict:
+    """管理后台「网络诊断」：把这次请求的原始来源信息原样摊开，便于排查真实 IP。"""
+    return netutil.diagnose(
+        C.TRUST_PROXY_MODE,
+        request.headers.get("x-forwarded-for", ""),
+        request.headers.get("x-real-ip", ""),
+        request.client.host if request.client else "",
+    )
 
 
 def sess(request: Request) -> dict:
@@ -941,6 +942,13 @@ def require_admin(request: Request) -> dict:
 def api_admin_overview(request: Request):
     require_admin(request)
     return users.overview()
+
+
+@app.get("/api/admin/net")
+def api_admin_net(request: Request):
+    """网络诊断：这次请求的来源地址、反代头与最终判定，用于排查「IP 显示成 172.x」。"""
+    require_admin(request)
+    return net_diag(request)
 
 
 @app.get("/api/admin/users")

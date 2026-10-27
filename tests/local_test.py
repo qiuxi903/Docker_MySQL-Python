@@ -125,6 +125,47 @@ check("值序列化", conv_value(_dt.datetime(2024, 1, 2, 3, 4, 5)) == "2024-01-
 check("纯date序列化(EMP的HIREDATE列)", conv_value(_dt.date(1980, 12, 17)) == "1980-12-17")
 check("纯time序列化", conv_value(_dt.time(8, 30)) == "08:30:00")
 
+print("== 4b. 真实客户端 IP 判定（TRUST_PROXY 三态） ==")
+from app import netutil as _net
+
+check("TRUST_PROXY=1 → always", _net.parse_mode("1") == _net.MODE_ALWAYS)
+check("TRUST_PROXY=0 → never", _net.parse_mode("0") == _net.MODE_NEVER)
+check("TRUST_PROXY 未设置 → auto", _net.parse_mode("") == _net.MODE_AUTO)
+check("TRUST_PROXY 乱值 → auto", _net.parse_mode("yes-please") == _net.MODE_AUTO)
+
+# 宝塔/Nginx 反代：XFF 里第一个合法 IP 就是学生
+check("反代取 XFF 第一段",
+      _net.resolve(_net.MODE_ALWAYS, "203.0.113.9, 172.18.0.1", "", "172.18.0.1") == "203.0.113.9")
+# 学生自己伪造的头部会被反代追加在后面，取第一段仍是最靠近客户端的一跳
+check("XFF 含非��段时跳过",
+      _net.resolve(_net.MODE_ALWAYS, "unknown, 203.0.113.9", "", "172.18.0.1") == "203.0.113.9")
+check("XFF 为空时退回 X-Real-IP",
+      _net.resolve(_net.MODE_ALWAYS, "", "198.51.100.7", "172.18.0.1") == "198.51.100.7")
+check("没有反代头时用 socket 来源",
+      _net.resolve(_net.MODE_ALWAYS, "", "", "172.18.0.1") == "172.18.0.1")
+# TRUST_PROXY=0：不信任任何头部，防伪造
+check("never 模式忽略伪造头",
+      _net.resolve(_net.MODE_NEVER, "1.2.3.4", "5.6.7.8", "172.18.0.1") == "172.18.0.1")
+# auto：有头就用（兼容旧行为）
+check("auto 模式有头就用",
+      _net.resolve(_net.MODE_AUTO, "203.0.113.9", "", "172.18.0.1") == "203.0.113.9")
+
+check("内网判定 172.18", _net.is_private("172.18.0.1"))
+check("内网判定 192.168", _net.is_private("192.168.1.5"))
+check("内网判定 10.x", _net.is_private("10.0.0.2"))
+check("内网判定 127.0.0.1", _net.is_private("127.0.0.1"))
+check("公网判定", not _net.is_private("114.114.114.114"))
+check("公网判定(境外)", not _net.is_private("8.8.8.8"))
+check("非法 IP 不算内网", not _net.is_private("not-an-ip"))
+
+_d = _net.diagnose(_net.MODE_ALWAYS, "", "", "172.18.0.1")
+check("诊断：无头 + 内网 → 给出可操作提示",
+      _d["hasProxyHeader"] is False and _d["private"] is True
+      and "X-Forwarded-For" in _d["hint"])
+_d2 = _net.diagnose(_net.MODE_NEVER, "203.0.113.9", "", "172.18.0.1")
+check("诊断：never 模式提示改 TRUST_PROXY",
+      _d2["resolved"] == "172.18.0.1" and "TRUST_PROXY" in _d2["hint"])
+
 print("== 5. FastAPI 应用可导入（路由装配检查） ==")
 from app.main import app
 
@@ -134,6 +175,7 @@ for p in ["/api/login", "/api/me", "/api/tables", "/api/sql", "/api/import",
           "/api/community/import", "/api/community/open", "/api/community/{item_id}/download",
           "/api/source/{table}", "/api/source/{table}/download",
           "/api/pyrun/start", "/api/pyrun/input", "/api/admin/users", "/api/health",
+          "/api/admin/net", "/api/pyfiles/upload", "/api/pyfiles/clear-uploaded",
           "/api/author/qpack/parse", "/api/author/qpack/create"]:
     check(f"路由 {p}", p in paths)
 
